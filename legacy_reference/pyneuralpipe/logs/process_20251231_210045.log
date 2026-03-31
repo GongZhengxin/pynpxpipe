@@ -1,0 +1,21 @@
+2025-12-31 21:00:45 - process_20251231_210045 - INFO - 同步器参数已从配置加载: {'eye_threshold': 0.999, 'before_onset_measure': 10, 'after_onset_measure': 50, 'after_onset_stats': 100, 'monitor_delay_correction': -5, 'threshold_baseline_weight': 0.1, 'threshold_peak_weight': 0.9, 'highline_detection_window': 20, 'max_time_error': 17.0}
+2025-12-31 21:00:45 - process_20251231_210045 - INFO - 开始步骤: process_full_synchronization - 开始完整同步处理流程
+2025-12-31 21:00:45 - process_20251231_210045 - INFO - 步骤1: 准备并检查设备间同步
+2025-12-31 21:00:53 - process_20251231_210045 - INFO - IMEC Event 64 : 20212 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 1 (sync) : 20212 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 2 : 681 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 4 : 2 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 8 (trial_start) : 683 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 16 : 681 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 32 : 49298 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 64 (stim_onset) : 49706 Times
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - NI Event 128 : 0 Times
+2025-12-31 21:00:54 - process_20251231_210045 - WARNING - 同步质量警告: 最大误差 32.991ms 超过阈值 17.0ms
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - 步骤2: 检查MonkeyLogic和NI设备对齐
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - MonkeyLogic Has 681 trials 49706 onset (code 64) 49298 offset (code 32)
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - SGLX onset count: 49706 (bit 6), MaxErr: 0
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - 步骤3: 提取数据集信息
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - 数据集名称: nsd1w
+2025-12-31 21:00:54 - process_20251231_210045 - INFO - 步骤4: 眼动验证和试次筛选
+2025-12-31 21:00:54 - process_20251231_210045 - ERROR - 眼动验证失败: could not broadcast input array from shape (200,799) into shape (200,2)
+2025-12-31 21:00:54 - process_20251231_210045 - ERROR - 步骤失败: process_full_synchronization (耗时: 0:00:08.643037) - could not broadcast input array from shape (200,799) into shape (200,2)

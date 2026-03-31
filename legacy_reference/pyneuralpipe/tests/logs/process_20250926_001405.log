@@ -1,0 +1,54 @@
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 使用预加载的Recording对象初始化SpikeSorter
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 采样频率: 30000.201673640167 Hz
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 通道数: 384
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 开始步骤: preprocessing - 神经数据预处理
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 使用SpikeInterface Protocol Pipeline进行预处理
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 参数设置 (预处理协议):
+  highpass_filter: {'freq_min': 300.0}
+  detect_and_remove_bad_channels: {}
+  phase_shift: {}
+  common_reference: {'operator': 'median', 'reference': 'global'}
+2025-09-26 00:14:05 - process_20250926_001405 - INFO - 应用预处理pipeline...
+2025-09-26 00:14:19 - process_20250926_001405 - INFO - 移除了10个坏道: ['imec0.ap#AP191' 'imec0.ap#AP3' 'imec0.ap#AP5' 'imec0.ap#AP53'
+ 'imec0.ap#AP55' 'imec0.ap#AP57' 'imec0.ap#AP59' 'imec0.ap#AP61'
+ 'imec0.ap#AP63' 'imec0.ap#AP65']
+2025-09-26 00:14:19 - process_20250926_001405 - INFO - 保存预处理数据...
+2025-09-26 00:15:19 - process_20250926_001405 - INFO - 步骤完成: preprocessing (耗时: 0:01:14.701367) - 预处理完成
+2025-09-26 00:17:29 - process_20250926_001405 - INFO - 开始步骤: kilosort - 运行Kilosort进行尖峰排序
+2025-09-26 00:17:29 - process_20250926_001405 - INFO - 输出目录: F:\ProcessPipeline\testdata\wordfob\processed\kilosort_output
+2025-09-26 00:17:29 - process_20250926_001405 - INFO - 使用SpikeInterface Protocol Pipeline进行排序
+2025-09-26 00:17:29 - process_20250926_001405 - INFO - 参数设置 (排序协议):
+  sorter_name: kilosort4
+  verbose: True
+  progress_bar: True
+  remove_existing_folder: True
+  nblocks: 15
+  Th_learned: 7.0
+  n_jobs: 12
+  chunk_duration: 4s
+2025-09-26 00:17:29 - process_20250926_001405 - INFO - 开始运行排序...
+2025-09-26 00:23:01 - process_20250926_001405 - INFO - 创建SortingAnalyzer...
+2025-09-26 00:23:11 - process_20250926_001405 - INFO - 运行后处理扩展...
+2025-09-26 00:23:11 - process_20250926_001405 - INFO - 参数设置 (后处理协议):
+  random_spikes: {'max_spikes_per_unit': 5000}
+  noise_levels: {}
+  templates: {'operators': ['average', 'median']}
+  unit_locations: {'method': 'center_of_mass'}
+  waveforms: {'ms_before': 1.0, 'ms_after': 2.0}
+2025-09-26 00:23:35 - process_20250926_001405 - INFO - 提取波形数据完成
+2025-09-26 00:23:35 - process_20250926_001405 - INFO - 提取单元位置完成
+2025-09-26 00:23:35 - process_20250926_001405 - INFO - 提取模板数据完成
+2025-09-26 00:23:35 - process_20250926_001405 - WARNING - 提取后处理结果时出错: 'KiloSortSortingExtractor' object has no attribute 'get_all_spike_trains'
+2025-09-26 00:23:35 - process_20250926_001405 - INFO - Kilosort输出结果加载完成
+2025-09-26 00:23:35 - process_20250926_001405 - INFO - 处理结果 (Kilosort结果):
+  num_units: 365
+  total_spikes: 565157
+  output_folder: F:\ProcessPipeline\testdata\wordfob\processed\kilosort_output
+  average_firing_rate: 4.14755356551556
+  max_firing_rate: 64.88758559733463
+  min_firing_rate: 0.005357297357772015
+  average_amplitude: 10.059452054794521
+  good_units: 166
+  good_unit_percentage: 45.47945205479452
+2025-09-26 00:23:36 - process_20250926_001405 - INFO - 可视化图表生成完成
+2025-09-26 00:23:36 - process_20250926_001405 - INFO - 步骤完成: kilosort (耗时: 0:06:07.100571) - Kilosort完成

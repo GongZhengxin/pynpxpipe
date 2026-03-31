@@ -1,0 +1,4 @@
+2026-03-05 23:35:36 - process_20260305_233453 - INFO - MATLAB引擎初始化成功
+2026-03-05 23:35:36 - process_20260305_233453 - INFO - 开始步骤: load_spikeglx - 加载SpikeGLX神经数据和同步信号 (流: imec0.ap)
+2026-03-05 23:35:36 - process_20260305_233453 - INFO - 找到SpikeGLX文件夹: E:\TripleN10k_JianJian260302\NPX_JJ260302_exp_g7
+2026-03-05 23:35:38 - process_20260305_233453 - ERROR - 步骤失败: load_spikeglx (耗时: 0:00:02.159957) - stream_name imec0.ap is not in ['nidq']

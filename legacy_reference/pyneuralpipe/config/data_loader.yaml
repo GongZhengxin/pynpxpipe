@@ -1,0 +1,23 @@
+# 数据加载配置
+# SpikeGLX配置
+spikeglx:
+  stream_name: 'imec0.ap'
+  digital_channel_map:
+    sync: 0        # bit 0: 同步信号
+    trial_start: 3 # bit 3: 试次开始 
+    stim_onset: 6  # bit 6: 刺激onset （64）
+  sampling_rates:
+    imec_default: 30000
+    nidq_default: 10593
+
+# MonkeyLogic配置
+monkeylogic:
+  file_extension: '.bhv2'
+  required_fields:
+    - 'BehavioralCodes'
+    - 'VariableChanges'
+    - 'AnalogData'
+    - 'UserVars'
+  code_mappings:
+    stim_onset: 64     # 刺激onset码
+    stim_offset: 32    # 刺激offset码

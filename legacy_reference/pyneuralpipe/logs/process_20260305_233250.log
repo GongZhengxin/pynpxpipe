@@ -1,0 +1,4 @@
+2026-03-05 23:33:00 - process_20260305_233250 - INFO - MATLAB引擎初始化成功
+2026-03-05 23:33:00 - process_20260305_233250 - INFO - 开始步骤: load_spikeglx - 加载SpikeGLX神经数据和同步信号 (流: imec0.ap)
+2026-03-05 23:33:00 - process_20260305_233250 - INFO - 找到SpikeGLX文件夹: E:\TripleN10k_JianJian260302\NPX_JJ260302_exp_g7
+2026-03-05 23:33:00 - process_20260305_233250 - ERROR - 步骤失败: load_spikeglx (耗时: 0:00:00.226135) - No appropriate combination of .meta and .bin files were detected in E:\TripleN10k_JianJian260302\NPX_JJ260302_exp_g7

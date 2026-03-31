@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -lh /f/tools/pynpxpipe/legacy_reference/pyneuralpipe/Util/*.m)",
+      "Bash(/tmp/comprehensive_analysis.md:*)",
+      "Read(//tmp/**)",
+      "Bash(find F:/tools/pynpxpipe/legacy_reference -name *.m)",
+      "Bash(wc -l \"F:\\\\tools\\\\pynpxpipe\\\\.prompt4claude\\\\task7_update_caludemd&archmd.md\")",
+      "Bash(wc -c \"F:\\\\tools\\\\pynpxpipe\\\\.prompt4claude\\\\task7_update_caludemd&archmd.md\")"
+    ]
+  }
+}

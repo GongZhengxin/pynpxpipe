@@ -1,0 +1,172 @@
+# 数据整合配置文件
+# 用于配置数据整合模块的参数
+
+# 文件夹结构配置
+folder_structure:
+  # 原始数据文件夹名称（包含 .bin 和 .meta 文件）
+  spikeglx_folder_pattern: "NPX_*_g*"
+  
+  # 处理后的数据文件夹
+  processed_folder: "processed"
+  
+  # Kilosort 输出文件夹
+  kilosort_folder: "SI/KS4/sorter_output"
+  
+  # Bombcell 输出文件夹
+  bombcell_folder: "SI/bombcell"
+  
+  # META 文件名模式（包含同步和行为数据）
+  meta_file_pattern: "META_*.h5"
+
+# NWB 文件配置
+nwb:
+  # 压缩配置
+  compression:
+    # AP 数据压缩
+    ap:
+      chunk_shape: [40000, 64]
+      buffer_shape: [200000, 384]
+      compression_method: "Blosc"
+      compression_options:
+        cname: "zstd"
+        clevel: 6
+    
+    # LF 数据压缩
+    lf:
+      chunk_shape: [40000, 64]
+      buffer_shape: [200000, 384]
+      compression_method: "Blosc"
+      compression_options:
+        cname: "zstd"
+        clevel: 6
+  
+  # 转换选项
+  conversion_options:
+    ap:
+      stub_test: false
+      display_progress: true
+    lf:
+      stub_test: false
+      display_progress: true
+
+# Kilosort 配置
+kilosort:
+  # 写入模式：'processing' 或 'units'
+  write_as: "processing"
+  # units 表名称
+  units_name: "kilosort4_unit"
+
+# Trial 和行为数据配置
+behavioral:
+  # Trial 列定义
+  trial_columns:
+    stim_index:
+      description: "stimulus matlab index (1-indexed)"
+    stim_name:
+      description: "stimulus name"
+    fix_success:
+      description: "whether the fixation was successful"
+  
+  # 眼动追踪配置
+  eye_tracking:
+    # 采样间隔（秒）
+    sampling_interval: 0.001
+    # 使用的眼睛（'left', 'right', 'both'）
+    eye_used: "right"
+    # 参考坐标系
+    reference_frame: "center of screen"
+    # 单位
+    unit: "degrees"
+
+# 刺激配置
+stimulus:
+  # 刺激类型（'image', 'video', etc.）
+  type: "image"
+  # 是否添加到 NWB
+  add_to_nwb: False
+
+# Units 配置
+units:
+  # 自定义 unit 列
+  custom_columns:
+    ks_id:
+      description: "kilosort id"
+    unitpos:
+      description: "unit position calculated via center of mass"
+    unittype:
+      description: "unit type by bombcell, 1=good, 2=mua, 3=non-soma"
+    unittype_string:
+      description: "unit type string from bombcell"
+    Raster:
+      description: "unit spike raster binned on time window of (pre_onset, post_onset)"
+    waveforms_fromch:
+      description: "comma-separated channel indices near the peak channel (e.g., '10,11,12,13,14')"
+  
+  # Raster 计算配置
+  raster:
+    # 刺激前时间窗口（毫秒）
+    pre_onset_ms: 50
+    # 刺激后时间窗口（毫秒）
+    post_onset_ms: 300
+    # Bin 大小（毫秒）
+    bin_size_ms: 1
+    # 基线窗口（毫秒，相对于刺激onset）
+    baseline_window_ms: [-25, 25]
+    # 响应窗口（毫秒，相对于刺激onset）
+    response_window_ms: [60, 220]
+  
+  # 单元筛选配置
+  filtering:
+    # 是否启用统计检验
+    enable_statistical_test: true
+    # 统计检验的 p 值阈值
+    p_value_threshold: 0.001
+    # 统计检验方法（'mannwhitneyu', 'ttest', etc.）
+    statistical_test: "mannwhitneyu"
+    # 统计检验的备择假设（'two-sided', 'less', 'greater'）
+    alternative: "less"
+    # 是否排除 bombcell unittype == 0 的单元
+    exclude_bombcell_zero: true
+  
+  # 波形配置
+  waveform:
+    # 最大通道周围保存的通道数量（每侧）
+    n_channels_around: 6
+    # 总通道数
+    total_channels: 384
+
+# Bombcell 质量指标配置
+bombcell:
+  # 是否添加 Bombcell 质量指标
+  add_quality_metrics: true
+  # 是否移除全为 NaN 的列
+  remove_nan_columns: true
+
+# 元数据配置
+metadata:
+  # session 元数据模板路径（相对于 config 文件夹）
+  session_template: "nwb_template.yaml"
+  # subject 元数据路径（需要在运行时指定）
+  subject_template: null  # 例如: "MaoDan.yaml"
+  # 电极组位置（可选，可在运行时覆盖）
+  electrode_location: null  # 例如: "MLO"
+
+# 输出配置
+output:
+  # 输出文件夹
+  output_folder: null  # 需要在运行时指定
+  # 输出文件名模式
+  output_filename_pattern: "NWBFile_{session_id}.nwb"
+  # 是否覆盖已存在的文件
+  overwrite: false
+  # 是否在出错时自动重建损坏的文件
+  auto_rebuild_on_error: true
+
+# 日志配置
+logging:
+  # 日志级别
+  level: "INFO"
+  # 是否显示进度条
+  show_progress: true
+  # 是否打印详细信息
+  verbose: true

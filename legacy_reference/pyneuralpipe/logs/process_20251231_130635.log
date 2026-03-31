@@ -1,0 +1,14 @@
+2025-12-31 13:06:40 - process_20251231_130635 - INFO - MATLAB引擎初始化成功
+2025-12-31 13:06:40 - process_20251231_130635 - INFO - 开始步骤: load_spikeglx - 加载SpikeGLX神经数据和同步信号 (流: imec0.ap)
+2025-12-31 13:06:40 - process_20251231_130635 - INFO - 找到SpikeGLX文件夹: E:\TripleN10k_ZhangZhuang\NPX_ZhuangZhuang_251112_exp2_g2
+2025-12-31 13:06:42 - process_20251231_130635 - INFO - 成功加载nidq同步数据
+2025-12-31 13:06:42 - process_20251231_130635 - INFO - 数字通道映射: {'sync': 0, 'trial_start': 3, 'stim_onset': 6}
+2025-12-31 13:06:43 - process_20251231_130635 - INFO - 成功加载imec同步数据
+2025-12-31 13:06:43 - process_20251231_130635 - INFO - 步骤完成: load_spikeglx (耗时: 0:00:03.475362) - 成功加载SpikeGLX数据和同步信号
+2025-12-31 13:06:43 - process_20251231_130635 - INFO - 开始步骤: load_monkeylogic - 加载MonkeyLogic行为数据
+2025-12-31 13:06:43 - process_20251231_130635 - INFO - 找到MonkeyLogic文件: E:\TripleN10k_ZhangZhuang\251112_ZhuangZhuang_pv_oe_nsd1w.bhv2
+2025-12-31 13:06:43 - process_20251231_130635 - INFO - 转换251112_ZhuangZhuang_pv_oe_nsd1w.bhv2到ML_251112_ZhuangZhuang_pv_oe_nsd1w.mat
+2025-12-31 13:15:13 - process_20251231_130635 - INFO - 成功转换bhv2文件到E:\TripleN10k_ZhangZhuang\processed\ML_251112_ZhuangZhuang_pv_oe_nsd1w.mat
+2025-12-31 13:41:26 - process_20251231_130635 - INFO - 使用mat73成功加载MAT文件(v7.3格式)
+2025-12-31 13:41:26 - process_20251231_130635 - WARNING - 未知的trial_ML数据类型: <class 'dict'>
+2025-12-31 13:41:28 - process_20251231_130635 - INFO - 步骤完成: load_monkeylogic (耗时: 0:34:44.182686) - 成功加载MonkeyLogic数据

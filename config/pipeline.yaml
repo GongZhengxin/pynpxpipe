@@ -1,0 +1,51 @@
+# ============================================================
+# pynpxpipe Pipeline Configuration
+# ============================================================
+
+# Resource allocation
+# Use "auto" to let ResourceDetector set optimal values for this machine.
+# Override with explicit values (e.g. n_jobs: 8) to fix them regardless of hardware.
+resources:
+  n_jobs: auto                   # "auto" or integer; SpikeInterface internal parallel threads
+  chunk_duration: auto           # "auto" or string like "1s", "2s", "0.5s"
+  max_memory: auto               # "auto" or string like "32G" — advisory only (log warning)
+
+# Multi-probe parallelism (experimental — use with caution)
+parallel:
+  enabled: false                 # Default: serial. Enable only when RAM and CPU allow.
+  max_workers: auto              # "auto" or integer; ProcessPoolExecutor max worker processes
+                                 # NOTE: sort stage ignores this and always runs serially
+
+# Preprocessing parameters
+preprocess:
+  bandpass:
+    freq_min: 300                # High-pass cutoff (Hz)
+    freq_max: 6000               # Low-pass cutoff (Hz)
+  bad_channel_detection:
+    method: "coherence+psd"      # Bad channel detection method
+    dead_channel_threshold: 0.5  # Coherence below this → dead channel
+  common_reference:
+    reference: "global"          # "global" | "local"
+    operator: "median"           # "median" | "average"
+  motion_correction:
+    method: "dredge"             # "dredge" | "kilosort" | null (skip motion correction)
+    preset: "nonrigid_accurate"  # Preset: "rigid_fast" | "nonrigid_accurate"
+
+# Quality control thresholds (curate stage)
+curation:
+  isi_violation_ratio_max: 0.1   # ISI violation ratio upper bound
+  amplitude_cutoff_max: 0.1      # Amplitude cutoff upper bound
+  presence_ratio_min: 0.9        # Presence ratio lower bound
+  snr_min: 0.5                   # Signal-to-noise ratio lower bound
+
+# Synchronization parameters (synchronize stage)
+sync:
+  sync_bit: 0                    # SpikeGLX sync pulse bit position in digital channel
+  event_bits: [1, 2, 3, 4, 5, 6, 7]  # MonkeyLogic event code bit positions
+  max_time_error_ms: 17.0        # IMEC↔NIDQ maximum allowed alignment error (ms)
+  trial_count_tolerance: 2       # Max trial count mismatch for auto-repair
+  photodiode_channel_index: 0    # NIDQ analog channel index for photodiode signal
+  monitor_delay_ms: -5.0         # Monitor system delay correction (ms); 60 Hz ≈ -5
+  stim_onset_code: 64            # Event code value representing stimulus onset on NIDQ
+  imec_sync_code: 64             # Sync marker code value on IMEC digital channel
+  generate_plots: true           # Generate sync diagnostic plots to sync/figures/

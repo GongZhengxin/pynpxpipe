@@ -1,0 +1,79 @@
+# SpikeInterface Pipeline配置
+spike_sorting_pipeline:
+  # 预处理协议 - 按SpikeInterface标准格式
+  preprocessing:
+    # 高通滤波
+    highpass_filter:
+      freq_min: 300.0
+      
+    # 检测并移除坏道 (组合步骤)
+    detect_and_remove_bad_channels: {}
+      
+    # 相位偏移校正  
+    phase_shift: {}
+    
+    # 共同参考
+    common_reference:
+      operator: 'median'
+      reference: 'global'
+  
+  # 排序协议
+  sorting:
+    sorter_name: 'kilosort4'
+    verbose: true
+    progress_bar: true
+    remove_existing_folder: true
+    
+    # Kilosort4特定参数
+    nblocks: 15
+    Th_learned: 7.0
+    
+    # 作业配置
+    n_jobs: 12
+    chunk_duration: '4s'
+  
+  # 后处理协议 - 扩展分析
+  postprocessing:
+    # 随机尖峰采样
+    random_spikes: 
+      max_spikes_per_unit: 500
+      
+    # 波形数据
+    waveforms:
+      ms_before: 1.0
+      ms_after: 2.0
+
+    # 波形模板 
+    templates:
+      operators: ['average', 'median']
+      
+    # 单元位置
+    unit_locations:
+      method: 'center_of_mass'
+      
+  job_kwargs: 
+    n_jobs: 10
+    chunk_duration: "4s"
+    progress_bar: True
+
+# 向后兼容的Kilosort配置（保留原有接口）
+kilosort:
+  # 基础参数
+  n_jobs: 12
+  chunk_duration: '4s'
+  progress_bar: true
+  
+  # Kilosort4特定参数  
+  nblocks: 15
+  Th_learned: 7.0
+  
+  # 预处理参数（向后兼容）
+  preprocessing:
+    freq_min: 300.0              # 高通滤波频率
+    detect_bad_channels: true     # 检测坏道
+    remove_bad_channels: true     # 移除坏道
+    phase_shift: true            # 相位偏移校正
+    common_reference: true       # 共同参考
+    reference_type: 'global'     # 参考类型
+    reference_operator: 'median' # 参考算法
+    artifact_threshold: 0.5      # 伪影检测阈值

@@ -1,0 +1,123 @@
+2025-09-17 15:32:48 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:32:48 - pyneuralpipe_app - ERROR - 应用运行错误: The `value` 50.0 is greater than the `max_value` 10.0.
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 72, in run
+    user_actions = create_main_layout()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 350, in create_main_layout
+    user_actions = create_sidebar()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 80, in create_sidebar
+    parameter_config_panel()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\components.py", line 177, in parameter_config_panel
+    max_isi_violation = st.number_input(
+  File "C:\Users\Gong\miniconda3\envs\spikesort\lib\site-packages\streamlit\runtime\metrics_util.py", line 443, in wrapped_func
+    result = non_optional_func(*args, **kwargs)
+  File "C:\Users\Gong\miniconda3\envs\spikesort\lib\site-packages\streamlit\elements\widgets\number_input.py", line 401, in number_input
+    return self._number_input(
+  File "C:\Users\Gong\miniconda3\envs\spikesort\lib\site-packages\streamlit\elements\widgets\number_input.py", line 544, in _number_input
+    raise StreamlitValueAboveMaxError(value=value, max_value=max_value)
+streamlit.errors.StreamlitValueAboveMaxError: The `value` 50.0 is greater than the `max_value` 10.0.
+
+2025-09-17 15:33:14 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:33:14 - pyneuralpipe_app - ERROR - 应用运行错误: The `value` 50.0 is greater than the `max_value` 10.0.
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 72, in run
+    user_actions = create_main_layout()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 350, in create_main_layout
+    user_actions = create_sidebar()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 80, in create_sidebar
+    parameter_config_panel()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\components.py", line 177, in parameter_config_panel
+    max_isi_violation = st.number_input(
+  File "C:\Users\Gong\miniconda3\envs\spikesort\lib\site-packages\streamlit\runtime\metrics_util.py", line 443, in wrapped_func
+    result = non_optional_func(*args, **kwargs)
+  File "C:\Users\Gong\miniconda3\envs\spikesort\lib\site-packages\streamlit\elements\widgets\number_input.py", line 401, in number_input
+    return self._number_input(
+  File "C:\Users\Gong\miniconda3\envs\spikesort\lib\site-packages\streamlit\elements\widgets\number_input.py", line 544, in _number_input
+    raise StreamlitValueAboveMaxError(value=value, max_value=max_value)
+streamlit.errors.StreamlitValueAboveMaxError: The `value` 50.0 is greater than the `max_value` 10.0.
+
+2025-09-17 15:37:26 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:37:57 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:38:16 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:39:13 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:39:14 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:39:15 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:39:15 - pyneuralpipe_app - ERROR - 应用运行错误: module 'streamlit' has no attribute 'experimental_rerun'
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 72, in run
+    user_actions = create_main_layout()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 353, in create_main_layout
+    create_main_content_area()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 120, in create_main_content_area
+    create_progress_tab()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 234, in create_progress_tab
+    st.experimental_rerun()
+AttributeError: module 'streamlit' has no attribute 'experimental_rerun'
+
+2025-09-17 15:39:16 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:39:17 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-17 15:39:17 - pyneuralpipe_app - ERROR - 应用运行错误: module 'streamlit' has no attribute 'experimental_rerun'
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 72, in run
+    user_actions = create_main_layout()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 353, in create_main_layout
+    create_main_content_area()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 120, in create_main_content_area
+    create_progress_tab()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 234, in create_progress_tab
+    st.experimental_rerun()
+AttributeError: module 'streamlit' has no attribute 'experimental_rerun'
+
+2025-09-17 15:39:21 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-28 22:22:04 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-28 22:22:04 - pyneuralpipe_app - ERROR - 应用运行错误: 'ConfigManager' object has no attribute 'get_section_config'
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 77, in run
+    config_confirmed = config_confirmation_panel()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\ProcessPipeline\pyneuralpipe\ui\components.py", line 49, in config_confirmation_panel
+    data_loader_config = config_manager.get_section_config('data_loader')
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ConfigManager' object has no attribute 'get_section_config'
+
+2025-09-29 00:10:33 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:10:33 - pyneuralpipe_app - ERROR - 应用运行错误: 'dict' object has no attribute 'n_jobs'
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 77, in run
+    config_confirmed = config_confirmation_panel()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\ProcessPipeline\pyneuralpipe\ui\components.py", line 230, in config_confirmation_panel
+    n_jobs = st.number_input("并行任务数", value=kilosort_config.n_jobs, min_value=1, max_value=32)
+                                                 ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'dict' object has no attribute 'n_jobs'
+
+2025-09-29 00:32:41 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:32:41 - pyneuralpipe_app - ERROR - 应用运行错误: 'dict' object has no attribute 'theme'
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 77, in run
+    config_confirmed = config_confirmation_panel()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\ProcessPipeline\pyneuralpipe\ui\components.py", line 279, in config_confirmation_panel
+    theme = st.selectbox("主题", ["light", "dark"], index=0 if ui_config.theme == "light" else 1)
+                                                               ^^^^^^^^^^^^^^^
+AttributeError: 'dict' object has no attribute 'theme'
+
+2025-09-29 00:38:00 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:00 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:03 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:05 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:09 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:14 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:30 - pyneuralpipe_app - INFO - PyNeuralPipe应用初始化完成
+2025-09-29 00:40:30 - pyneuralpipe_app - ERROR - 应用运行错误: get_config() missing 1 required positional argument: 'module_name'
+Traceback (most recent call last):
+  File "F:\ProcessPipeline\pyneuralpipe\app.py", line 86, in run
+    user_actions = create_main_layout()
+                   ^^^^^^^^^^^^^^^^^^^^
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 355, in create_main_layout
+    setup_page_config()
+  File "F:\ProcessPipeline\pyneuralpipe\ui\layouts.py", line 21, in setup_page_config
+    config = get_config()
+             ^^^^^^^^^^^^
+TypeError: get_config() missing 1 required positional argument: 'module_name'
+

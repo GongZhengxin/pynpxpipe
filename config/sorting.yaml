@@ -1,0 +1,39 @@
+# ============================================================
+# pynpxpipe Sorting Configuration
+# ============================================================
+
+# Sorting mode: "local" (run sorter here) or "import" (load external results)
+mode: "local"
+
+# Local run parameters (used when mode: local)
+sorter:
+  name: "kilosort4"
+  params:
+    nblocks: 15                  # Drift correction blocks (0 = no drift correction)
+    Th_learned: 7.0              # Learning threshold
+    do_CAR: false                # KS internal CAR (disable: preprocessing already did CMR)
+    batch_size: auto             # "auto" or integer; auto = ResourceDetector recommends based on free VRAM
+    n_jobs: 1                    # KS internal parallelism (typically 1 for GPU)
+
+# Import parameters (used when mode: import)
+import:
+  format: "kilosort4"            # "kilosort4" | "phy"
+  # Per-probe import paths can be specified here or via CLI --import-path flag:
+  # paths:
+  #   imec0: "C:/kilosort_output/session_20260101/imec0"
+  #   imec1: "C:/kilosort_output/session_20260101/imec1"
+
+# SortingAnalyzer postprocessing (postprocess stage)
+analyzer:
+  random_spikes:
+    max_spikes_per_unit: 500     # Max spikes sampled per unit (controls memory)
+    method: "uniform"
+  waveforms:
+    ms_before: 1.0               # Pre-spike window (ms)
+    ms_after: 2.0                # Post-spike window (ms)
+  templates:
+    operators: ["average", "std"]
+  unit_locations:
+    method: "monopolar_triangulation"
+  template_similarity:
+    method: "cosine_similarity"

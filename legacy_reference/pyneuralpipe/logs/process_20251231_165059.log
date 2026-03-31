@@ -1,0 +1,15 @@
+2025-12-31 16:51:05 - process_20251231_165059 - INFO - MATLAB引擎初始化成功
+2025-12-31 16:51:05 - process_20251231_165059 - INFO - 开始步骤: load_spikeglx - 加载SpikeGLX神经数据和同步信号 (流: imec0.ap)
+2025-12-31 16:51:05 - process_20251231_165059 - INFO - 找到SpikeGLX文件夹: E:\TripleN10k_ZhangZhuang\NPX_ZhuangZhuang_251112_exp2_g2
+2025-12-31 16:51:08 - process_20251231_165059 - INFO - 成功加载nidq同步数据
+2025-12-31 16:51:08 - process_20251231_165059 - INFO - 数字通道映射: {'sync': 0, 'trial_start': 3, 'stim_onset': 6}
+2025-12-31 16:51:09 - process_20251231_165059 - INFO - 成功加载imec同步数据
+2025-12-31 16:51:09 - process_20251231_165059 - INFO - 步骤完成: load_spikeglx (耗时: 0:00:03.719386) - 成功加载SpikeGLX数据和同步信号
+2025-12-31 16:51:09 - process_20251231_165059 - INFO - 开始步骤: load_monkeylogic - 加载MonkeyLogic行为数据
+2025-12-31 16:51:09 - process_20251231_165059 - INFO - 找到MonkeyLogic文件: E:\TripleN10k_ZhangZhuang\251112_ZhuangZhuang_pv_oe_nsd1w.bhv2
+2025-12-31 17:04:46 - process_20251231_165059 - INFO - 使用h5py成功加载MAT文件(v7.3格式)
+2025-12-31 17:04:46 - process_20251231_165059 - INFO - 解析681个试次的MonkeyLogic数据
+2025-12-31 17:04:46 - process_20251231_165059 - INFO - 可用字段: ['AbsoluteTrialStartTime', 'AnalogData', 'BehavioralCodes', 'Block', 'BlockCount', 'Condition', 'CycleRate', 'ObjectStatusRecord', 'ReactionTime', 'RewardRecord', 'TaskObject', 'Trial', 'TrialDateTime', 'TrialError', 'TrialWithinBlock', 'UserVars', 'VariableChanges', 'Ver']
+2025-12-31 17:04:46 - process_20251231_165059 - INFO - 数据格式: h5py(列表)
+2025-12-31 17:04:46 - process_20251231_165059 - INFO - MonkeyLogic数据解析完成
+2025-12-31 17:04:47 - process_20251231_165059 - INFO - 步骤完成: load_monkeylogic (耗时: 0:13:38.176504) - 成功加载MonkeyLogic数据

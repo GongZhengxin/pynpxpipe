@@ -1,0 +1,34 @@
+# Core dependencies
+streamlit>=1.28.0
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+PyYAML>=6.0.0
+PyQt5>=5.15.0
+
+# Neural data processing
+spikeinterface>=0.100.0
+kilosort>=4.0.0
+pynwb>=2.5.0
+
+# Data I/O
+h5py>=3.8.0
+mat73>=0.59
+probeinterface>=0.2.0
+
+# MATLAB integration (optional)
+# Install MATLAB Engine API manually: 
+# cd /path/to/matlab/extern/engines/python && python setup.py install
+# matlabengine  # This will be available after manual installation
+
+# Optional dependencies for enhanced functionality
+plotly>=5.15.0
+bokeh>=3.0.0
+ipywidgets>=8.0.0
+
+# Development and testing
+pytest>=7.0.0
+black>=23.0.0
+flake8>=6.0.0
