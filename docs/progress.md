@@ -7,13 +7,13 @@
 ### Layer 0: 基础设施（无业务依赖）
 | 模块 | 文件 | 状态 | 依赖 | 备注 |
 |------|------|------|------|------|
-| 异常类 | core/errors.py | ✅ | 无 | 9 tests |
+| 异常类 | core/errors.py | ✅ | 无 | 16 tests（含 CheckpointError） |
 | 配置加载 | core/config.py | ✅ | errors | 285 tests，含集成测试 |
-| 结构化日志 | core/logging.py | ⬜ | 无 | |
-| Checkpoint | core/checkpoint.py | ⬜ | 无 | |
-| 资源探测 | core/resources.py | ⬜ | 无 | |
-| Session 对象 | core/session.py | ⬜ | config, checkpoint | |
-| Stage 基类 | stages/base.py | ⬜ | session, logging, checkpoint | |
+| 结构化日志 | core/logging.py | ✅ | 无 | 13 tests |
+| Checkpoint | core/checkpoint.py | ✅ | errors, logging | 38 tests |
+| 资源探测 | core/resources.py | ✅ | 无 | 41 tests |
+| Session 对象 | core/session.py | ✅ | config, checkpoint | 33 tests |
+| Stage 基类 | stages/base.py | ✅ | session, logging, checkpoint | 20 tests |
 
 ### Layer 1: IO 层（数据读写）
 | 模块 | 文件 | 状态 | 依赖 | 备注 |

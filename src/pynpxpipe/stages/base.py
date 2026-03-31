@@ -7,11 +7,14 @@ All stage subclasses must inherit from BaseStage. No UI dependencies.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+from pynpxpipe.core.checkpoint import CheckpointManager
+from pynpxpipe.core.logging import get_logger
 
 if TYPE_CHECKING:
     from pynpxpipe.core.session import Session
-    from pynpxpipe.core.checkpoint import CheckpointManager
 
 
 class BaseStage(ABC):
@@ -29,7 +32,7 @@ class BaseStage(ABC):
 
     def __init__(
         self,
-        session: "Session",
+        session: Session,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> None:
         """Initialize the stage with session state and optional progress callback.
@@ -39,8 +42,18 @@ class BaseStage(ABC):
             progress_callback: Optional callable ``(message, fraction)`` where
                 ``fraction`` is in [0.0, 1.0]. Pass None in CLI mode (progress
                 written to log only). Pass a GUI update function in GUI mode.
+
+        Raises:
+            ValueError: If STAGE_NAME is not set on the subclass.
         """
-        raise NotImplementedError("TODO")
+        if not self.STAGE_NAME:
+            raise ValueError(
+                f"{type(self).__name__}.STAGE_NAME must be set to a non-empty string"
+            )
+        self.session = session
+        self.progress_callback = progress_callback
+        self.logger = get_logger(f"pynpxpipe.stages.{self.STAGE_NAME}")
+        self.checkpoint_manager = CheckpointManager(session.output_dir)
 
     @abstractmethod
     def run(self) -> None:
@@ -75,7 +88,7 @@ class BaseStage(ABC):
         Returns:
             True if the checkpoint exists and has status "completed".
         """
-        raise NotImplementedError("TODO")
+        return self.checkpoint_manager.is_complete(self.STAGE_NAME, probe_id)
 
     def _write_checkpoint(self, data: dict, probe_id: str | None = None) -> None:
         """Write a completed checkpoint for this stage.
@@ -84,7 +97,7 @@ class BaseStage(ABC):
             data: Stage-specific payload to include in the checkpoint JSON.
             probe_id: Probe identifier for per-probe checkpoints, or None.
         """
-        raise NotImplementedError("TODO")
+        self.checkpoint_manager.mark_complete(self.STAGE_NAME, data, probe_id)
 
     def _write_failed_checkpoint(self, error: Exception, probe_id: str | None = None) -> None:
         """Write a failed checkpoint recording the error message.
@@ -93,4 +106,4 @@ class BaseStage(ABC):
             error: The exception that caused the failure.
             probe_id: Probe identifier for per-probe checkpoints, or None.
         """
-        raise NotImplementedError("TODO")
+        self.checkpoint_manager.mark_failed(self.STAGE_NAME, str(error), probe_id)

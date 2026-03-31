@@ -245,6 +245,20 @@ class BaseStage:
 - 未来 GUI 模式下传入 GUI 的进度更新函数
 - 所有 stage 在关键节点调用 _report_progress
 
+## 开发流程（harness 原则）
+
+每个模块**必须**严格按以下顺序完成，禁止跳步：
+
+1. **写 spec**：在 `docs/specs/{模块名}.md` 回答五个问题（目标 / 输入 / 输出 / 处理步骤 / 可配参数）
+2. **用户确认 spec**：spec 经用户审阅通过后，才能开始写代码
+3. **TDD — RED**：先写测试文件，运行确认全部失败（原因是功能缺失，不是语法错误）
+4. **TDD — GREEN**：写最小实现使测试通过，再次运行确认全绿
+5. **lint**：`uv run ruff check src/ tests/` 通过，`ruff format` 不报错
+6. **更新进度**：将 `docs/progress.md` 对应行状态改为 `✅`，填写测试数量
+
+**即使模块已有骨架代码（`raise NotImplementedError`），也必须先补写 spec 才能开始 TDD。**
+骨架代码的存在不构成跳过 spec 的理由。
+
 ## 开发工具链
 
 ### 运行命令（只允许这些方式）
