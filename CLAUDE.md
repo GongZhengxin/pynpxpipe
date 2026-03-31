@@ -245,6 +245,28 @@ class BaseStage:
 - 未来 GUI 模式下传入 GUI 的进度更新函数
 - 所有 stage 在关键节点调用 _report_progress
 
+## 开发工具链
+
+### 运行命令（只允许这些方式）
+
+```bash
+uv run pytest                           # 运行全部测试
+uv run pytest tests/path/test.py -v    # 运行单个测试文件
+uv run ruff check src/ tests/          # Lint 检查
+uv run ruff format src/ tests/         # 格式化
+```
+
+### 绝对禁止
+
+- 禁止 `pip install` 任何包（uv 管理所有依赖，依赖只能改 pyproject.toml）
+- 禁止 `python -m pytest`（绕过 uv 虚拟环境，可能找不到已安装的包）
+- 禁止 `pip install -e .` 或 `python setup.py`
+
+### 开发进度追踪
+
+每完成一个模块实现（测试全绿 + ruff 通过），立即将 `docs/progress.md`
+中对应行的状态从 `⬜` 更新为 `✅`（完成）或 `🔵`（实现中）。
+
 ## Windows 兼容性注意
 
 - 开发环境为 Windows + VSCode

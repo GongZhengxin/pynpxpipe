@@ -7,7 +7,8 @@
 ### Layer 0: 基础设施（无业务依赖）
 | 模块 | 文件 | 状态 | 依赖 | 备注 |
 |------|------|------|------|------|
-| 配置加载 | core/config.py | ⬜ | 无 | |
+| 异常类 | core/errors.py | ✅ | 无 | 9 tests |
+| 配置加载 | core/config.py | ✅ | errors | 285 tests，含集成测试 |
 | 结构化日志 | core/logging.py | ⬜ | 无 | |
 | Checkpoint | core/checkpoint.py | ⬜ | 无 | |
 | 资源探测 | core/resources.py | ⬜ | 无 | |
