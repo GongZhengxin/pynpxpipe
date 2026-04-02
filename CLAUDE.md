@@ -31,7 +31,7 @@ pynpxpipe：神经电生理数据预处理工具包。
 ### Stage 定义（按顺序执行）
 
 1. **discover** — 扫描 SpikeGLX 文件夹，发现所有 probe、验证数据完整性（meta + bin 文件大小匹配）、提取元信息
-2. **preprocess** — 对每个 probe 的 AP 数据做预处理：bandpass filter → common median reference → 运动校正(motion correction/drift correction with dredge)
+2. **preprocess** — 对每个 probe 的 AP 数据做预处理：phase shift（Neuropixels ADC 时序校正，必须第一步）→ bandpass filter → 坏道检测与剔除 → CMR → 运动校正（DREDge，可选；与 KS4 内部 nblocks 互斥）→ 保存 Zarr
 3. **sort** — 对每个 probe 独立运行 spike sorting（默认 Kilosort4 via SpikeInterface），或导入外部 sorting 结果
 4. **synchronize** — 多层时间同步 + 行为事件解析（详见下方同步设计）
 5. **curate** — 质控与自动筛选：使用 SpikeInterface 内置的 quality_metrics + curation
@@ -89,65 +89,44 @@ class SubjectConfig:
 - synchronize 阶段：先对齐所有 probe 到 NI 时钟，再对齐行为事件
 - export 阶段：所有 probe 数据写入同一个 NWB 文件的不同 ElectrodeGroup
 
-### synchronize 详细设计
+### synchronize 设计约束
 
-同步架构（以 NIDQ 为中介的三级对齐）：
+同步采用以 NIDQ 为中介的三级对齐架构：
+IMEC↔NIDQ 时钟对齐（线性回归）→ BHV2↔NIDQ 事件匹配 → Photodiode 模拟信号校准。
+详细算法和参数见 `docs/architecture.md` Section 2.4。
 
-- 第一级：IMEC ↔ NIDQ 时钟对齐。每个 IMEC probe 的 AP 数据流通过
-  SpikeGLX 内置的同步脉冲（数字口）与 NIDQ 时钟对齐。提取双方 sync 脉冲
-  上升沿时间序列，线性回归建立校正函数 t_nidq = a × t_imec + b，
-  验证残差 < max_time_error_ms。
+**关键约束**：
+- BHV2 解析必须通过 MATLAB 引擎（`matlab.engine`），不能用 h5py 直接读 .bhv2
+- .bhv2 是 MonkeyLogic 自定义二进制格式（非 HDF5）；h5py 只用于读中间 .mat 文件
+- BHV2 文件验证 magic：前 21 字节 = `b'\x0d\x00\x00\x00\x00\x00\x00\x00IndexPosition'`
+- BHV2 所有读取操作（元信息 + trial 数据 + 眼动）统一在 synchronize 阶段，不拆到 discover
+- 诊断图生成逻辑独立为 `io/sync_plots.py`，stages 层禁止 import matplotlib
+- 输出：`sync_tables.json` + `behavior_events.parquet` + `sync/figures/`
 
-- 第二级：BHV2 ↔ NIDQ 事件对齐。MonkeyLogic 在每个行为事件发生时，
-  通过数字口向 NIDQ 发送特定的数字编码信号。从 NIDQ 数字通道解码事件码序列，
-  与 BHV2 文件中的事件时间戳按 trial 匹配对齐。自动检测并修复 trial_start_bit
-  映射错误（遍历 bit 0-7 找匹配）。同时提取 BHV2 元信息（DatasetName 等）。
-  注意：BHV2 解析需要 MATLAB 引擎（通过 Python 调用），因此 BHV2 相关的
-  所有读取操作（包括元信息提取）统一在 synchronize 阶段完成，不拆到 discover。
+**IO 模块 spec 写作规则**：写外部格式模块的 spec 前，必须先读 `legacy_reference/` 确认实际格式，不得凭假设。
 
-- 第三级：Photodiode 模拟信号校准。NIDQ 模拟通道中的 photodiode 信号
-  精确检测每个 stimulus 的实际显示时刻，校正数字事件码与实际显示的延迟差。
-  算法流程：
-  1. 从 NIDQ 模拟通道（索引由 config sync.photodiode_channel_index 指定）
-     读取 photodiode 信号，int16 转电压（量程从 nidq.meta 读取）
-  2. 重采样到 1ms 分辨率（resample_poly，比率从采样率精确计算）
-  3. 以数字事件码 stim onset 为参考，提取 [-10ms, +100ms] 窗口
-  4. 逐 trial 独立 z-score 归一化
-  5. 计算全局阈值（跨 trial 共享）：0.1×baseline_mean + 0.9×stimulus_period_mean
-  6. 逐 trial 首次超阈值检测确定 onset_latency（相对数字触发的延迟 ms）
-  7. 校正显示器系统延迟（monitor_delay_ms，从配置读取，60Hz 约 -5ms）
-  8. 通过 np.interp 将校准后的 onset 时间从 NI 时钟转换到 IMEC 时钟
-  边界情况处理（旧代码未覆盖，新架构必须处理）：
-  - onset_latency < 0（信号在触发前超阈）：记录警告，标记该 trial 为可疑
-  - photodiode 信号接近零（接头松动）：检测信号方差，过低时 raise SyncError
-  - 窗口越界（录制起始附近的 onset）：跳过该 trial，记录警告
+### Bombcell 集成（curate 阶段）
 
-同步验证（诊断图）：
-- 每个对齐步骤完成后生成诊断图，保存到 {output_dir}/sync/figures/
-- 由配置项 sync.generate_plots 控制（默认 true）
-- 必须包含的图表：
-  1. sync_drift_{probe_id}.png — IMEC↔NIDQ 时钟漂移散点图 + 线性回归拟合线
-  2. event_alignment.png — BHV2 vs NIDQ 逐 trial onset 数量散点图
-  3. photodiode_heatmap.png — 所有 trial 的校准后 photodiode 信号热力图
-  4. onset_latency_histogram.png — 逐 trial photodiode 延迟分布直方图
-  5. photodiode_mean_signal.png — 校准前 vs 校准后平均 photodiode 信号叠加对比
-  6. sync_pulse_interval.png — 相邻 sync 脉冲间隔 vs 期望间隔（检测时钟不稳定）
-- 诊断图生成逻辑独立为 io/sync_plots.py，stages 层不 import matplotlib
+- Bombcell 用于基于 quality metrics 的阈值分类（noise / mua / good / non-somatic）
+- **SpikeInterface 0.104+ 原生集成**：`spikeinterface.curation.bombcell_label_units(analyzer, thresholds)`
+- 调用流程：
+  1. 先计算 quality metrics：`analyzer.compute("quality_metrics")`
+  2. 获取阈值：`thresholds = sc.bombcell_get_default_thresholds()`（或从 config 加载）
+  3. 分类：`labels = sc.bombcell_label_units(analyzer, thresholds, label_non_somatic=True)`
+- 输出：DataFrame with `bombcell_label` 列（值："noise" / "mua" / "good" / "non_soma_mua"）
 
-同步结果：
-- 所有数据流的时间戳统一到 NIDQ 时钟
-- 每个 probe 的时间校正函数参数
-- Photodiode 校准后的精确 stimulus onset 时间（IMEC 时钟）
-- BHV2 行为事件表（统一时间轴）
-- BHV2 元信息（dataset_name 等）
-- 输出文件：sync_tables.json + behavior_events.parquet + figures/
+### SLAy 集成（postprocess 阶段）
 
-### SLAY 集成（postprocess 阶段）
-
-- SLAY (Stimulus-Locked Activity Yield) 用于评估每个 unit 对 stimulus 响应的可靠性
-- 依赖：sorting 结果（spike times）+ 同步后的 stimulus onset times（来自 synchronize stage）
-- 使用 spikeinterface 生态中的 SLAY 实现（如可用），否则独立实现
-- SLAY 分数作为 unit 的附加 quality metric，写入 NWB 的 units table
+- SLAy (Splitting and Labeling Algorithm) 用于检测并合并被 sorter 过度分割的同一神经元
+- **SpikeInterface 0.104+ 原生集成**：作为 `compute_merge_unit_groups()` 的 preset
+- 调用方式：
+  ```python
+  from spikeinterface.curation import compute_merge_unit_groups
+  merge_groups = compute_merge_unit_groups(analyzer, preset="slay", resolve_graph=True)
+  analyzer_merged = analyzer.merge_units(merge_unit_groups=merge_groups)
+  ```
+- 其他可用 presets：`similarity_correlograms`, `temporal_splits`, `x_contaminations`, `feature_neighbors`
+- 注意：合并操作不可逆
 
 ### LFP 处理（预留）
 
@@ -159,7 +138,7 @@ class SubjectConfig:
 ## 技术栈
 
 - Python >= 3.11
-- spikeinterface >= 0.101（使用最新稳定版 API）
+- spikeinterface >= 0.104（使用最新稳定版 API，内置 Bombcell 和 SLAY）
 - probeinterface
 - pynwb >= 2.8
 - neo
@@ -268,6 +247,8 @@ uv run pytest                           # 运行全部测试
 uv run pytest tests/path/test.py -v    # 运行单个测试文件
 uv run ruff check src/ tests/          # Lint 检查
 uv run ruff format src/ tests/         # 格式化
+uv run jupyter lab                     # 启动 JupyterLab 打开 tutorials/
+uv run pytest --nbmake tutorials/      # 自动执行所有 notebook cell（CI 验证用）
 ```
 
 ### 绝对禁止
@@ -290,16 +271,11 @@ uv run ruff format src/ tests/         # 格式化
 
 ## 从旧代码迁移的注意事项
 
-参照 docs/legacy_analysis.md 中的问题清单：
-- 旧代码中所有硬编码的 30000Hz、imec0、通道名、事件码 64 等必须参数化
-- 旧代码的 neo_reader.signals_info_dict 私有属性访问必须替换为 spikeinterface 公开 API
-- bombcell 的功能用 spikeinterface.curation 和 quality_metrics 替代
-- 旧代码的眼动矩阵预分配方式需要改为按 trial 分块处理
-- synchronizer.py 行 201 的 CodeVal==64 硬编码必须参数化为 config 中的 sync.imec_sync_code
-  （或从信号自动检测：找频率约 1Hz 的码值）
-- synchronizer.py 行 397 的 trial_codes==64 必须使用 config.sync.stim_onset_code
-- photodiode np.squeeze 假设单列的问题，改为按 sync.photodiode_channel_index 显式索引
-- eye_matrix 3D 预分配改为按 trial 分块处理，移至 postprocess 阶段
-- matplotlib.use('Agg') 移除，图表生成独立到 io/sync_plots.py
-- synchronizer 中 BHV2 文件名解析（split('_')[1:3]）改为从 BHV2 内容或 Session 对象读取
-- monitor_delay_correction 硬编码 -5 改为从 config.sync.monitor_delay_ms 读取
+参照 `docs/legacy_analysis.md` 中的详细问题清单和新旧对比表。关键原则：
+- 旧代码所有硬编码值（采样率 30000 Hz、探针名 imec0、事件码 64 等）全部参数化
+- 用 SpikeInterface 公开 API 替代私有属性（`neo_reader.signals_info_dict` 等）
+- 用 SpikeInterface 原生 quality_metrics 替代 bombcell
+- 眼动矩阵预分配（3D）→ 按 trial 分块处理
+- `matplotlib.use('Agg')` 从业务层移除，图表生成统一到 `io/sync_plots.py`
+- 预处理链顺序已修正：phase_shift 必须在 bandpass_filter **之前**（旧代码顺序错误）
+- 新增 DREDge 运动校正（旧代码无此步骤）；与 KS4 内部 nblocks 互斥，二选一
