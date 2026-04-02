@@ -243,7 +243,17 @@ preprocess stage 已完成 CMR（公共中位参考）和可选的 DREDge 运动
 **本地运行模式**（`mode: local`）：
 1. 从 Zarr 加载预处理 recording
 2. 根据 preprocess 配置动态构造 KS4 参数（`do_CAR: false`；`nblocks` 由 `motion_correction.method` 决定）
-3. 调用 `si.run_sorter(sorter_name, recording, output_folder="{output_dir}/sorting/{probe_id}")`
+3. 调用 spike sorter：
+   ```python
+   from spikeinterface.sorters import run_sorter
+
+   sorting = run_sorter(
+       sorter_name="kilosort4",
+       recording=recording,
+       folder=output_folder,
+       **sorter_params
+   )
+   ```
 4. 验证 sorting 结果：spike_times 非空，cluster 数合理（>0）
 5. `del recording`；`gc.collect()`（GPU 内存由 Kilosort 自行管理，处理完探针后释放）
 
