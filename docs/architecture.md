@@ -137,12 +137,12 @@ recording.save(
 
 **处理逻辑**（对每个 probe 串行）：
 1. 用 `si.read_spikeglx()` 以 lazy 方式加载 AP recording（Recording 对象仅存指针）
-2. **Phase shift**：`spre.phase_shift(recording)` — Neuropixels 特有步骤，必须在任何滤波之前执行（原理见下方说明）
-3. **Bandpass filter**：`spre.bandpass_filter(freq_min=300, freq_max=6000)` — 参数从配置读取；在坏道检测前滤波，使 coherence+psd 方法工作在 AP 频段
-4. **坏道检测**：`spre.detect_bad_channels(method="coherence+psd", dead_channel_threshold=0.5, noisy_channel_threshold=1.0)` — 在已滤波数据上运行，检测结果更可靠
+2. **Phase shift**：`phase_shift(recording)` — Neuropixels 特有步骤，必须在任何滤波之前执行（原理见下方说明）
+3. **Bandpass filter**：`bandpass_filter(recording, freq_min=300, freq_max=6000)` — 参数从配置读取；在坏道检测前滤波，使 coherence+psd 方法工作在 AP 频段
+4. **坏道检测**：`detect_bad_channels(recording, method="coherence+psd", dead_channel_threshold=0.5, noisy_channel_threshold=1.0)` — 在已滤波数据上运行，检测结果更可靠
 5. **剔除坏道**：`recording.remove_channels(bad_ids)` — 在 CMR 之前剔除，防止坏道污染全局中位参考
-6. **CMR**：`spre.common_reference(reference="global", operator="median")` — 去除共模噪声（电极贴合不稳、运动伪迹）
-7. **运动校正**（可选）：`spre.correct_motion(preset="nonrigid_accurate")` — 由配置 `motion_correction.method` 控制；与 KS4 `nblocks` 参数互斥
+6. **CMR**：`common_reference(recording, reference="global", operator="median")` — 去除共模噪声（电极贴合不稳、运动伪迹）
+7. **运动校正**（可选）：`correct_motion(recording, preset="nonrigid_accurate")` — 由配置 `motion_correction.method` 控制；与 KS4 `nblocks` 参数互斥
 8. 将预处理后的 recording 保存为 Zarr 格式到 `{output_dir}/preprocessed/{probe_id}/`
 9. 写 per-probe checkpoint；`del recording`；`gc.collect()`
 
@@ -150,11 +150,11 @@ recording.save(
 
 | 步骤 | SI 函数 | 关键参数 | 配置路径 | 备注 |
 |------|---------|---------|---------|------|
-| Phase shift | `spre.phase_shift()` | 无需参数（从 meta 自动读取） | — | Neuropixels 特有，非 Neuropixels 探针跳过 |
-| Bandpass filter | `spre.bandpass_filter()` | `freq_min=300`, `freq_max=6000` | `preprocess.bandpass.*` | Hz 单位，从配置读取 |
-| Bad channel detection | `spre.detect_bad_channels()` | `method`, `dead_channel_threshold`, `noisy_channel_threshold` | `preprocess.bad_channel_detection.*` | 返回 bad_ids 和 channel_labels |
-| CMR | `spre.common_reference()` | `reference="global"`, `operator="median"` | `preprocess.common_reference.*` | 全局中位参考 |
-| Motion correction | `spre.correct_motion()` | `preset="nonrigid_accurate"` | `preprocess.motion_correction.*` | `method: null` 时跳过 |
+| Phase shift | `phase_shift()` | 无需参数（从 meta 自动读取） | — | Neuropixels 特有，非 Neuropixels 探针跳过 |
+| Bandpass filter | `bandpass_filter()` | `freq_min=300`, `freq_max=6000` | `preprocess.bandpass.*` | Hz 单位，从配置读取 |
+| Bad channel detection | `detect_bad_channels()` | `method`, `dead_channel_threshold`, `noisy_channel_threshold` | `preprocess.bad_channel_detection.*` | 返回 bad_ids 和 channel_labels |
+| CMR | `common_reference()` | `reference="global"`, `operator="median"` | `preprocess.common_reference.*` | 全局中位参考 |
+| Motion correction | `correct_motion()` | `preset="nonrigid_accurate"` | `preprocess.motion_correction.*` | `method: null` 时跳过 |
 | 保存 | `recording.save()` | `format="zarr"`, `n_jobs`, `chunk_duration` | `resources.*` | Zarr 格式，支持 lazy 重新加载 |
 
 **为什么 phase shift 必须在带通滤波之前**：
