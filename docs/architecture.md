@@ -583,6 +583,60 @@ curation:
    - 将 `trial_valid` 列写入 `behavior_events.parquet`（原地更新）
 5. 保存完整 analyzer 到磁盘；`del analyzer`；`gc.collect()`
 
+**SLAY 计算（Stimulus-Locked Activity Yield）**
+
+SLAY 衡量神经元响应的 trial-to-trial 可靠性（response reliability）。
+
+**算法**：
+1. 将 `[onset - pre_s, onset + post_s]` 窗口分成 10ms bins
+2. 对每个 trial，计算每个 bin 的 spike count，形成向量
+3. 计算所有 trial 对之间的 Spearman 相关系数（对低发放率更稳健）
+4. SLAY = 所有 trial 对相关系数的平均值（范围 [0, 1]）
+
+**参数**：
+- `pre_s`：stimulus onset 前的窗口长度（秒），默认 0.05
+- `post_s`：stimulus onset 后的窗口长度（秒），默认 0.30
+- `bin_size_ms`：bin 大小（ms），固定 10ms
+
+**返回值**：
+- `float`：0-1，1 表示所有 trial 响应完全一致
+- `np.nan`：有效 trial 数 < 5
+
+**为什么用 Spearman 而非 Pearson**：低发放率时 spike count 分布非正态，Spearman 更稳健，不受极端值影响。
+
+**参考实现**：
+```python
+from scipy.stats import spearmanr
+import numpy as np
+
+def compute_slay(spike_times, stim_onset_times, pre_s=0.05, post_s=0.30, bin_size_ms=10):
+    valid_onsets = stim_onset_times[~np.isnan(stim_onset_times)]
+    if len(valid_onsets) < 5:
+        return np.nan
+    bin_size_s = bin_size_ms / 1000.0
+    window_duration = pre_s + post_s
+    n_bins = int(window_duration / bin_size_s)
+    trial_vectors = []
+    for onset in valid_onsets:
+        spikes_in_window = spike_times[
+            (spike_times >= onset - pre_s) & (spike_times < onset + post_s)
+        ]
+        counts, _ = np.histogram(
+            spikes_in_window - (onset - pre_s),
+            bins=n_bins,
+            range=(0, window_duration)
+        )
+        trial_vectors.append(counts)
+    trial_vectors = np.array(trial_vectors)
+    correlations = []
+    for i in range(len(trial_vectors)):
+        for j in range(i + 1, len(trial_vectors)):
+            corr, _ = spearmanr(trial_vectors[i], trial_vectors[j])
+            if not np.isnan(corr):
+                correlations.append(corr)
+    return float(np.mean(correlations)) if correlations else np.nan
+```
+
 **输出**：
 - `{output_dir}/postprocessed/{probe_id}/` — 完整 SortingAnalyzer
   - 含：waveforms, templates, unit_locations, template_similarity, correlograms
