@@ -316,7 +316,7 @@ class PostprocessStage(BaseStage):
 |---|---|---|
 | `pynpxpipe.stages.base.BaseStage` | 项目内部 | 基类 |
 | `pynpxpipe.core.errors.PostprocessError` | 项目内部 | 后处理失败时抛出 |
-| `pynpxpipe.io.bhv.BHV2Parser` | 项目内部 | 眼동数据读取（分 trial 块） |
+| `pynpxpipe.io.bhv.BHV2Parser` | 项目内部 | 眼动数据读取（分 trial 块） |
 | `spikeinterface.core` | 第三方 | `create_sorting_analyzer`、`load_extractor` |
 | `numpy` | 必选 | SLAY 计算 |
 | `scipy.stats` | 必选 | Spearman 相关系数计算（`spearmanr`） |
