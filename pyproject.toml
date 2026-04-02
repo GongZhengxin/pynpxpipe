@@ -12,7 +12,7 @@ dependencies = [
     "numpy>=1.24.0",
     "scipy>=1.10.0",
     # Electrophysiology pipeline
-    "spikeinterface[full]>=0.101.0",
+    "spikeinterface[full]>=0.104.0",
     "probeinterface>=0.2.0",
     # NWB output
     "pynwb>=2.8.0",
@@ -35,10 +35,15 @@ dependencies = [
 gpu = [
     "nvidia-ml-py>=12.535.0",  # pynvml: GPU VRAM detection via NVML (optional, Windows/Linux)
 ]
+
+[dependency-groups]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.4.0",
+    # Tutorial notebooks
+    "jupyterlab>=4.0.0",
+    "nbmake>=1.4.0",
 ]
 
 [project.scripts]
