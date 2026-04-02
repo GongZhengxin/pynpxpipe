@@ -480,7 +480,7 @@ for cp_file in sorted(checkpoints_dir.glob("*.json")):
 
 if rows:
     df_cp = pd.DataFrame(rows).set_index("file")
-    display(df_cp.style.applymap(
+    display(df_cp.style.map(
         lambda v: "color: green" if v == "completed" else
                   ("color: red" if v == "failed" else ""),
         subset=["status"]
