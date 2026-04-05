@@ -12,10 +12,12 @@ from pynpxpipe.core.config import (
     BandpassConfig,
     CommonReferenceConfig,
     CurationConfig,
+    EyeValidationConfig,
     ImportConfig,
     MotionCorrectionConfig,
     ParallelConfig,
     PipelineConfig,
+    PostprocessConfig,
     PreprocessConfig,
     RandomSpikesConfig,
     ResourcesConfig,
@@ -74,6 +76,16 @@ def test_curation_config_default_instantiation():
 
 def test_sync_config_default_instantiation():
     cfg = SyncConfig()
+    assert cfg is not None
+
+
+def test_eye_validation_config_default_instantiation():
+    cfg = EyeValidationConfig()
+    assert cfg is not None
+
+
+def test_postprocess_config_default_instantiation():
+    cfg = PostprocessConfig()
     assert cfg is not None
 
 
@@ -300,6 +312,27 @@ def test_preprocess_config_has_exactly_4_fields():
 # ---------------------------------------------------------------------------
 # 7. AnalyzerConfig field structure
 # ---------------------------------------------------------------------------
+
+
+def test_pipeline_config_has_exactly_6_fields():
+    import dataclasses
+
+    fields = dataclasses.fields(PipelineConfig)
+    assert len(fields) == 6
+
+
+def test_sync_config_has_exactly_14_fields():
+    import dataclasses
+
+    fields = dataclasses.fields(SyncConfig)
+    assert len(fields) == 14
+
+
+def test_postprocess_config_has_exactly_3_fields():
+    import dataclasses
+
+    fields = dataclasses.fields(PostprocessConfig)
+    assert len(fields) == 3
 
 
 def test_analyzer_config_has_random_spikes_field():

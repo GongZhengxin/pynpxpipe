@@ -162,6 +162,39 @@ class SyncConfig:
     stim_onset_code: int = 64
     imec_sync_code: int = 64
     generate_plots: bool = True
+    gap_threshold_ms: float | None = 1200.0
+    trial_start_bit: int | None = None
+    pd_window_pre_ms: float = 10.0
+    pd_window_post_ms: float = 100.0
+    pd_min_signal_variance: float = 1e-6
+
+
+@dataclass
+class EyeValidationConfig:
+    """Eye movement validation parameters for postprocess stage.
+
+    Attributes:
+        enabled: Whether to perform eye movement validation.
+        eye_threshold: Fixation ratio threshold for trial validity.
+    """
+
+    enabled: bool = True
+    eye_threshold: float = 0.999
+
+
+@dataclass
+class PostprocessConfig:
+    """Postprocess stage parameters.
+
+    Attributes:
+        slay_pre_s: Pre-stimulus window for SLAY merging (seconds).
+        slay_post_s: Post-stimulus window for SLAY merging (seconds).
+        eye_validation: Eye movement validation parameters.
+    """
+
+    slay_pre_s: float = 0.05
+    slay_post_s: float = 0.30
+    eye_validation: EyeValidationConfig = field(default_factory=EyeValidationConfig)
 
 
 @dataclass
@@ -174,6 +207,7 @@ class PipelineConfig:
         preprocess: Preprocessing stage parameters.
         curation: Curation thresholds.
         sync: Synchronization parameters.
+        postprocess: Postprocess stage parameters.
     """
 
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
@@ -181,6 +215,7 @@ class PipelineConfig:
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     curation: CurationConfig = field(default_factory=CurationConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
 
 
 @dataclass
@@ -451,6 +486,35 @@ def _build_curation(raw: dict) -> CurationConfig:
         CurationConfig with known keys applied and defaults for the rest.
     """
     return CurationConfig(**_extract_known(raw, CurationConfig))
+
+
+def _build_eye_validation(raw: dict) -> EyeValidationConfig:
+    """Build an EyeValidationConfig from a raw YAML dict.
+
+    Args:
+        raw: Mapping of eye validation config keys. Unknown keys are ignored.
+
+    Returns:
+        EyeValidationConfig with known keys applied and defaults for the rest.
+    """
+    return EyeValidationConfig(**_extract_known(raw, EyeValidationConfig))
+
+
+def _build_postprocess(raw: dict) -> PostprocessConfig:
+    """Build a PostprocessConfig from a raw YAML dict, recursing into sub-sections.
+
+    Args:
+        raw: Mapping of postprocess config keys. Unknown keys are ignored.
+
+    Returns:
+        PostprocessConfig with all nested configs populated.
+    """
+    eye_validation = _build_eye_validation(raw.get("eye_validation") or {})
+
+    handled = {"eye_validation"}
+    top_known = _extract_known({k: v for k, v in raw.items() if k not in handled}, PostprocessConfig)
+
+    return PostprocessConfig(eye_validation=eye_validation, **top_known)
 
 
 def _build_sync(raw: dict) -> SyncConfig:
@@ -835,7 +899,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
 
     # Log unknown top-level keys
-    known_top_keys = {"resources", "parallel", "preprocess", "curation", "sync"}
+    known_top_keys = {"resources", "parallel", "preprocess", "curation", "sync", "postprocess"}
     for key in raw:
         if key not in known_top_keys:
             _log.debug("unknown config key ignored", key=key, section="PipelineConfig")
@@ -846,6 +910,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         preprocess=_build_preprocess(raw.get("preprocess") or {}),
         curation=_build_curation(raw.get("curation") or {}),
         sync=_build_sync(raw.get("sync") or {}),
+        postprocess=_build_postprocess(raw.get("postprocess") or {}),
     )
 
     _validate_pipeline_config(config)
@@ -960,6 +1025,7 @@ def merge_with_overrides(
             preprocess=_build_preprocess(merged.get("preprocess") or {}),
             curation=_build_curation(merged.get("curation") or {}),
             sync=_build_sync(merged.get("sync") or {}),
+            postprocess=_build_postprocess(merged.get("postprocess") or {}),
         )
         _validate_pipeline_config(new_config)
     elif isinstance(config, SortingConfig):

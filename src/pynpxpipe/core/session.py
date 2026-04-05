@@ -85,6 +85,7 @@ class Session:
     output_dir: Path
     subject: SubjectConfig
     bhv_file: Path
+    config: object = field(default_factory=dict)  # PipelineConfig instance, injected by SessionManager
     probes: list[ProbeInfo] = field(default_factory=list)
     checkpoint: dict = field(default_factory=dict)
     log_path: Path = field(init=False)
