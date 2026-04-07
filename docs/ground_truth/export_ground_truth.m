@@ -3,6 +3,7 @@ function export_bhv2_ground_truth(bhv2_file, output_dir)
 %
 % Usage:
 %   addpath('F:\tools\pynpxpipe\legacy_reference\pyneuralpipe\Util');
+%   addpath('F:\tools\pynpxpipe\docs\ground_truth');
 %   export_bhv2_ground_truth( ...
 %       'F:\#Datasets\demo_rawdata\241026_MaoDan_YJ_WordLOC.bhv2', ...
 %       'F:\tools\pynpxpipe\tests\fixtures\bhv2_ground_truth');
@@ -87,15 +88,15 @@ end
 function out = clean(val)
 % Recursively convert MATLAB value to JSON-serializable form.
     if isa(val, 'function_handle')
-        out = struct('_t', 'fh', 'v', func2str(val));
+        out = struct('tp', 'fh', 'v', func2str(val));
 
     elseif isa(val, 'containers.Map')
         try
             k   = keys(val);
             v   = cellfun(@clean, values(val), 'UniformOutput', false);
-            out = struct('_t', 'map', 'keys', {k}, 'values', {v});
+            out = struct('tp', 'map', 'keys', {k}, 'values', {v});
         catch
-            out = struct('_t', 'unsupported', 'class', 'containers.Map');
+            out = struct('tp', 'unsupported', 'class', 'containers.Map');
         end
 
     elseif isstruct(val)
@@ -120,7 +121,7 @@ function out = clean(val)
         cn = class(val);
         if isfield(dt_map, cn), dtype = dt_map.(cn); else, dtype = cn; end
         % val(:) flattens column-major; cast to double for JSON numbers
-        out = struct('_t','nd', 'dt',dtype, 'sh',{size(val)}, 'd',{double(val(:))'});
+        out = struct('tp','nd', 'dt',dtype, 'sh',{size(val)}, 'd',{double(val(:))'});
 
     elseif isnumeric(val) && isscalar(val)
         if isnan(val),          out = '__NaN__';
@@ -136,7 +137,7 @@ function out = clean(val)
         out = val;
 
     else
-        out = struct('_t', 'unsupported', 'class', class(val));
+        out = struct('tp', 'unsupported', 'class', class(val));
     end
 end
 
