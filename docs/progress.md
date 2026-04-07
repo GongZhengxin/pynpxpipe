@@ -1,44 +1,95 @@
 # pynpxpipe 开发进度
 
-## 构建块状态
+## M1 进度总览 ✅ 已完成
 
-状态标记：⬜ 未开始 | 🟡 spec 已写 | 🔵 实现中 | ✅ 完成（测试通过+committed）| 🔴 阻塞
+完成：22/22 模块 | 测试：779 passed | 覆盖率：~80%
 
-### Layer 0: 基础设施（无业务依赖）
-| 模块 | 文件 | 状态 | 依赖 | 备注 |
-|------|------|------|------|------|
-| 异常类 | core/errors.py | ✅ | 无 | 16 tests（含 CheckpointError） |
-| 配置加载 | core/config.py | ✅ | errors | 285 tests，含集成测试 |
-| 结构化日志 | core/logging.py | ✅ | 无 | 13 tests |
-| Checkpoint | core/checkpoint.py | ✅ | errors, logging | 38 tests |
-| 资源探测 | core/resources.py | ✅ | 无 | 41 tests |
-| Session 对象 | core/session.py | ✅ | config, checkpoint | 33 tests |
-| Stage 基类 | stages/base.py | ✅ | session, logging, checkpoint | 20 tests |
+<details>
+<summary>模块依赖图（全部 ✅）</summary>
 
-### Layer 1: IO 层（数据读写）
-| 模块 | 文件 | 状态 | 依赖 | 备注 |
-|------|------|------|------|------|
-| SpikeGLX 读取 | io/spikeglx.py | ⬜ | 无 | |
-| BHV2 解析 | io/bhv.py | ⬜ | MATLAB Engine | |
-| NWB 写入 | io/nwb_writer.py | ⬜ | 无 | |
-| IMEC↔NIDQ 对齐 | io/sync/imec_nidq_align.py | ⬜ | io/spikeglx | |
-| BHV2↔NIDQ 对齐 | io/sync/bhv_nidq_align.py | ⬜ | io/bhv | |
-| Photodiode 校准 | io/sync/photodiode_calibrate.py | ⬜ | 无 | |
-| 同步诊断图 | io/sync_plots.py | ⬜ | matplotlib | |
+```
+Layer 0 (core):  errors → config → session → checkpoint → logging → resources → base
+                   ✅       ✅       ✅         ✅           ✅        ✅        ✅
 
-### Layer 2: Stages（处理阶段）
-| 模块 | 文件 | 状态 | 依赖 | 备注 |
-|------|------|------|------|------|
-| discover | stages/discover.py | ⬜ | base, io/spikeglx | |
-| preprocess | stages/preprocess.py | ⬜ | base, io/spikeglx | |
-| sort | stages/sort.py | ⬜ | base | |
-| synchronize | stages/synchronize.py | ⬜ | base, io/sync/* | |
-| curate | stages/curate.py | ⬜ | base | |
-| postprocess | stages/postprocess.py | ⬜ | base | |
-| export | stages/export.py | ⬜ | base, io/nwb_writer | |
+Layer 1 (io):    spikeglx ──→ imec_nidq_align ──┐
+                    ✅              ✅            │
+                 bhv ──→ bhv_nidq_align ────────┤
+                  ✅          ✅                 ├──→ sync_plots
+                      photodiode_calibrate ─────┘        🟡
+                              ✅
+                 nwb_writer
+                    ✅
 
-### Layer 3: 编排与入口
-| 模块 | 文件 | 状态 | 依赖 | 备注 |
-|------|------|------|------|------|
-| Pipeline Runner | pipelines/runner.py | ⬜ | all stages, resources | |
-| CLI 入口 | cli/main.py | ⬜ | pipelines/runner | |
+Layer 2 (stages): discover → preprocess → sort ──→ synchronize → curate → postprocess → export
+                     ✅          ✅        ✅           ✅          ✅        ✅         ✅
+
+Layer 3 (orch):  runner → cli_main
+                   ✅       ✅
+```
+
+</details>
+
+<details>
+<summary>已完成模块明细</summary>
+
+| 模块 | 文件 | 测试数 | 备注 |
+|------|------|--------|------|
+| errors | core/errors.py | 16 | 含 CheckpointError |
+| config | core/config.py | 285 | 含集成测试 |
+| logging | core/logging.py | 13 | |
+| checkpoint | core/checkpoint.py | 38 | |
+| resources | core/resources.py | 41 | |
+| session | core/session.py | 33 | |
+| base | stages/base.py | 20 | |
+| spikeglx | io/spikeglx.py | 35 | |
+| bhv | io/bhv.py | 27 | 真实 MATLAB Engine，无 mock |
+| discover | stages/discover.py | 16 | |
+| preprocess | stages/preprocess.py | 19 | |
+| sort | stages/sort.py | 16 | |
+| synchronize | stages/synchronize.py | 20 | three-level alignment, all IO mocked |
+| curate | stages/curate.py | 19 | si.load + create_sorting_analyzer, all SI mocked |
+| nwb_writer | io/nwb_writer.py | 32 | add_trial_column API（非 TimeIntervals），含集成写盘 |
+| imec_nidq_align | io/sync/imec_nidq_align.py | 11 | |
+| bhv_nidq_align | io/sync/bhv_nidq_align.py | 25 | |
+| photodiode_calibrate | io/sync/photodiode_calibrate.py | 30 | |
+| export | stages/export.py | 15 | NWBWriter + si.load + pynwb.NWBHDF5IO 全 mock，含文件清理 |
+| postprocess | stages/postprocess.py | 26 | SLAY Spearman+方向滤波；OOM 重试；眼动 mock；bin 边界浮点修正 |
+| runner | pipelines/runner.py | 16 | 7-stage 编排；auto-config via ResourceDetector；get_status |
+| cli_main | cli/main.py | 21 | CliRunner 测试；run/status/reset-stage；架构约束测试 |
+
+</details>
+
+M1 遗留项（不阻塞 M2）：`io/sync_plots.py` 未实现（优先级低）；集成验证待做。
+
+---
+
+## M2 进度总览
+
+目标：Panel Web UI + Pure-Python BHV2 | 详细规划见 `docs/ROADMAP.md`
+
+### 轨道 A — Panel Web UI（主分支）
+
+| 阶段 | 任务 | 状态 | 说明 |
+|------|------|------|------|
+| A1 | 基础设施搭建 | ✅ | panel 依赖 + ui/__init__.py + state.py + app.py spike（18 tests） |
+| A2 | 配置与元信息表单 | ✅ | session_form / subject_form / pipeline_form / sorting_form / stage_selector（30 tests） |
+| A3 | 执行与进度追踪 | ⬜ | progress_callback 桥接 + 线程执行 + 实时进度可视化 |
+| A4 | 结果查看与恢复 | ⬜ | status 面板 + reset-stage + 断点续跑 |
+| A5 | 整合与打磨 | ⬜ | 布局 + 错误处理 + 入口命令 + 测试 |
+
+### 轨道 B — Pure-Python BHV2（feature 分支）
+
+| 阶段 | 任务 | 状态 | 说明 |
+|------|------|------|------|
+| B1 | 逆向工程 | 🟡 | `bhv2_binary_format.md` ✅ + `bhv2_matlab_analysis.md` ✅ + `export_ground_truth.m` ✅ → 待用户运行脚本产出 JSON fixtures |
+| B2 | 解析器实现 | ⬜ | bhv2_reader.py (TDD) + BHV2Parser 替换 + 回归测试 |
+| B3 | 集成与合并 | ⬜ | 依赖清理 + 兼容性开关 + PR merge |
+
+### 已知技术债
+
+| 文件 | 问题 | 优先级 |
+|------|------|--------|
+| `src/pynpxpipe/core/resources.py` | `typing.Any` imported but unused (F401) | 低 |
+| `tests/test_core/test_resources.py` | 多个 unused imports (F401)、import unsorted (I001)、unused variable (F841) | 低 |
+| `docs/specs/curate.md` 步骤 2-3 | 写 `si.load_extractor`，但 SI >= 0.104 已移除该 API，实际实现用 `si.load` | 低 |
+| `docs/specs/nwb_writer.md` 步骤 add_trials | 写 `TimeIntervals + add_time_intervals`，但 pynwb 2.8 此路径不设置 `nwbfile.trials`，实现改用 `add_trial_column + add_trial` | 低 |
