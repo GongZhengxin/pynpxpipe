@@ -60,3 +60,11 @@ class ProgressBridge:
     def _update(self, message: str, fraction: float) -> None:
         self._state.current_stage = message
         self._state.stage_progress = fraction
+
+        # Maintain stage_statuses dict
+        statuses = dict(self._state.stage_statuses)
+        if fraction >= 1.0:
+            statuses[message] = "completed"
+        else:
+            statuses[message] = "running"
+        self._state.stage_statuses = statuses
