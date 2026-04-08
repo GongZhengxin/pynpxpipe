@@ -1,124 +1,150 @@
-"""Tests for ui/app.py — entry point and spike prototype.
+"""Tests for ui/app.py — A5 Integration & Polish.
 
 Groups:
-  A. Importability   — main() and create_app() are importable without errors
-  B. create_app()    — returns a Panel servable object
-  C. Mock pipeline   — spike test: ProgressBridge + threading pathway works end-to-end
+  A. create_app basics — returns viewable, main exists
+  B. Section structure — three sections, default visible, content counts
+  C. Navigation — switching sections
+  D. Error banner — hidden initially, shows on error
 """
 
 from __future__ import annotations
 
-import threading
-from unittest.mock import MagicMock, patch
+import panel as pn
+import pytest
 
 # ---------------------------------------------------------------------------
-# A. Importability
-# ---------------------------------------------------------------------------
-
-
-def test_app_main_importable():
-    """main() can be imported from pynpxpipe.ui.app without raising."""
-    from pynpxpipe.ui.app import main  # noqa: F401
-
-
-def test_app_create_app_importable():
-    """create_app() can be imported and called."""
-    from pynpxpipe.ui.app import create_app  # noqa: F401
-
-
-# ---------------------------------------------------------------------------
-# B. create_app() returns a Panel object
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-def test_create_app_returns_panel_viewable():
-    """create_app() returns an object that Panel can serve (has .servable or is a pn.viewable)."""
-    import panel as pn
-
+@pytest.fixture()
+def app_result():
+    """Call create_app and return (template_or_viewable, app_obj)."""
     from pynpxpipe.ui.app import create_app
 
-    app = create_app()
-    # Panel viewable objects have a .servable() method or are subclasses of Viewable
-    assert isinstance(app, pn.viewable.Viewable)
-
-
-def test_create_app_has_run_button():
-    """The app layout contains a widget with 'Run' in its name or label."""
-    import panel as pn
-
-    from pynpxpipe.ui.app import create_app
-
-    app = create_app()
-
-    # Walk the object tree looking for a Button with name/label containing 'Run'
-    def _find_buttons(obj):
-        found = []
-        if isinstance(obj, pn.widgets.Button):
-            found.append(obj)
-        if hasattr(obj, "objects"):
-            for child in obj.objects:
-                found.extend(_find_buttons(child))
-        return found
-
-    buttons = _find_buttons(app)
-    labels = [b.name for b in buttons]
-    assert any("Run" in lbl or "run" in lbl.lower() for lbl in labels), (
-        f"No Run button found among: {labels}"
-    )
-
-
-def test_create_app_has_progress_bar():
-    """The app layout contains a Progress widget."""
-    import panel as pn
-
-    from pynpxpipe.ui.app import create_app
-
-    app = create_app()
-
-    def _find_progress(obj):
-        found = []
-        if isinstance(obj, pn.indicators.Progress):
-            found.append(obj)
-        if hasattr(obj, "objects"):
-            for child in obj.objects:
-                found.extend(_find_progress(child))
-        return found
-
-    progress_widgets = _find_progress(app)
-    assert len(progress_widgets) >= 1, "No Progress widget found in app layout"
+    return create_app()
 
 
 # ---------------------------------------------------------------------------
-# C. Mock pipeline — threading + ProgressBridge pathway
+# A. Basics
 # ---------------------------------------------------------------------------
 
 
-def test_mock_pipeline_run_updates_state():
-    """Spike test: ProgressBridge.callback called from thread updates AppState via mock pn.execute."""
-    from pynpxpipe.ui.state import AppState, ProgressBridge
+class TestBasics:
+    def test_create_app_returns_template(self):
+        from pynpxpipe.ui.app import create_app
 
-    state = AppState()
-    bridge = ProgressBridge(state)
-    results: list[tuple[str, float]] = []
+        app = create_app()
+        assert isinstance(app, pn.template.BaseTemplate)
 
-    def sync_execute(fn):
-        fn()  # simulate Panel executing on UI thread
+    def test_main_function_exists(self):
+        from pynpxpipe.ui.app import main
 
-    mock_pn = MagicMock()
-    mock_pn.state.execute.side_effect = sync_execute
+        assert callable(main)
 
-    def mock_pipeline(callback):
-        """Simulates a pipeline that reports 3 progress updates."""
-        for stage, frac in [("discover", 0.0), ("discover", 1.0), ("preprocess", 0.5)]:
-            with patch.dict("sys.modules", {"panel": mock_pn}):
-                callback(stage, frac)
-            results.append((state.current_stage, state.stage_progress))
 
-    t = threading.Thread(target=mock_pipeline, args=(bridge.callback,))
-    t.start()
-    t.join(timeout=5)
+# ---------------------------------------------------------------------------
+# B. Section structure
+# ---------------------------------------------------------------------------
 
-    assert len(results) == 3
-    assert results[0] == ("discover", 0.0)
-    assert results[1] == ("discover", 1.0)
-    assert results[2][0] == "preprocess"
+
+class TestSectionStructure:
+    def test_has_three_sections(self):
+        """App should expose configure, execute, review sections."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        assert hasattr(app, "_pynpx_sections")
+        sections = app._pynpx_sections
+        assert set(sections.keys()) == {"configure", "execute", "review"}
+
+    def test_default_section_is_configure(self):
+        """Configure should be visible, others hidden on startup."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        sections = app._pynpx_sections
+        assert sections["configure"].visible is True
+        assert sections["execute"].visible is False
+        assert sections["review"].visible is False
+
+    def test_configure_has_five_forms(self):
+        """Configure section should contain 5 form components."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        configure = app._pynpx_sections["configure"]
+        # Should have at least 5 child objects (the 5 forms)
+        assert len(configure.objects) >= 5
+
+    def test_execute_has_three_components(self):
+        """Execute section should contain RunPanel + ProgressView + LogViewer."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        execute = app._pynpx_sections["execute"]
+        # Should have at least 3 child objects
+        assert len(execute.objects) >= 3
+
+    def test_review_has_two_components(self):
+        """Review section should contain SessionLoader + StatusView."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        review = app._pynpx_sections["review"]
+        # Should have at least 2 child objects
+        assert len(review.objects) >= 2
+
+
+# ---------------------------------------------------------------------------
+# C. Navigation
+# ---------------------------------------------------------------------------
+
+
+class TestNavigation:
+    def test_switch_to_execute(self):
+        """After switching to execute, only execute should be visible."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        app._pynpx_switch("execute")
+        sections = app._pynpx_sections
+        assert sections["configure"].visible is False
+        assert sections["execute"].visible is True
+        assert sections["review"].visible is False
+
+    def test_switch_to_review(self):
+        """After switching to review, only review should be visible."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        app._pynpx_switch("review")
+        sections = app._pynpx_sections
+        assert sections["configure"].visible is False
+        assert sections["execute"].visible is False
+        assert sections["review"].visible is True
+
+
+# ---------------------------------------------------------------------------
+# D. Error banner
+# ---------------------------------------------------------------------------
+
+
+class TestErrorBanner:
+    def test_error_banner_hidden_initially(self):
+        """Error banner should not be visible when error_message is empty."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        banner = app._pynpx_error_banner
+        assert banner.visible is False
+
+    def test_error_banner_shows_on_error(self):
+        """Error banner should appear when state.error_message is set."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        state = app._pynpx_state
+        state.error_message = "Something went wrong"
+        assert app._pynpx_error_banner.visible is True
+        assert "Something went wrong" in app._pynpx_error_banner.object
