@@ -145,6 +145,22 @@ class SyncConfig:
     stim_onset_code: int = 64                                  # 0–255
     imec_sync_code: int = 64                                   # 0–255
     generate_plots: bool = True
+    gap_threshold_ms: float | None = 1200.0                    # 丢脉冲检测阈值，None 禁用修复
+    trial_start_bit: int | None = None                         # trial start 的 NIDQ bit；None 时自动检测
+    pd_window_pre_ms: float = 10.0                             # Photodiode 基线窗口（ms）
+    pd_window_post_ms: float = 100.0                           # Photodiode 检测窗口（ms）
+    pd_min_signal_variance: float = 1e-6                       # Photodiode 无信号判定阈值
+
+@dataclass
+class EyeValidationConfig:
+    enabled: bool = True
+    eye_threshold: float = 0.999                               # 注视比例阈值（cf. MATLAB eye_thres=0.999）
+
+@dataclass
+class PostprocessConfig:
+    slay_pre_s: float = 0.05                                   # SLAY 预刺激窗口（秒）
+    slay_post_s: float = 0.30                                  # SLAY 刺激后窗口（秒）
+    eye_validation: EyeValidationConfig = field(default_factory=EyeValidationConfig)
 
 @dataclass
 class PipelineConfig:
@@ -153,6 +169,7 @@ class PipelineConfig:
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     curation: CurationConfig = field(default_factory=CurationConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
 ```
 
 ### 5.3 Sorting 配置层级

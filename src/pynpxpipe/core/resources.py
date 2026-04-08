@@ -23,7 +23,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import psutil
 
@@ -222,16 +222,26 @@ class HardwareProfile:
             sep,
             f"  CPU   │ {self.cpu.name}",
         ]
-        freq = f"  @  {self.cpu.frequency_max_mhz/1000:.1f} GHz" if self.cpu.frequency_max_mhz else ""
+        freq = (
+            f"  @  {self.cpu.frequency_max_mhz / 1000:.1f} GHz"
+            if self.cpu.frequency_max_mhz
+            else ""
+        )
         cores_str = f"{self.cpu.physical_cores or '?'} physical cores ({self.cpu.logical_processors} logical)"
         lines.append(f"        │ {cores_str}{freq}")
-        lines.append(f"  RAM   │ {self.ram.total_gb:.1f} GB total  │  {self.ram.available_gb:.1f} GB available")
+        lines.append(
+            f"  RAM   │ {self.ram.total_gb:.1f} GB total  │  {self.ram.available_gb:.1f} GB available"
+        )
         if self.gpus:
             g = self.gpus[0]
-            lines.append(f"  GPU   │ {g.name}  │  {g.vram_total_gb:.1f} GB VRAM  │  {g.vram_free_gb:.1f} GB free")
+            lines.append(
+                f"  GPU   │ {g.name}  │  {g.vram_total_gb:.1f} GB VRAM  │  {g.vram_free_gb:.1f} GB free"
+            )
         else:
             lines.append("  GPU   │ No CUDA GPU detected")
-        lines.append(f"  Disk  │ output → {self.disk.output_dir}  │  {self.disk.output_dir_free_gb:.0f} GB free")
+        lines.append(
+            f"  Disk  │ output → {self.disk.output_dir}  │  {self.disk.output_dir_free_gb:.0f} GB free"
+        )
         lines.append(sep)
         for w in self.warnings:
             lines.append(f"  ⚠  {w}")
@@ -309,8 +319,9 @@ class ResourceDetector:
             cpu = self._detect_cpu()
         except Exception as e:
             self._warnings.append(f"CPU detection failed: {e}")
-            cpu = CPUInfo(physical_cores=None, logical_processors=1,
-                          frequency_max_mhz=None, name="unknown")
+            cpu = CPUInfo(
+                physical_cores=None, logical_processors=1, frequency_max_mhz=None, name="unknown"
+            )
 
         try:
             ram = self._detect_ram()
@@ -329,8 +340,10 @@ class ResourceDetector:
         except Exception as e:
             self._warnings.append(f"Disk detection failed: {e}")
             disk = DiskInfo(
-                session_dir=self._session_dir, session_dir_free_gb=0.0,
-                output_dir=self._output_dir, output_dir_free_gb=0.0,
+                session_dir=self._session_dir,
+                session_dir_free_gb=0.0,
+                output_dir=self._output_dir,
+                output_dir_free_gb=0.0,
                 estimated_required_gb=None,
             )
 
@@ -466,8 +479,7 @@ class ResourceDetector:
 
         try:
             raw_ap_size_bytes = sum(
-                p.stat().st_size for p in self._session_dir.rglob("*.ap.bin")
-                if p.is_file()
+                p.stat().st_size for p in self._session_dir.rglob("*.ap.bin") if p.is_file()
             )
             raw_ap_gb = raw_ap_size_bytes / 1e9
             n_probes = max(1, len(list(self._session_dir.glob("imec*"))))
@@ -492,6 +504,7 @@ class ResourceDetector:
         """Attempt GPU detection via pynvml (nvidia-ml-py)."""
         try:
             import pynvml  # type: ignore[import]
+
             pynvml.nvmlInit()
             count = pynvml.nvmlDeviceGetCount()
             gpus = []
@@ -504,14 +517,17 @@ class ResourceDetector:
                 driver = pynvml.nvmlSystemGetDriverVersion()
                 if isinstance(driver, bytes):
                     driver = driver.decode()
-                gpus.append(GPUInfo(
-                    index=i, name=name,
-                    vram_total_gb=mem.total / 1e9,
-                    vram_free_gb=mem.free / 1e9,
-                    cuda_available=True,
-                    driver_version=driver,
-                    detection_method="pynvml",
-                ))
+                gpus.append(
+                    GPUInfo(
+                        index=i,
+                        name=name,
+                        vram_total_gb=mem.total / 1e9,
+                        vram_free_gb=mem.free / 1e9,
+                        cuda_available=True,
+                        driver_version=driver,
+                        detection_method="pynvml",
+                    )
+                )
             pynvml.nvmlShutdown()
             return gpus
         except Exception:
@@ -521,10 +537,14 @@ class ResourceDetector:
         """Attempt GPU detection via nvidia-smi subprocess."""
         try:
             result = subprocess.run(
-                ["nvidia-smi",
-                 "--query-gpu=name,memory.total,memory.free,driver_version",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=10,
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total,memory.free,driver_version",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode != 0:
                 return None
@@ -534,14 +554,17 @@ class ResourceDetector:
                 if len(parts) < 4:
                     continue
                 name, total_mib, free_mib, driver = parts[0], parts[1], parts[2], parts[3]
-                gpus.append(GPUInfo(
-                    index=i, name=name,
-                    vram_total_gb=float(total_mib) / 1024,
-                    vram_free_gb=float(free_mib) / 1024,
-                    cuda_available=True,
-                    driver_version=driver,
-                    detection_method="nvidia-smi",
-                ))
+                gpus.append(
+                    GPUInfo(
+                        index=i,
+                        name=name,
+                        vram_total_gb=float(total_mib) / 1024,
+                        vram_free_gb=float(free_mib) / 1024,
+                        cuda_available=True,
+                        driver_version=driver,
+                        detection_method="nvidia-smi",
+                    )
+                )
             return gpus
         except Exception:
             return None
@@ -550,20 +573,24 @@ class ResourceDetector:
         """Attempt GPU detection via torch.cuda (last resort)."""
         try:
             import torch  # type: ignore[import]
+
             if not torch.cuda.is_available():
                 return None
             gpus = []
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
                 free, total = torch.cuda.mem_get_info(i)
-                gpus.append(GPUInfo(
-                    index=i, name=props.name,
-                    vram_total_gb=total / 1e9,
-                    vram_free_gb=free / 1e9,
-                    cuda_available=True,
-                    driver_version=None,
-                    detection_method="torch",
-                ))
+                gpus.append(
+                    GPUInfo(
+                        index=i,
+                        name=props.name,
+                        vram_total_gb=total / 1e9,
+                        vram_free_gb=free / 1e9,
+                        cuda_available=True,
+                        driver_version=None,
+                        detection_method="torch",
+                    )
+                )
             return gpus
         except Exception:
             return None
@@ -694,19 +721,21 @@ class ResourceConfig:
             res.n_jobs, self._recommended.n_jobs, FALLBACK_N_JOBS, "resources.n_jobs"
         )
         chunk_val, _ = self._resolve_value(
-            res.chunk_duration, self._recommended.chunk_duration,
-            FALLBACK_CHUNK_DURATION, "resources.chunk_duration"
+            res.chunk_duration,
+            self._recommended.chunk_duration,
+            FALLBACK_CHUNK_DURATION,
+            "resources.chunk_duration",
         )
         # max_memory kept as-is (info only)
-        new_resources = dataclasses.replace(
-            res, n_jobs=n_jobs_val, chunk_duration=chunk_val
-        )
+        new_resources = dataclasses.replace(res, n_jobs=n_jobs_val, chunk_duration=chunk_val)
 
         # Resolve parallel sub-config
         par = config.parallel
         workers_val, _ = self._resolve_value(
-            par.max_workers, self._recommended.max_workers,
-            FALLBACK_MAX_WORKERS, "parallel.max_workers"
+            par.max_workers,
+            self._recommended.max_workers,
+            FALLBACK_MAX_WORKERS,
+            "parallel.max_workers",
         )
         new_parallel = dataclasses.replace(par, max_workers=workers_val)
 
@@ -721,8 +750,10 @@ class ResourceConfig:
 
         params = config.sorter.params
         batch_val, _ = self._resolve_value(
-            params.batch_size, self._recommended.sorting_batch_size,
-            FALLBACK_BATCH_SIZE, "sorter.params.batch_size"
+            params.batch_size,
+            self._recommended.sorting_batch_size,
+            FALLBACK_BATCH_SIZE,
+            "sorter.params.batch_size",
         )
         new_params = dataclasses.replace(params, batch_size=batch_val)
         new_sorter = dataclasses.replace(config.sorter, params=new_params)

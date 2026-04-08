@@ -1,13 +1,33 @@
 """MonkeyLogic BHV2 behavioral data parsing.
 
-Parses BHV2 files produced by NIMH MonkeyLogic. Uses h5py for v7.3 MAT files
-(the format written when MATLAB saves with -v7.3 flag). No UI dependencies.
+BHV2 (.bhv2) is MonkeyLogic's proprietary binary format. By default this
+module uses :class:`BHV2Reader` (pure Python, no MATLAB dependency).
+
+Set environment variable ``BHV2_BACKEND=matlab`` to switch to the legacy
+MATLAB Engine backend (requires ``matlabengine`` package and MATLAB install).
+
+Public API:
+  - :class:`TrialData` — dataclass for a single trial's behavioral data.
+  - :class:`BHV2Parser` — high-level parser: ``parse()``, ``get_event_code_times()``,
+    ``get_session_metadata()``, ``get_analog_data()``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import os
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
+
+import numpy as np
+
+from pynpxpipe.io.bhv2_reader import BHV2Reader
+
+logger = logging.getLogger(__name__)
+
+# BHV2 file magic: uint64 LE value 13 (len of "IndexPosition") + b'IndexPosition'
+BHV2_MAGIC: bytes = b"\x0d\x00\x00\x00\x00\x00\x00\x00IndexPosition"
 
 
 @dataclass
@@ -15,8 +35,8 @@ class TrialData:
     """Behavioral data for a single trial.
 
     Attributes:
-        trial_id: 1-indexed trial number from BHV2.
-        condition_id: Stimulus condition number.
+        trial_id: 1-indexed trial number from BHV2 (Trial field).
+        condition_id: Stimulus condition number (Condition field).
         events: List of (time_ms, event_code) tuples in BHV2 time.
         user_vars: Dict of UserVars fields for this trial.
     """
@@ -24,92 +44,205 @@ class TrialData:
     trial_id: int
     condition_id: int
     events: list[tuple[float, int]]
-    user_vars: dict
+    user_vars: dict = field(default_factory=dict)
 
 
 class BHV2Parser:
-    """Parses MonkeyLogic BHV2 files without requiring MATLAB.
+    """Parses MonkeyLogic BHV2 files using pure-Python BHV2Reader.
 
-    BHV2 files are MATLAB .mat files saved in v7.3 format (HDF5). This parser
-    uses h5py directly. The struct array layout is: top-level variable ``MLConfig``
-    for session metadata and a trial struct array for per-trial data.
+    BHV2 is MonkeyLogic's proprietary binary format (not HDF5). The
+    :class:`BHV2Reader` handles binary parsing directly using ``struct``.
+    No MATLAB dependency is required.
 
-    Note:
-        The legacy codebase required MATLAB engine for BHV2 conversion. This
-        parser handles BHV2 natively in Python via h5py.
+    Args:
+        bhv_file: Path to the MonkeyLogic BHV2 (.bhv2) file.
+
+    Raises:
+        FileNotFoundError: If bhv_file does not exist.
+        IOError: If the first 21 bytes do not match BHV2_MAGIC.
     """
 
     def __init__(self, bhv_file: Path) -> None:
-        """Initialize the BHV2 parser.
+        bhv_file = Path(bhv_file)
+        if not bhv_file.exists():
+            raise FileNotFoundError(f"BHV2 file not found: {bhv_file}")
 
-        Args:
-            bhv_file: Path to the MonkeyLogic BHV2 (.bhv2) file.
+        with bhv_file.open("rb") as f:
+            header = f.read(21)
 
-        Raises:
-            FileNotFoundError: If bhv_file does not exist.
-            ValueError: If the file header does not match the expected BHV2 magic bytes.
+        if len(header) < 21 or header != BHV2_MAGIC:
+            raise OSError(f"Not a valid BHV2 file: {bhv_file}")
+
+        self.bhv_file = bhv_file
+        self._reader: BHV2Reader | None = None
+        self._cache: list[TrialData] | None = None
+
+    def _get_reader(self) -> BHV2Reader:
+        """Lazily create and cache the BHV2Reader instance.
+
+        Returns:
+            Open BHV2Reader pointing to self.bhv_file.
         """
-        raise NotImplementedError("TODO")
+        if self._reader is None:
+            self._reader = BHV2Reader(self.bhv_file)
+        return self._reader
 
     def parse(self) -> list[TrialData]:
-        """Parse all trials from the BHV2 file.
+        """Load all trial data from the BHV2 file.
 
-        Reads the HDF5 structure, extracts per-trial events and user variables,
-        and returns a list of TrialData objects.
+        Results are cached; subsequent calls return the same list.
 
         Returns:
-            List of TrialData objects, one per trial, sorted by trial_id.
-
-        Raises:
-            IOError: If the file cannot be read.
-            KeyError: If expected HDF5 fields are missing.
+            TrialData list sorted ascending by trial_id.
         """
-        raise NotImplementedError("TODO")
+        if self._cache is not None:
+            return self._cache
+
+        reader = self._get_reader()
+        var_names = reader.list_variables()
+        trial_var_names = sorted(
+            [v for v in var_names if re.fullmatch(r"Trial\d+", v)],
+            key=lambda v: int(v[5:]),
+        )
+
+        trials: list[TrialData] = []
+        for var_name in trial_var_names:
+            raw = reader.read(var_name)
+            trials.append(self._map_trial(raw))
+
+        trials.sort(key=lambda t: t.trial_id)
+        self._cache = trials
+        return self._cache
 
     def get_event_code_times(
-        self, event_code: int, trials: list[TrialData] | None = None
+        self,
+        event_code: int,
+        trials: list[int] | None = None,
     ) -> list[tuple[int, float]]:
-        """Get (trial_id, time_ms) pairs for all occurrences of a specific event code.
+        """Return (trial_id, time_ms) pairs for all occurrences of an event code.
 
         Args:
-            event_code: The MonkeyLogic event code to search for (read from config,
-                not hardcoded).
-            trials: List of TrialData to search. If None, parses the file first.
+            event_code: Integer event code to search for.
+            trials: Optional list of trial_id values to restrict search.
+                    None means all trials.
 
         Returns:
-            List of (trial_id, time_ms_in_bhv2_clock) tuples sorted by trial_id.
+            List of (trial_id, time_ms) tuples sorted by trial_id.
+            Empty list if the code is not found.
         """
-        raise NotImplementedError("TODO")
+        all_trials = self.parse()
+        if trials is not None:
+            trial_set = set(trials)
+            all_trials = [t for t in all_trials if t.trial_id in trial_set]
+
+        result: list[tuple[int, float]] = []
+        for trial in all_trials:
+            for time_ms, code in trial.events:
+                if code == event_code:
+                    result.append((trial.trial_id, time_ms))
+        return result
 
     def get_session_metadata(self) -> dict:
-        """Extract session-level metadata from the MLConfig block.
+        """Extract session-level metadata from the BHV2 file.
+
+        Reads MLConfig variable and counts TrialN variables for TotalTrials.
 
         Returns:
-            Dict with fields such as ExperimentName, MLVersion, TotalTrials, etc.
+            Dict with keys: ExperimentName, MLVersion, SubjectName, TotalTrials.
         """
-        raise NotImplementedError("TODO")
+        reader = self._get_reader()
+        mlconfig = reader.read("MLConfig")
+        var_names = reader.list_variables()
+        total_trials = sum(1 for v in var_names if re.fullmatch(r"Trial\d+", v))
 
-    def _load_h5py_struct(self, h5_group) -> dict:
-        """Recursively convert an h5py Group (MATLAB struct) to a Python dict.
+        return {
+            "ExperimentName": str(mlconfig.get("ExperimentName", "")),
+            "MLVersion": str(mlconfig.get("MLVersion", "")),
+            "SubjectName": str(mlconfig.get("SubjectName", "")),
+            "TotalTrials": total_trials,
+        }
 
-        Handles MATLAB v7.3 struct arrays, cell arrays, and scalar types.
-        Based on the battle-tested logic from the legacy data_loader.py.
+    def get_analog_data(
+        self,
+        channel_name: str,
+        trials: list[int] | None = None,
+    ) -> dict[int, np.ndarray]:
+        """Read analog signal data per trial (e.g. Eye, Joystick).
+
+        Data is read trial-by-trial (no 3D pre-allocation). Trials missing
+        the requested channel are skipped with a warning log.
 
         Args:
-            h5_group: An h5py Group or Dataset object.
+            channel_name: Analog channel name, e.g. 'Eye', 'Joystick'.
+            trials: Optional trial_id list to restrict reading. None = all.
 
         Returns:
-            Python dict or array with MATLAB types converted to native Python types.
+            Dict mapping trial_id → np.ndarray of shape [n_samples, n_ch].
         """
-        raise NotImplementedError("TODO")
+        all_trials = self.parse()
+        trial_ids = trials if trials is not None else [t.trial_id for t in all_trials]
 
-    def _normalize_scalar(self, value) -> int | float | str:
-        """Convert h5py scalar datasets to native Python types.
+        reader = self._get_reader()
+        result: dict[int, np.ndarray] = {}
+        for tid in trial_ids:
+            raw = reader.read(f"Trial{tid}")
+            analog = raw.get("AnalogData", {})
+            if not isinstance(analog, dict):
+                logger.warning("Trial %d AnalogData is not a dict; skipping.", tid)
+                continue
+            if channel_name not in analog:
+                logger.warning("Trial %d has no analog channel '%s'; skipping.", tid, channel_name)
+                continue
+            arr = analog[channel_name]
+            if isinstance(arr, np.ndarray):
+                if arr.ndim == 1:
+                    arr = arr.reshape(-1, 1)
+                result[tid] = arr
+            else:
+                logger.warning(
+                    "Trial %d channel '%s' is not ndarray (%s); skipping.",
+                    tid,
+                    channel_name,
+                    type(arr).__name__,
+                )
+
+        return result
+
+    @staticmethod
+    def _map_trial(raw: dict) -> TrialData:
+        """Map a raw BHV2Reader trial dict to a TrialData dataclass.
 
         Args:
-            value: An h5py Dataset or numpy scalar.
+            raw: Dict returned by ``BHV2Reader.read("TrialN")``.
 
         Returns:
-            Python int, float, or str.
+            Populated TrialData instance.
         """
-        raise NotImplementedError("TODO")
+        trial_id = int(raw["Trial"])
+        condition_id = int(raw["Condition"])
+
+        codes = raw["BehavioralCodes"]
+        times_flat = codes["CodeTimes"].flatten().astype(float).tolist()
+        numbers_flat = codes["CodeNumbers"].flatten().astype(int).tolist()
+        events = list(zip(times_flat, numbers_flat, strict=True))
+
+        user_vars = raw.get("UserVars", {})
+        if not isinstance(user_vars, dict):
+            user_vars = {}
+
+        return TrialData(
+            trial_id=trial_id,
+            condition_id=condition_id,
+            events=events,
+            user_vars=user_vars,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Backend compatibility switch
+# ---------------------------------------------------------------------------
+# Set BHV2_BACKEND=matlab to use the legacy MATLAB Engine parser (requires
+# matlabengine package and a local MATLAB installation). Default is "python".
+
+if os.environ.get("BHV2_BACKEND", "").lower() == "matlab":
+    from pynpxpipe.io._bhv_matlab import BHV2Parser as BHV2Parser  # noqa: F811

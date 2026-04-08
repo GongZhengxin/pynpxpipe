@@ -103,9 +103,7 @@ class CheckpointManager:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
-            raise CheckpointError(
-                stage_name, path, f"corrupt checkpoint: {exc}"
-            ) from exc
+            raise CheckpointError(stage_name, path, f"corrupt checkpoint: {exc}") from exc
         return data.get("status") == "completed"
 
     def mark_complete(
@@ -198,9 +196,7 @@ class CheckpointManager:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
-            raise CheckpointError(
-                stage_name, path, f"corrupt checkpoint: {exc}"
-            ) from exc
+            raise CheckpointError(stage_name, path, f"corrupt checkpoint: {exc}") from exc
 
     def clear(self, stage_name: str, probe_id: str | None = None) -> None:
         """Delete a checkpoint file (e.g. to force a stage to re-run).

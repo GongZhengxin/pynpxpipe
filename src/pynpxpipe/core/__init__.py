@@ -1,8 +1,13 @@
 """Core objects: Session, checkpoint, logging, config."""
 
-from pynpxpipe.core.session import ProbeInfo, Session, SessionManager, SubjectConfig
 from pynpxpipe.core.checkpoint import CheckpointManager
-from pynpxpipe.core.config import PipelineConfig, SortingConfig, load_pipeline_config, load_sorting_config
+from pynpxpipe.core.config import (
+    PipelineConfig,
+    SortingConfig,
+    load_pipeline_config,
+    load_sorting_config,
+)
+from pynpxpipe.core.session import ProbeInfo, Session, SessionManager, SubjectConfig
 
 __all__ = [
     "ProbeInfo",

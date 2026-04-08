@@ -1,0 +1,77 @@
+# BHV2 数据结构验证报告
+
+数据文件: F:\#Datasets\demo_rawdata\241026_MaoDan_YJ_WordLOC.bhv2
+Trial 总数: 11
+
+## 验证项 1: AnalogData.Eye 的 shape
+
+Trial 1: shape = [490, 2]
+Trial 2: shape = [10785, 2]
+Trial 3: shape = [3712, 2]
+Trial 4: shape = [25560, 2]
+Trial 5: shape = [4417, 2]
+Trial 6: shape = [10305, 2]
+Trial 7: shape = [6380, 2]
+Trial 8: shape = [751, 2]
+Trial 9: shape = [13993, 2]
+Trial 10: shape = [1075, 2]
+
+**结论**: 所有 trial 的 Eye 数据第二维度均为 2，shape 严格为 (n_samples, 2)
+验证通过: true
+
+## 验证项 2: Current_Image_Train 长度 vs onset 数量
+
+Trial 1: onset_count=3, Current_Image_Train length=1000
+Trial 2: onset_count=141, Current_Image_Train length=1000
+Trial 3: onset_count=46, Current_Image_Train length=1000
+Trial 4: onset_count=338, Current_Image_Train length=1000
+Trial 5: onset_count=56, Current_Image_Train length=1000
+Trial 6: onset_count=134, Current_Image_Train length=1000
+Trial 7: onset_count=82, Current_Image_Train length=1000
+Trial 8: onset_count=7, Current_Image_Train length=1000
+Trial 9: onset_count=138, Current_Image_Train length=1000
+Trial 10: onset_count=11, Current_Image_Train length=1000
+
+**结论**: Current_Image_Train 长度固定为 1000，远大于实际 onset 数量
+MATLAB 代码中使用 Current_Image_Train(1:onset_times_this_trial) 截取前 N 个元素
+
+## 验证项 3: AnalogData.SampleInterval 单位
+
+Trial 1: SampleInterval = 4.000000
+Trial 2: SampleInterval = 4.000000
+Trial 3: SampleInterval = 4.000000
+Trial 4: SampleInterval = 4.000000
+Trial 5: SampleInterval = 4.000000
+
+所有 trial 的 SampleInterval: 4.000000 (固定值)
+**结论**: SampleInterval = 4.0 ms (毫秒)
+推断依据: 250 Hz 采样率 = 1000/250 = 4 ms
+
+## 验证项 4: BehavioralCodes.CodeTimes 时间基准
+
+Trial 1: CodeTimes range = [2.89, 1957.31] ms, first_code=9, last_code=18
+Trial 2: CodeTimes range = [0.59, 43135.64] ms, first_code=9, last_code=18
+Trial 3: CodeTimes range = [0.52, 14829.33] ms, first_code=9, last_code=18
+Trial 4: CodeTimes range = [0.53, 102239.08] ms, first_code=9, last_code=18
+Trial 5: CodeTimes range = [1.79, 17665.99] ms, first_code=9, last_code=18
+
+**结论**: CodeTimes 从接近 0 开始，表示相对于 trial 开始时刻的时间（单位 ms）
+
+## 字段存在性检查
+
+BehavioralCodes: true
+BehavioralCodes.CodeNumbers: true
+BehavioralCodes.CodeTimes: true
+AnalogData: true
+AnalogData.Eye: true
+AnalogData.SampleInterval: true
+AnalogData.Mouse: true
+AnalogData.KeyInput: true
+UserVars: true
+UserVars.DatasetName: true
+UserVars.Current_Image_Train: true
+VariableChanges: true
+VariableChanges.onset_time: true
+VariableChanges.fixation_window: true
+
+所有必需字段均存在

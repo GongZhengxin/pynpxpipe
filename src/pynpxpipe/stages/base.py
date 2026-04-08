@@ -47,9 +47,7 @@ class BaseStage(ABC):
             ValueError: If STAGE_NAME is not set on the subclass.
         """
         if not self.STAGE_NAME:
-            raise ValueError(
-                f"{type(self).__name__}.STAGE_NAME must be set to a non-empty string"
-            )
+            raise ValueError(f"{type(self).__name__}.STAGE_NAME must be set to a non-empty string")
         self.session = session
         self.progress_callback = progress_callback
         self.logger = get_logger(f"pynpxpipe.stages.{self.STAGE_NAME}")

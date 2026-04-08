@@ -1,0 +1,435 @@
+"""Tests for stages/sort.py — SortStage.
+
+Groups:
+  A. Local mode     — run_sorter called, sorting saved, checkpoint written
+  B. Import mode    — read_sorter_folder / read_phy called, checkpoint written
+  C. Serial         — always serial, never parallel
+  D. Checkpoint skip — per-probe and stage-level resume
+  E. Error handling — run_sorter failure, unknown mode, failed checkpoint
+  F. GC release     — gc.collect called after each probe
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from pynpxpipe.core.config import (
+    ImportConfig,
+    SorterConfig,
+    SorterParams,
+    SortingConfig,
+)
+from pynpxpipe.core.errors import SortError
+from pynpxpipe.core.session import ProbeInfo, Session, SessionManager, SubjectConfig
+from pynpxpipe.stages.sort import SortStage
+
+# ---------------------------------------------------------------------------
+# Helpers / fixtures
+# ---------------------------------------------------------------------------
+
+
+def _make_subject() -> SubjectConfig:
+    return SubjectConfig(
+        subject_id="test",
+        description="desc",
+        species="Macaca mulatta",
+        sex="M",
+        age="P3Y",
+        weight="10kg",
+    )
+
+
+def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
+    return ProbeInfo(
+        probe_id=probe_id,
+        ap_bin=base / f"{probe_id}.ap.bin",
+        ap_meta=base / f"{probe_id}.ap.meta",
+        lf_bin=None,
+        lf_meta=None,
+        sample_rate=30000.0,
+        n_channels=384,
+        serial_number="SN_TEST",
+        probe_type="NP1010",
+    )
+
+
+def _make_sorting_config(
+    mode: str = "local",
+    sorter_name: str = "kilosort4",
+    nblocks: int = 0,
+    import_format: str = "kilosort4",
+    import_paths: dict[str, str] | None = None,
+) -> SortingConfig:
+    """Build a SortingConfig for testing with concrete (non-auto) param values."""
+    return SortingConfig(
+        mode=mode,
+        sorter=SorterConfig(
+            name=sorter_name,
+            params=SorterParams(nblocks=nblocks, batch_size=1, n_jobs=1),
+        ),
+        import_cfg=ImportConfig(
+            format=import_format,
+            paths={k: Path(v) for k, v in (import_paths or {}).items()},
+        ),
+    )
+
+
+def _make_mock_sorting(n_units: int = 3) -> MagicMock:
+    mock = MagicMock()
+    mock.get_unit_ids.return_value = list(range(n_units))
+    return mock
+
+
+@pytest.fixture
+def session(tmp_path: Path) -> Session:
+    """Session with two probes (imec0, imec1)."""
+    session_dir = tmp_path / "session_g0"
+    session_dir.mkdir()
+    bhv_file = tmp_path / "test.bhv2"
+    bhv_file.write_bytes(b"\x00" * 30)
+    output_dir = tmp_path / "output"
+    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s.probes = [
+        _make_probe("imec0", tmp_path),
+        _make_probe("imec1", tmp_path),
+    ]
+    return s
+
+
+@pytest.fixture
+def single_session(tmp_path: Path) -> Session:
+    """Session with one probe (imec0)."""
+    session_dir = tmp_path / "session_g0"
+    session_dir.mkdir()
+    bhv_file = tmp_path / "test.bhv2"
+    bhv_file.write_bytes(b"\x00" * 30)
+    output_dir = tmp_path / "output"
+    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s.probes = [_make_probe("imec0", tmp_path)]
+    return s
+
+
+def _write_completed_checkpoint(session: Session, stage: str, probe_id: str | None = None) -> None:
+    filename = f"{stage}.json" if probe_id is None else f"{stage}_{probe_id}.json"
+    cp_path = session.output_dir / "checkpoints" / filename
+    cp_path.write_text(
+        json.dumps({"stage": stage, "status": "completed"}),
+        encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Group A — Local mode
+# ---------------------------------------------------------------------------
+
+
+class TestLocalMode:
+    def test_local_mode_calls_run_sorter(self, single_session: Session) -> None:
+        """si.run_sorter is called with the configured sorter name."""
+        sorting_cfg = _make_sorting_config(mode="local", sorter_name="kilosort4")
+        mock_sorting = _make_mock_sorting()
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.sort.ss.run_sorter", return_value=mock_sorting) as mock_run,
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        assert mock_run.called
+        assert mock_run.call_args.args[0] == "kilosort4"
+
+    def test_local_mode_saves_sorting(self, single_session: Session) -> None:
+        """sorting.save is called with a path containing 'sorted/imec0'."""
+        sorting_cfg = _make_sorting_config(mode="local")
+        mock_sorting = _make_mock_sorting()
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.sort.ss.run_sorter", return_value=mock_sorting),
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        folder = mock_sorting.save.call_args.kwargs.get("folder") or mock_sorting.save.call_args[
+            1
+        ].get("folder")
+        assert folder is not None
+        assert "sorted" in str(folder)
+        assert "imec0" in str(folder)
+
+    def test_local_mode_writes_probe_checkpoint(self, single_session: Session) -> None:
+        """sort_imec0.json exists with status=completed after local sort."""
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.sort.ss.run_sorter", return_value=_make_mock_sorting()),
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        cp = single_session.output_dir / "checkpoints" / "sort_imec0.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "completed"
+
+    def test_local_zero_units_logs_warning_not_error(self, single_session: Session) -> None:
+        """Zero units from sorter is a WARNING, not an error — run() must not raise."""
+        sorting_cfg = _make_sorting_config(mode="local")
+        mock_sorting = _make_mock_sorting(n_units=0)
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.sort.ss.run_sorter", return_value=mock_sorting),
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()  # must not raise
+
+        cp = single_session.output_dir / "checkpoints" / "sort_imec0.json"
+        assert cp.exists()
+
+    def test_sorter_params_passed_to_run_sorter(self, single_session: Session) -> None:
+        """Sorter params (e.g. nblocks=5) are forwarded as kwargs to run_sorter."""
+        sorting_cfg = _make_sorting_config(mode="local", nblocks=5)
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch(
+                "pynpxpipe.stages.sort.ss.run_sorter", return_value=_make_mock_sorting()
+            ) as mock_run,
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs.get("nblocks") == 5
+
+
+# ---------------------------------------------------------------------------
+# Group B — Import mode
+# ---------------------------------------------------------------------------
+
+
+class TestImportMode:
+    def test_import_mode_calls_read_sorter_folder(
+        self, single_session: Session, tmp_path: Path
+    ) -> None:
+        """si.read_sorter_folder is called with the import path when format='kilosort4'."""
+        import_dir = tmp_path / "ks4_output"
+        import_dir.mkdir()
+        sorting_cfg = _make_sorting_config(
+            mode="import",
+            import_format="kilosort4",
+            import_paths={"imec0": str(import_dir)},
+        )
+        mock_sorting = _make_mock_sorting()
+
+        with (
+            patch(
+                "pynpxpipe.stages.sort.ss.read_sorter_folder", return_value=mock_sorting
+            ) as mock_read,
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        mock_read.assert_called_once_with(import_dir)
+
+    def test_import_mode_path_missing_raises(self, single_session: Session, tmp_path: Path) -> None:
+        """SortError is raised when the import path does not exist."""
+        missing = tmp_path / "nonexistent_ks4"
+        sorting_cfg = _make_sorting_config(
+            mode="import",
+            import_format="kilosort4",
+            import_paths={"imec0": str(missing)},
+        )
+
+        with pytest.raises(SortError, match="Import path not found"):
+            SortStage(single_session, sorting_cfg).run()
+
+    def test_import_phy_format(self, single_session: Session, tmp_path: Path) -> None:
+        """si.read_phy is called when import format is 'phy'."""
+        import_dir = tmp_path / "phy_output"
+        import_dir.mkdir()
+        sorting_cfg = _make_sorting_config(
+            mode="import",
+            import_format="phy",
+            import_paths={"imec0": str(import_dir)},
+        )
+        mock_sorting = _make_mock_sorting()
+
+        with (
+            patch("pynpxpipe.stages.sort.se.read_phy", return_value=mock_sorting) as mock_phy,
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        mock_phy.assert_called_once_with(import_dir)
+
+    def test_import_writes_checkpoint(self, single_session: Session, tmp_path: Path) -> None:
+        """sort_imec0.json exists with status=completed after successful import."""
+        import_dir = tmp_path / "ks4_output"
+        import_dir.mkdir()
+        sorting_cfg = _make_sorting_config(
+            mode="import",
+            import_format="kilosort4",
+            import_paths={"imec0": str(import_dir)},
+        )
+
+        with (
+            patch(
+                "pynpxpipe.stages.sort.ss.read_sorter_folder",
+                return_value=_make_mock_sorting(),
+            ),
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        cp = single_session.output_dir / "checkpoints" / "sort_imec0.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Group C — Serial guarantee
+# ---------------------------------------------------------------------------
+
+
+class TestSerialGuarantee:
+    def test_always_serial_even_if_parallel_enabled(self, session: Session) -> None:
+        """Both probes are processed serially; SortStage never uses parallelism."""
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch(
+                "pynpxpipe.stages.sort.ss.run_sorter", return_value=_make_mock_sorting()
+            ) as mock_run,
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(session, sorting_cfg).run()
+
+        # Exactly 2 serial calls — one per probe
+        assert mock_run.call_count == 2
+        cp0 = session.output_dir / "checkpoints" / "sort_imec0.json"
+        cp1 = session.output_dir / "checkpoints" / "sort_imec1.json"
+        assert cp0.exists()
+        assert cp1.exists()
+
+
+# ---------------------------------------------------------------------------
+# Group D — Checkpoint skip
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointSkip:
+    def test_skips_sorted_probe(self, session: Session) -> None:
+        """si.run_sorter is NOT called for imec0 when its checkpoint is complete."""
+        _write_completed_checkpoint(session, "sort", "imec0")
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch(
+                "pynpxpipe.stages.sort.ss.run_sorter", return_value=_make_mock_sorting()
+            ) as mock_run,
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(session, sorting_cfg).run()
+
+        # Only imec1 was sorted
+        assert mock_run.call_count == 1
+
+    def test_processes_remaining_probe(self, session: Session) -> None:
+        """imec1 is processed when imec0 already has a completed checkpoint."""
+        _write_completed_checkpoint(session, "sort", "imec0")
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.sort.ss.run_sorter", return_value=_make_mock_sorting()),
+            patch("pynpxpipe.stages.sort.gc"),
+        ):
+            SortStage(session, sorting_cfg).run()
+
+        cp1 = session.output_dir / "checkpoints" / "sort_imec1.json"
+        assert cp1.exists()
+        data = json.loads(cp1.read_text(encoding="utf-8"))
+        assert data["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Group E — Error handling
+# ---------------------------------------------------------------------------
+
+
+class TestErrorHandling:
+    def test_run_sorter_failure_raises_sort_error(self, single_session: Session) -> None:
+        """RuntimeError from si.run_sorter is wrapped and raised as SortError."""
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch(
+                "pynpxpipe.stages.sort.ss.run_sorter",
+                side_effect=RuntimeError("CUDA out of memory"),
+            ),
+            patch("pynpxpipe.stages.sort.gc"),
+            pytest.raises(SortError, match="imec0"),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+    def test_failed_checkpoint_written_on_error(self, single_session: Session) -> None:
+        """sort_imec0.json status=failed is written when run_sorter raises."""
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch(
+                "pynpxpipe.stages.sort.ss.run_sorter",
+                side_effect=RuntimeError("CUDA out of memory"),
+            ),
+            patch("pynpxpipe.stages.sort.gc"),
+            pytest.raises(SortError),
+        ):
+            SortStage(single_session, sorting_cfg).run()
+
+        cp = single_session.output_dir / "checkpoints" / "sort_imec0.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
+    def test_unknown_mode_raises_sort_error(self, single_session: Session) -> None:
+        """SortError('Unknown mode: ...') is raised immediately for invalid mode."""
+        # Bypass SortingConfig validation by patching the config after construction
+        sorting_cfg = _make_sorting_config(mode="local")
+        sorting_cfg.mode = "invalid"  # bypass dataclass validation
+
+        with pytest.raises(SortError, match="Unknown mode"):
+            SortStage(single_session, sorting_cfg).run()
+
+
+# ---------------------------------------------------------------------------
+# Group F — GC release
+# ---------------------------------------------------------------------------
+
+
+class TestGcRelease:
+    def test_gc_collect_called_after_sort(self, session: Session) -> None:
+        """gc.collect() is called once per probe sorted."""
+        sorting_cfg = _make_sorting_config(mode="local")
+
+        with (
+            patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.sort.ss.run_sorter", return_value=_make_mock_sorting()),
+            patch("pynpxpipe.stages.sort.gc") as mock_gc,
+        ):
+            SortStage(session, sorting_cfg).run()
+
+        # 2 probes → gc.collect called at least 2 times
+        assert mock_gc.collect.call_count >= 2

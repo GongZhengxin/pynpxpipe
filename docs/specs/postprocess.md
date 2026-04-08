@@ -28,6 +28,7 @@
 | `config.pipeline.postprocess.slay_pre_s` | `float` | `0.05` | SLAY 预刺激窗口（秒） |
 | `config.pipeline.postprocess.slay_post_s` | `float` | `0.30` | SLAY 刺激后窗口（秒） |
 | `config.pipeline.postprocess.eye_validation.enabled` | `bool` | `True` | 是否执行眼动验证 |
+| `config.pipeline.postprocess.eye_validation.eye_threshold` | `float` | `0.999` | 注视比例阈值（cf. MATLAB `eye_thres=0.999`） |
 
 ### 外部数据依赖
 
@@ -152,7 +153,13 @@ SLAY（Stimulus-Locked Activity Yield）：计算该 unit 响应的 trial-to-tri
            if not np.isnan(corr):
                correlations.append(corr)
    ```
-6. **返回平均相关系数**：`return float(np.mean(correlations))` 若 `len(correlations) > 0` 否则 `np.nan`
+6. **方向性过滤**（cf. MATLAB step #19: `mean(response) > mean(baseline)`）：
+   - 计算各 trial 的 baseline 平均发放率：`baseline_rate = trial_vectors[:, :pre_bins].mean(axis=1)`（前 `pre_bins = int(pre_s / 0.01)` 个 bin）
+   - 计算各 trial 的 response 平均发放率：`response_rate = trial_vectors[:, pre_bins:].mean(axis=1)`
+   - 计算跨 trial 均值：`mean_baseline = baseline_rate.mean()`，`mean_response = response_rate.mean()`
+   - 若 `mean_response <= mean_baseline`：该 unit 为抑制性响应 → return `np.nan`（排除，不纳入有效 unit）
+   - **理由**：MATLAB 原始实现要求 response > baseline，排除抑制性响应的 unit；这是实验范式的假设（视觉刺激应引起兴奋性响应）
+7. **返回平均相关系数**：`return float(np.mean(correlations))` 若 `len(correlations) > 0` 否则 `np.nan`
 
 **返回值**：
 - `float`：0-1 范围，1 表示所有 trial 响应模式完全一致
@@ -165,10 +172,17 @@ SLAY（Stimulus-Locked Activity Yield）：计算该 unit 响应的 trial-to-tri
 （若 `eye_validation.enabled=False`，跳过此方法）
 
 1. 通过 `BHV2Parser(session.bhv_file).get_analog_data("Eye")` 获取眼动数据（逐 trial 分块读取，不预分配 3D 矩阵）
-2. 对每个 trial 检查 gaze 是否在感兴趣区域（ROI）内（ROI 参数从 config 读取）
-3. 更新 `behavior_events_df["trial_valid"]`（1.0 = valid，0.0 = invalid）
-4. 写回 parquet：`df.to_parquet(output_dir / "sync" / "behavior_events.parquet")`
-5. 返回更新后的 DataFrame
+2. 对每个 trial，在 stim onset 窗口内检查 gaze 是否在注视窗口内（`fixation_window` 从 BHV2 TrialData 读取）
+3. 计算 fixation ratio：`ratio = sum(distance < fixation_window) / n_samples`
+4. 若 `ratio > eye_threshold`（从 config 读取，默认 `0.999`；cf. MATLAB `eye_thres = 0.999`）：`trial_valid = 1.0`；否则 `trial_valid = 0.0`
+5. 更新 `behavior_events_df["trial_valid"]` 列
+6. 写回 parquet：`df.to_parquet(output_dir / "sync" / "behavior_events.parquet")`
+7. 返回更新后的 DataFrame
+
+**trial_valid_idx 语义对照（❌5）**：
+- **MATLAB**：`trial_valid_idx` 存储的是 image index（有效 trial 的图像编号），无效 trial 的 image index=0（零值作为"无效"标记）
+- **Python**：`trial_valid` 列存储 1.0（有效）/ 0.0（无效）/ NaN（未验证），是布尔语义而非图像编号
+- **兼容策略**：export stage 生成 NWB 时需根据 `trial_valid + condition_id` 重建有效图像列表。Python 不直接存储 image index，而是让 export 按需查询 `behavior_events_df[trial_valid == 1.0].condition_id`。两种方式在最终结果（哪些图像有足够有效 trial）上等价，但中间表示不同。
 
 ---
 
@@ -247,6 +261,7 @@ class PostprocessStage(BaseStage):
 | `slay_pre_s` | `config.pipeline.postprocess.slay_pre_s` | `0.05` | **禁止硬编码** |
 | `slay_post_s` | `config.pipeline.postprocess.slay_post_s` | `0.30` | **禁止硬编码** |
 | `eye_validation_enabled` | `config.pipeline.postprocess.eye_validation.enabled` | `True` | 眼动验证开关 |
+| `eye_threshold` | `config.pipeline.postprocess.eye_validation.eye_threshold` | `0.999` | 注视比例阈值，**禁止硬编码** |
 | `chunk_duration` | `config.pipeline.chunk_duration` | `"1s"` | 初始分块；OOM 时减半 |
 
 ---
@@ -266,6 +281,9 @@ class PostprocessStage(BaseStage):
 | `test_slay_range_zero_to_one` | 正常输入（非完全相关非完全不相关） | 结果 ∈ [0.0, 1.0] |
 | `test_slay_pre_post_window_from_params` | `pre_s=0.1, post_s=0.5` | 窗口边界正确（`n_bins = int(0.6/0.01) = 60`） |
 | `test_slay_bin_size_10ms` | `pre_s=0.05, post_s=0.30` | `n_bins = int(0.35/0.01) = 35` |
+| `test_slay_inhibitory_response_returns_nan` | mean(response) < mean(baseline) | 返回 `np.nan`（方向性过滤） |
+| `test_slay_excitatory_response_passes` | mean(response) > mean(baseline) | 正常返回 float |
+| `test_slay_equal_response_baseline_returns_nan` | mean(response) == mean(baseline) | 返回 `np.nan`（<= 均排除） |
 
 ### 正常流程
 
@@ -323,3 +341,44 @@ class PostprocessStage(BaseStage):
 | `pandas` | 必选 | behavior_events DataFrame |
 | `gc` | 标准库 | 显式内存释放 |
 | `json` | 标准库 | slay_scores.json 写出 |
+
+---
+
+## 8. MATLAB 对照
+
+| 项目 | 说明 |
+|------|------|
+| **对应 MATLAB 步骤** | step #9（眼动验证）, #15（KS4 输出加载+时钟对齐）, #18（Raster+PSTH 构建）, #19（统计过滤+波形修剪） |
+| **Ground Truth 详情** | `docs/ground_truth/step4_full_pipeline_analysis.md` step #9, #15, #18, #19 段落 |
+
+### MATLAB 算法概要
+
+**Step #9 — 眼动验证：**
+- `eye_thres = 0.999`（硬编码），逐 onset 检查注视比例
+- `eye_dist = sqrt(eye_data(:,1).^2 + eye_data(:,2).^2)`
+- 有效判定：`eye_ratio > 0.999`
+- 输出：`trial_valid_idx`（image index，0=无效），`dataset_valid_idx`（dataset 成员标记）
+
+**Step #15 — KS4 输出时钟对齐：**
+- 将 KS4 spike times 从 IMEC 时钟对齐到 NIDQ 时钟
+- Python 在 export stage 中按需转换，不在 postprocess 阶段做
+
+**Step #18 — Raster + PSTH 构建：**
+- 对每个 unit，在 stim onset 窗口内统计 spike count → 10ms bin → 逐 trial 向量
+- Python 的 SLAY 算法中 trial vector 构建等价于此步骤
+
+**Step #19 — 统计过滤：**
+- `mean(response) > mean(baseline)`：排除抑制性响应
+- Spearman 相关系数计算 trial-to-trial 一致性
+- 保留相关系数 > 阈值的 unit 为 "GoodUnit"
+
+### 有意偏离
+
+| 偏离 | 理由 |
+|------|------|
+| `trial_valid` 用 0.0/1.0 而非 image index | 语义更清晰；image index 可从 `condition_id + trial_valid` 联合查询 |
+| `eye_threshold` 从 config 读取而非硬编码 | MATLAB 硬编码 0.999；Python 支持不同实验范式调整 |
+| 眼动数据逐 trial 分块读取 | MATLAB 预分配 3D 矩阵 `eye_matrix [2 × onsets × T]`；Python 避免 OOM |
+| SLAY 方向性过滤在计算函数内部 | MATLAB 在步骤 #19 独立做统计过滤；Python 将方向性检查集成到 `_compute_slay` 中，简化流程 |
+| KS4 时钟对齐推迟到 export | MATLAB 在 #15 做一次性转换；Python 在 export 按需转换（spike times 保持原始 IMEC 时钟直到写 NWB） |
+| Raster/PSTH 不单独生成 | MATLAB 生成 raster 和 PSTH 图；Python 的 SLAY 计算包含等价的 binned spike count 逻辑，可视化由下游 notebook 完成 |

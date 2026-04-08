@@ -217,6 +217,7 @@ class Session:
     output_dir: Path           # 所有处理输出的根目录
     subject: SubjectConfig     # 动物元信息
     bhv_file: Path             # MonkeyLogic BHV2 文件路径
+    config: object             # PipelineConfig 实例（含 sorting/sync/preprocess 等配置），由 SessionManager 注入
     probes: list[ProbeInfo] = field(default_factory=list)   # discover 后填充
     checkpoint: dict = field(default_factory=dict)          # stage 完成状态摘要
     log_path: Path = field(init=False)                      # 由 __post_init__ 设置

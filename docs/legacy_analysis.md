@@ -137,6 +137,37 @@
 - **Protocol Pipeline**（推荐）：`si.apply_preprocessing_pipeline()` → `si.run_sorter()` → `si.create_sorting_analyzer()` → `analyzer.compute(postprocessing_protocol)`
 - **传统模式**：手动调用 `si.highpass_filter` → `si.detect_bad_channels` → `si.phase_shift` → `si.common_reference`
 
+#### 预处理链详细分析
+
+**Protocol Pipeline 实际执行顺序**（由 `spike_sorter.yaml` 的 `preprocessing` 字典顺序决定）：
+
+| 步骤 | SI 函数 | 参数 | 说明 |
+|------|---------|------|------|
+| 1 | `si.highpass_filter` | `freq_min=300.0` | 仅高通，无上限截止频率 |
+| 2 | `si.detect_bad_channels` + `.remove_channels` | （默认参数）| 组合为单步 `detect_and_remove_bad_channels` |
+| 3 | `si.phase_shift` | — | **位置错误**：应在滤波之前执行 |
+| 4 | `si.common_reference` | `operator='median'`, `reference='global'` | 全局中位数共同参考 |
+
+**传统手动模式执行顺序**（`spike_sorter.py` 行 310–331）：
+
+| 步骤 | SI 函数 | 备注 |
+|------|---------|------|
+| 1 | `si.highpass_filter(freq_min=300.0)` | 同 Protocol Pipeline，仅高通 |
+| 2 | `si.detect_bad_channels` | 检测坏道 |
+| 3 | `recording.remove_channels(bad_channel_ids)` | 移除坏道 |
+| 4 | `si.phase_shift` | **同样位置错误** |
+| 5 | `si.common_reference(operator='median', reference='global')` | |
+
+**关键问题**：
+
+1. **phase_shift 位置错误**：相位校正应在高通滤波之前执行（先校正因 IMEC ADC 多路转换引入的采样时间偏移，再滤波），legacy 两种模式均将 phase_shift 置于高通滤波之后，属次优顺序。pynpxpipe 新设计：`phase_shift` → `bandpass_filter` → `bad_channel_detection` → `common_reference`。
+
+2. **仅高通滤波，无上限截止频率**：legacy 只设 `freq_min=300 Hz`，不设 `freq_max`。神经尖峰信号有效频段约 300–6000 Hz，缺少低通滤波会保留高频噪声，对 Kilosort4 的模板匹配质量有影响。pynpxpipe 新设计改用带通滤波器（300–6000 Hz）。
+
+3. **运动校正完全缺失**：legacy 预处理链中没有任何运动校正（drift correction）步骤。pynpxpipe 新设计在 CMR 之前加入 DREDge 运动校正（`si.correct_motion`），与 Kilosort4 内置的 `nblocks` 运动估计互斥——二者不同时开启。
+
+4. **单元位置估计方法**：`postprocessing_protocol` 中 `unit_locations` 使用 `method='center_of_mass'`（legacy），该方法对深层探针精度较低。pynpxpipe 新设计改用 `monopolar_triangulation`，对线性探针精度更高。
+
 **发放率计算**（行 600，硬编码）：
 ```python
 self.firing_rates = counts * 30000 / self.spike_times.max()
@@ -168,7 +199,102 @@ self.firing_rates = counts * 30000 / self.spike_times.max()
 
 ---
 
-### 2.5 `core/data_integrator.py` — DataIntegrator（约 818 行）
+### 2.5 质控与分类（bombcell）
+
+**核心文件**：
+- `Util/BC/bombcell_pipeline.m` — MATLAB 主入口
+- `Util/BC/+bc/+qm/runAllQualityMetrics.m` — 计算 28+ 质量指标
+- `Util/BC/+bc/+qm/getQualityUnitType.m` — 单元分类逻辑
+- `Util/BC/+bc/+clsfy/classifyCells.m` — 细胞分类（体细胞 vs 非体细胞）
+- `core/quality_controller.py` — Python 包装器（调用 MATLAB 引擎）
+- `utils/nwb_bombcell_helper.py` — 将 bombcell 结果写入 NWB
+
+**Bombcell 功能**：计算 28+ 质量指标，将单元分类为 NOISE / MUA / GOOD / NON-SOMATIC 四类。
+
+**计算的质量指标**（三大类）：
+
+1. **污染指标**：
+   - `percentageSpikesMissing_gaussian` — 基于高斯拟合估计的漏检尖峰比例
+   - `percentageSpikesMissing_symmetric` — 对称分布拟合的漏检比例
+   - `fractionRPVs_estimatedTauR` — 不应期违规比例（自适应 tauR 估计，1.5-2.5ms）
+   - `presenceRatio` — 单元在记录时长中的存在比例（60s bin）
+
+2. **波形指标**：
+   - `nPeaks` / `nTroughs` — 波形峰/谷数量
+   - `waveformDuration_peakTrough` — 峰到谷持续时间（μs）
+   - `spatialDecaySlope` — 空间衰减斜率（线性/指数拟合）
+   - `waveformBaselineFlatness` — 基线平坦度（基线噪声 / 峰值幅度）
+   - `scndPeakToTroughRatio` — 第二峰与谷的比值
+   - `mainPeakToTroughRatio` — 主峰与谷的比值
+   - `peak1ToPeak2Ratio` / `troughToPeak2Ratio` — 用于非体细胞检测
+
+3. **幅度与漂移**：
+   - `rawAmplitude` — 原始幅度（μV）
+   - `signalToNoiseRatio` — 信噪比
+   - `maxDriftEstimate` — 最大漂移（μm，60s bin）
+   - `cumDriftEstimate` — 累积漂移（μm）
+   - 可选隔离度指标：`isolationDistance`、`Lratio`、`silhouetteScore`（需 PCA 特征）
+
+**分类逻辑**（unitType 值，来自 `getQualityUnitType.m`）：
+
+- **unitType = 0 (NOISE)**：满足任一条件即判定为噪声
+  - `nPeaks > 2` 或 `nTroughs > 1`
+  - `waveformDuration < 100μs` 或 `> 1150μs`
+  - `waveformBaselineFlatness > 0.3`
+  - `spatialDecaySlope` 超出合理范围（线性 < -0.008 或指数 < 0.01 / > 0.1）
+  - `mainPeakToTroughRatio > 0.8`
+
+- **unitType = 2 (MUA)**：通过噪声过滤但未达到 GOOD 标准
+  - 未满足以下任一条件：
+    - `percentageSpikesMissing < 20%`
+    - `nSpikes > 300`
+    - `fractionRPVs < 10%`
+    - `presenceRatio > 80%`
+    - `rawAmplitude > 20μV`
+    - `signalToNoiseRatio > 1`
+    - `maxDriftEstimate < 100μm`（可选）
+  - 可选隔离度条件：`isolationDistance > 20`、`Lratio < 0.1`
+
+- **unitType = 1 (GOOD)**：通过所有 MUA 标准
+
+- **unitType = 3 (NON-SOMATIC)**：GOOD 或 MUA 单元，但波形特征表明非体细胞记录
+  - `troughToPeak2Ratio < 5` 且 `mainPeak_before_width < 4` 且 `mainTrough_width < 5` 且 `peak1ToPeak2Ratio > 3`
+  - 或 `mainPeakToTroughRatio > 0.8`
+
+**硬编码阈值**（来自 `qualityParamValues.m`）：
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `tauR_valuesMin` | 1.5 ms | 不应期估计下限 |
+| `tauR_valuesMax` | 2.5 ms | 不应期估计上限 |
+| `tauC` | 0.1 ms | 重复尖峰剔除窗口 |
+| `nRawSpikesToExtract` | 100 | 每单元提取波形数 |
+| `presenceRatioBinSize` | 60 s | 存在比例时间窗 |
+| `driftBinSize` | 60 s | 漂移估计时间窗 |
+| `maxRPVviolations` | 0.1 (10%) | MUA vs GOOD 阈值 |
+| `minPresenceRatio` | 0.8 (80%) | MUA vs GOOD 阈值 |
+| `minAmplitude` | 20 μV | MUA vs GOOD 阈值 |
+| `minSNR` | 1 | MUA vs GOOD 阈值 |
+| `maxDrift` | 100 μm | MUA vs GOOD 阈值（可选） |
+
+**新版本迁移**：pynpxpipe 使用 SpikeInterface `quality_metrics` 替代 MATLAB bombcell，覆盖大部分相同指标（除 `waveformBaselineFlatness` 需自定义实现）。分类逻辑改为配置文件驱动，阈值可调。
+
+---
+
+### 2.6 `core/data_integrator.py` — DataIntegrator（约 1150 行）
+- `nRawSpikesToExtract`：100（用于波形提取）
+- `presenceRatioBinSize`：60s
+- `maxRPVviolations`：0.1（10% 不应期违规上限）
+- `minPresenceRatio`：0.8（80% 存在比例下限）
+- `minAmplitude`：20μV
+- `minSNR`：1
+- `maxDrift`：100μm
+
+**新版本改进**：pynpxpipe 使用 SpikeInterface 内置 `quality_metrics` 模块替代 MATLAB bombcell，覆盖大部分相同指标（ISI violations、presence ratio、amplitude cutoff、SNR、drift 等），无需 MATLAB 依赖，计算效率更高。
+
+---
+
+### 2.6 `core/data_integrator.py` — DataIntegrator（约 818 行）
 
 **核心功能**：将所有处理结果整合为标准 NWB 文件
 
@@ -186,7 +312,7 @@ self.firing_rates = counts * 30000 / self.spike_times.max()
 
 ---
 
-### 2.6 `utils/` — 工具模块
+### 2.7 `utils/` — 工具模块
 
 | 文件 | 功能 |
 |------|------|
@@ -291,6 +417,11 @@ Subject:
 | `data_loader.py:198-203` | `channel_ids=['nidq#XA0']`, `['nidq#XD0']` | 通道 ID 硬编码，多路采集时不适用 |
 | `data_loader.py:224` | `stream_name='imec0.lf-SYNC'` | 探针编号硬编码为 imec0 |
 | `synchronizer.py:201` | `np.where(self.Dcode_imec['CodeVal'] == 64)[0]` | 同步事件值 64 硬编码 |
+| `spike_sorter.py:~340` | `'chunk_duration': '4s'` | job_kwargs 中 chunk_duration 硬编码为 4s，在 Protocol Pipeline 路径和传统路径均如此（两处 fallback 值均为 `'4s'`） |
+| `spike_sorter.py:~339` | `'n_jobs': 12` | job_kwargs 中 n_jobs 硬编码为 12，未从系统资源自动探测 |
+| `synchronizer.py` | `monitor_delay_correction = -5` | 显示器延迟校正值 -5ms 在代码内直接赋值，虽然 synchronizer.yaml 中有对应配置项，但代码读取路径不明确 |
+| `spike_sorter.yaml` | `unit_locations.method: 'center_of_mass'` | 单元位置估计方法硬编码在配置文件中，用户若不手动修改配置将始终使用精度较低的 center_of_mass |
+| `spike_sorter.yaml` | Protocol Pipeline 预处理顺序固定 | YAML 字典顺序决定预处理链执行顺序，Python 3.7+ 保证插入顺序；用户若调整 YAML 中条目顺序，将改变预处理步骤顺序，但无任何文档说明此依赖 |
 
 ### 4.2 内存管理风险
 
@@ -337,6 +468,8 @@ Subject:
 - MonkeyLogic 验证只检查字段存在性，不验证字段类型或值域
 - 眼动质量检查只统计注视比例，不检测眼漂移、眼跳（saccade）等伪影
 - Bombcell 版本兼容性无检查（不同版本 qMetric 字段集不同）
+- **缓存版本字符串脆弱**：`data_loader.py` 的 pickle 缓存用版本字符串 `"v2.2_eye_no_double_transpose"` 作为失效标志。任何代码逻辑修改必须手动更新此字符串，否则旧缓存不会失效，导致使用过时数据而不报错。版本字符串与代码变更没有自动绑定关系，极易被遗漏。
+- **`si.apply_preprocessing_pipeline()` API 兼容性**：`spike_sorter.py:301` 调用此函数，但该函数在 SpikeInterface 0.101+ 中可能已被移除或重命名（SI 0.101 将预处理接口大幅重构）。新项目在 SI >= 0.101 环境下直接复用此调用会静默失败或 ImportError。
 
 ---
 
@@ -424,9 +557,26 @@ Subject:
 
 ---
 
-## 6. 依赖清单
+## 6. 新旧对比与迁移建议
 
-### 6.1 requirements.txt 声明的依赖
+| 特性 | Legacy (pyneuralpipe) | pynpxpipe 新设计 | 迁移理由 |
+|------|-----------------------|------------------|----------|
+| **Phase shift 位置** | highpass_filter 之后执行 | bandpass_filter 之前执行 | ADC 采样时间偏移应在任何滤波前校正，否则滤波会引入额外相位失真 |
+| **滤波类型** | 仅高通 300 Hz，无上限截止 | 带通 300–6000 Hz | 神经尖峰有效频段为 300–6000 Hz；保留高频噪声降低 KS4 模板匹配质量 |
+| **运动校正** | 完全缺失 | DREDge via `si.correct_motion`（与 KS4 `nblocks` 互斥） | 长时程录制中电极漂移可达数十微米，运动校正显著提升 spike sorting 质量 |
+| **单元位置估计** | `center_of_mass` | `monopolar_triangulation` | 对线性多通道探针，monopolar_triangulation 空间精度更高，对深层单元误差更小 |
+| **探针支持** | 单探针（硬编码 imec0） | 多探针（probe_id 参数化，支持 N 个 IMEC 探针） | 实验室 Neuropixels 2.0 录制常用多探针同步采集 |
+| **质量控制框架** | Bombcell Python API | SpikeInterface 原生 `quality_metrics` + `curation` | Bombcell 版本兼容性差，与 SI 生态解耦；SI 0.101 内置 QC 指标更丰富且持续维护 |
+| **NWB 写入方式** | neuroconv `SpikeGLXConverterPipe` + `KiloSortSortingInterface` | 原生 pynwb API | neuroconv 接口版本绑定强，升级频繁；原生 pynwb 更稳定，控制粒度更细 |
+| **眼动矩阵处理** | `np.zeros((onset_times, max_dur, 2))` 预分配全量 3D 矩阵，大 session 达 GB 级 | 按 trial 分块处理，移至 postprocess 阶段 | 全量预分配在大 session（>1000 trials）下导致 OOM；分块处理内存峰值可控 |
+| **BHV2 解析缓存** | pickle 缓存 + MD5 hash + 版本字符串 `"v2.2_eye_no_double_transpose"` | 无缓存，每次通过 MATLAB engine 重新解析 | 版本字符串脆弱，代码改动后若忘记更新字符串则使用过时缓存；BHV2 解析耗时可接受（< 30s），缓存收益不足以抵消风险 |
+| **checkpoint 系统** | `directory_checker.py` 通过检查特定目录/文件是否存在来判断阶段完成状态，粒度粗 | 每个 stage × probe 独立写 JSON checkpoint 文件到 `output_dir/` | 目录检查无法区分"处理中断"和"处理完成"；JSON checkpoint 含时间戳、参数哈希，支持精确断点续跑 |
+
+---
+
+## 7. 依赖清单
+
+### 7.1 requirements.txt 声明的依赖
 
 ```
 # Web 界面
@@ -464,7 +614,7 @@ black>=23.0.0
 flake8>=6.0.0
 ```
 
-### 6.2 代码中实际 import 的库（requirements 未列出）
+### 7.2 代码中实际 import 的库（requirements 未列出）
 
 | 库 | 用途 | 来源模块 |
 |----|------|---------|
@@ -475,7 +625,7 @@ flake8>=6.0.0
 | `dateutil` | tz.tzlocal() | data_integrator |
 | `fractions.Fraction` | 精确有理数重采样比率 | synchronizer |
 
-### 6.3 完整依赖清单（建议新 requirements.txt）
+### 7.3 完整依赖清单（建议新 requirements.txt）
 
 ```
 numpy>=1.24.0
@@ -497,7 +647,7 @@ mat73>=0.59
 streamlit>=1.28.0
 ```
 
-### 6.4 运行环境要求
+### 7.4 运行环境要求
 
 - **Python**：3.9 - 3.11（SpikeInterface 官方支持范围）
 - **操作系统**：Windows 11（当前开发环境）

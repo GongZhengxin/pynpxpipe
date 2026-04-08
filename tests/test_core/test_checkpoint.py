@@ -17,11 +17,13 @@ from pynpxpipe.core.errors import CheckpointError
 # Helper: create a CheckpointManager with get_logger mocked
 # ---------------------------------------------------------------------------
 
+
 def _make_manager(tmp_path: Path):
     """Return a CheckpointManager for tmp_path with get_logger mocked."""
     with patch("pynpxpipe.core.checkpoint.get_logger") as mock_gl:
         mock_gl.return_value = MagicMock()
         from pynpxpipe.core.checkpoint import CheckpointManager
+
         mgr = CheckpointManager(tmp_path)
     # Keep mock alive via the manager's stored logger (already assigned)
     return mgr
@@ -31,10 +33,12 @@ def _make_manager(tmp_path: Path):
 # Test 1: __init__ creates checkpoints/ subdirectory
 # ---------------------------------------------------------------------------
 
+
 def test_init_creates_checkpoints_dir(tmp_path):
     """CheckpointManager(output_dir) must create output_dir/checkpoints/."""
     with patch("pynpxpipe.core.checkpoint.get_logger", return_value=MagicMock()):
         from pynpxpipe.core.checkpoint import CheckpointManager
+
         CheckpointManager(tmp_path)
     assert (tmp_path / "checkpoints").is_dir()
 
@@ -44,6 +48,7 @@ def test_init_checkpoints_dir_already_exists(tmp_path):
     (tmp_path / "checkpoints").mkdir()
     with patch("pynpxpipe.core.checkpoint.get_logger", return_value=MagicMock()):
         from pynpxpipe.core.checkpoint import CheckpointManager
+
         CheckpointManager(tmp_path)  # should not raise
     assert (tmp_path / "checkpoints").is_dir()
 
@@ -51,6 +56,7 @@ def test_init_checkpoints_dir_already_exists(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 2: mark_complete (stage-level) writes discover.json with status=completed
 # ---------------------------------------------------------------------------
+
 
 def test_mark_complete_stage_level_creates_file(tmp_path):
     """mark_complete('discover', {...}) writes discover.json."""
@@ -104,6 +110,7 @@ def test_mark_complete_stage_level_no_probe_id_key(tmp_path):
 # Test 3: mark_complete (probe-level) writes preprocess_imec0.json
 # ---------------------------------------------------------------------------
 
+
 def test_mark_complete_probe_level_creates_file(tmp_path):
     """mark_complete('preprocess', {...}, probe_id='imec0') writes preprocess_imec0.json."""
     mgr = _make_manager(tmp_path)
@@ -135,6 +142,7 @@ def test_mark_complete_probe_level_status_completed(tmp_path):
 # Test 4: is_complete — file exists with status=completed → True
 # ---------------------------------------------------------------------------
 
+
 def test_is_complete_returns_true_when_completed(tmp_path):
     """is_complete('discover') returns True if discover.json has status=completed."""
     mgr = _make_manager(tmp_path)
@@ -153,6 +161,7 @@ def test_is_complete_probe_level_returns_true_when_completed(tmp_path):
 # Test 5: is_complete — file does not exist → False
 # ---------------------------------------------------------------------------
 
+
 def test_is_complete_returns_false_when_no_file(tmp_path):
     """is_complete('discover') returns False when no checkpoint file exists."""
     mgr = _make_manager(tmp_path)
@@ -169,6 +178,7 @@ def test_is_complete_probe_level_returns_false_when_no_file(tmp_path):
 # Test 6: is_complete — status="failed" → False
 # ---------------------------------------------------------------------------
 
+
 def test_is_complete_returns_false_for_failed_status(tmp_path):
     """is_complete('sort', 'imec0') returns False when status='failed'."""
     mgr = _make_manager(tmp_path)
@@ -179,6 +189,7 @@ def test_is_complete_returns_false_for_failed_status(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 7: is_complete — JSON corrupted → raise CheckpointError
 # ---------------------------------------------------------------------------
+
 
 def test_is_complete_raises_checkpoint_error_on_corrupt_json(tmp_path):
     """is_complete raises CheckpointError if checkpoint file has invalid JSON."""
@@ -197,13 +208,12 @@ def test_is_complete_raises_checkpoint_error_on_corrupt_json(tmp_path):
 # Test 8: mark_failed writes status="failed" and error field
 # ---------------------------------------------------------------------------
 
+
 def test_mark_failed_creates_file_with_status_failed(tmp_path):
     """mark_failed writes sort_imec0.json with status='failed'."""
     mgr = _make_manager(tmp_path)
     mgr.mark_failed("sort", "CUDA OOM", probe_id="imec0")
-    data = json.loads(
-        (tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8"))
     assert data["status"] == "failed"
 
 
@@ -211,9 +221,7 @@ def test_mark_failed_contains_error_field(tmp_path):
     """mark_failed writes the error message into the 'error' field."""
     mgr = _make_manager(tmp_path)
     mgr.mark_failed("sort", "CUDA OOM", probe_id="imec0")
-    data = json.loads(
-        (tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8"))
     assert data["error"] == "CUDA OOM"
 
 
@@ -230,9 +238,7 @@ def test_mark_failed_contains_failed_at(tmp_path):
     """mark_failed checkpoint must contain failed_at timestamp, not completed_at."""
     mgr = _make_manager(tmp_path)
     mgr.mark_failed("sort", "CUDA OOM", probe_id="imec0")
-    data = json.loads(
-        (tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8"))
     assert "failed_at" in data
     assert "completed_at" not in data
 
@@ -240,6 +246,7 @@ def test_mark_failed_contains_failed_at(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 9: read — file exists → returns full dict
 # ---------------------------------------------------------------------------
+
 
 def test_read_returns_dict_when_file_exists(tmp_path):
     """read('discover') returns the full checkpoint dict."""
@@ -264,6 +271,7 @@ def test_read_probe_level_returns_dict(tmp_path):
 # Test 10: read — file does not exist → returns None
 # ---------------------------------------------------------------------------
 
+
 def test_read_returns_none_when_file_missing(tmp_path):
     """read('discover') returns None if no checkpoint file exists."""
     mgr = _make_manager(tmp_path)
@@ -279,6 +287,7 @@ def test_read_probe_level_returns_none_when_missing(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 11: clear — file exists → file is deleted
 # ---------------------------------------------------------------------------
+
 
 def test_clear_deletes_existing_file(tmp_path):
     """clear('discover') removes discover.json if it exists."""
@@ -301,6 +310,7 @@ def test_clear_probe_level_deletes_file(tmp_path):
 # Test 12: clear — file does not exist → silent, no exception
 # ---------------------------------------------------------------------------
 
+
 def test_clear_nonexistent_file_does_not_raise(tmp_path):
     """clear('discover') when file is absent must not raise any exception."""
     mgr = _make_manager(tmp_path)
@@ -316,6 +326,7 @@ def test_clear_probe_level_nonexistent_does_not_raise(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 13: list_completed_stages — correct stage names, deduplicated
 # ---------------------------------------------------------------------------
+
 
 def test_list_completed_stages_returns_completed_names(tmp_path):
     """list_completed_stages returns stage names of all completed checkpoints."""
@@ -358,6 +369,7 @@ def test_list_completed_stages_empty_when_none(tmp_path):
 #          CheckpointError raised
 # ---------------------------------------------------------------------------
 
+
 def test_atomic_write_cleans_tmp_file_on_error(tmp_path):
     """If Path.replace fails, the .tmp file must be deleted and CheckpointError raised."""
     mgr = _make_manager(tmp_path)
@@ -389,6 +401,7 @@ def test_atomic_write_raises_checkpoint_error_on_oserror(tmp_path):
 # Test 15: mark_complete called multiple times → latest result overwrites
 # ---------------------------------------------------------------------------
 
+
 def test_mark_complete_overwrites_on_repeat_call(tmp_path):
     """Calling mark_complete twice for same stage writes latest data."""
     mgr = _make_manager(tmp_path)
@@ -403,9 +416,7 @@ def test_mark_complete_probe_level_overwrites(tmp_path):
     mgr = _make_manager(tmp_path)
     mgr.mark_complete("sort", {"n_units": 100}, probe_id="imec0")
     mgr.mark_complete("sort", {"n_units": 142}, probe_id="imec0")
-    data = json.loads(
-        (tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((tmp_path / "checkpoints" / "sort_imec0.json").read_text(encoding="utf-8"))
     assert data["n_units"] == 142
 
 
@@ -413,11 +424,14 @@ def test_mark_complete_probe_level_overwrites(tmp_path):
 # Test 16: mark_failed write failure → no raise (does not propagate)
 # ---------------------------------------------------------------------------
 
+
 def test_mark_failed_does_not_raise_on_write_failure(tmp_path):
     """mark_failed must NOT raise even if the file write fails (avoids masking original error)."""
     mgr = _make_manager(tmp_path)
 
     # Patch _atomic_write to always raise CheckpointError
-    with patch.object(mgr, "_atomic_write", side_effect=CheckpointError("sort", tmp_path, "disk full")):
+    with patch.object(
+        mgr, "_atomic_write", side_effect=CheckpointError("sort", tmp_path, "disk full")
+    ):
         # Should NOT raise
         mgr.mark_failed("sort", "original pipeline error", probe_id="imec0")

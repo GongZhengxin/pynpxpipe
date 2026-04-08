@@ -43,9 +43,7 @@ def setup_logging(log_path: Path, level: int = logging.INFO) -> None:
     # Validate parent dir exists — raise OSError early if not
     log_path = Path(log_path)
     if not log_path.parent.exists():
-        raise OSError(
-            f"Log file parent directory does not exist: {log_path.parent}"
-        )
+        raise OSError(f"Log file parent directory does not exist: {log_path.parent}")
 
     # Build formatters
     json_formatter = structlog.stdlib.ProcessorFormatter(
@@ -154,9 +152,7 @@ class StageLogger:
         Args:
             data: Optional dict of stage-specific summary fields to include in the log entry.
         """
-        elapsed = (
-            time.monotonic() - self._start_time if self._start_time is not None else 0.0
-        )
+        elapsed = time.monotonic() - self._start_time if self._start_time is not None else 0.0
         extra = data or {}
         self._logger.info(
             "stage_complete",
@@ -172,9 +168,7 @@ class StageLogger:
             error: The exception that caused the failure.
             data: Optional dict of additional context fields.
         """
-        elapsed = (
-            time.monotonic() - self._start_time if self._start_time is not None else 0.0
-        )
+        elapsed = time.monotonic() - self._start_time if self._start_time is not None else 0.0
         tb = traceback.format_exc()
         extra = data or {}
         self._logger.error(

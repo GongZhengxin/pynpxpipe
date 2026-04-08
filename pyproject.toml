@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "GongZhengxin", email = "1045418215@qq.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     # Core scientific computing
     "numpy>=1.24.0",
@@ -35,6 +35,15 @@ dependencies = [
 gpu = [
     "nvidia-ml-py>=12.535.0",  # pynvml: GPU VRAM detection via NVML (optional, Windows/Linux)
 ]
+matlab = [
+    "matlabengine>=23.2",      # MATLAB Engine for Python (BHV2 parsing, M1 only)
+]
+plots = [
+    "matplotlib>=3.7",         # Sync diagnostic plots (optional)
+]
+ui = [
+    "panel>=1.0",              # Web UI (optional)
+]
 
 [dependency-groups]
 dev = [
@@ -48,6 +57,7 @@ dev = [
 
 [project.scripts]
 pynpxpipe = "pynpxpipe.cli.main:cli"
+pynpxpipe-ui = "pynpxpipe.ui.app:main"
 
 [build-system]
 requires = ["uv_build>=0.10.11,<0.11.0"]

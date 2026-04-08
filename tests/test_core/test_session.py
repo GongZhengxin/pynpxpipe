@@ -28,6 +28,7 @@ from pynpxpipe.core.session import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_subject() -> SubjectConfig:
     return SubjectConfig(
         subject_id="MaoDan",
@@ -76,6 +77,7 @@ def _make_data_dir(tmp_path: Path, name: str = "MaoDan_20240101") -> tuple[Path,
 # ---------------------------------------------------------------------------
 # Group A — Dataclasses
 # ---------------------------------------------------------------------------
+
 
 class TestSubjectConfig:
     def test_all_fields_stored(self):
@@ -150,6 +152,7 @@ class TestSessionLogPath:
 # Group B — from_data_dir()
 # ---------------------------------------------------------------------------
 
+
 class TestFromDataDir:
     def test_discovers_session_dir_and_bhv_file(self, tmp_path):
         data_dir, session_dir, bhv_file = _make_data_dir(tmp_path)
@@ -202,6 +205,7 @@ class TestFromDataDir:
 # Group C — create()
 # ---------------------------------------------------------------------------
 
+
 class TestCreate:
     def test_creates_checkpoints_and_logs_dirs(self, tmp_path):
         _, session_dir, bhv_file = _make_data_dir(tmp_path)
@@ -253,6 +257,7 @@ class TestCreate:
 # Group D — save()
 # ---------------------------------------------------------------------------
 
+
 class TestSave:
     def test_paths_serialized_as_strings(self, tmp_path):
         _, session_dir, bhv_file = _make_data_dir(tmp_path)
@@ -293,6 +298,7 @@ class TestSave:
 # ---------------------------------------------------------------------------
 # Group E — load()
 # ---------------------------------------------------------------------------
+
 
 class TestLoad:
     def test_restores_subject_fields(self, tmp_path):
@@ -343,6 +349,7 @@ class TestLoad:
 # ---------------------------------------------------------------------------
 # Group F — Roundtrip
 # ---------------------------------------------------------------------------
+
 
 class TestRoundtrip:
     def test_create_save_load_equivalent(self, tmp_path):

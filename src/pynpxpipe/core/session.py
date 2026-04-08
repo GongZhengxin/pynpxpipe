@@ -85,15 +85,15 @@ class Session:
     output_dir: Path
     subject: SubjectConfig
     bhv_file: Path
-    config: object = field(default_factory=dict)  # PipelineConfig instance, injected by SessionManager
+    config: object = field(
+        default_factory=dict
+    )  # PipelineConfig instance, injected by SessionManager
     probes: list[ProbeInfo] = field(default_factory=list)
     checkpoint: dict = field(default_factory=dict)
     log_path: Path = field(init=False)
 
     def __post_init__(self) -> None:
-        self.log_path = (
-            self.output_dir / "logs" / f"pynpxpipe_{self.session_dir.name}.log"
-        )
+        self.log_path = self.output_dir / "logs" / f"pynpxpipe_{self.session_dir.name}.log"
 
 
 class SessionManager:
@@ -133,9 +133,7 @@ class SessionManager:
 
         gate_dirs = sorted(p for p in data_dir.iterdir() if p.is_dir() and _is_gate_dir(p))
         if not gate_dirs:
-            raise FileNotFoundError(
-                f"No *_g[0-9] directory found in {data_dir}"
-            )
+            raise FileNotFoundError(f"No *_g[0-9] directory found in {data_dir}")
         if len(gate_dirs) > 1:
             _log.warning(
                 "Multiple gate directories found in %s: %s — using %s",
@@ -274,9 +272,11 @@ class SessionManager:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_gate_dir(path: Path) -> bool:
     """Return True if the directory name matches the SpikeGLX gate pattern *_g[0-9]*."""
     import re
+
     return bool(re.search(r"_g\d+$", path.name))
 
 

@@ -37,3 +37,57 @@ class CheckpointError(PynpxpipeError):
         self.path = path
         self.reason = reason
         super().__init__(f"CheckpointError [{stage}] {path}: {reason}")
+
+
+class DiscoverError(PynpxpipeError):
+    """Raised when the session directory does not contain expected SpikeGLX data.
+
+    Examples: no imec probe directories found, NIDQ files missing.
+    """
+
+
+class PreprocessError(PynpxpipeError):
+    """Raised when preprocessing fails for a probe.
+
+    Examples: Zarr save fails (disk full, permissions), unsupported motion
+    correction method.
+    """
+
+
+class SortError(PynpxpipeError):
+    """Raised when spike sorting fails for a probe.
+
+    Examples: CUDA out-of-memory, sorter not installed, unknown mode,
+    import path missing or corrupted.
+    """
+
+
+class SyncError(PynpxpipeError):
+    """Raised when time synchronization between data streams fails.
+
+    Examples: sync pulse count mismatch, alignment residual exceeds threshold,
+    invalid sync times (NaN/Inf), insufficient sync pulses.
+    """
+
+
+class CurateError(PynpxpipeError):
+    """Raised when quality metric computation or unit filtering fails for a probe.
+
+    Examples: sorted or preprocessed recording cannot be loaded, SortingAnalyzer
+    computation fails.
+    """
+
+
+class PostprocessError(PynpxpipeError):
+    """Raised when post-processing (SLAY score computation) fails for a probe.
+
+    Examples: waveform/template computation fails, eye data missing for validation.
+    """
+
+
+class ExportError(PynpxpipeError):
+    """Raised when writing the output NWB file fails.
+
+    Examples: NWBWriter error, written file cannot be read back (HDF5 corrupt),
+    behavior_events.parquet missing.
+    """

@@ -5,8 +5,13 @@ Uses SpikeInterface quality_metrics extension. No UI dependencies.
 
 from __future__ import annotations
 
-from typing import Callable, TYPE_CHECKING
+import gc
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
+import spikeinterface.core as si
+
+from pynpxpipe.core.errors import CurateError
 from pynpxpipe.stages.base import BaseStage
 
 if TYPE_CHECKING:
@@ -20,14 +25,21 @@ class CurateStage(BaseStage):
     amplitude_cutoff, presence_ratio, snr). Thresholds are read from
     config.pipeline.curation — never hardcoded.
 
-    Replaces the legacy Bombcell-based quality control.
+    SortingAnalyzer uses format="memory" (no disk write needed for curation).
+    Curated sorting saved as binary_folder. quality_metrics.csv saved for
+    all units (pre-filter) for manual inspection.
+
+    Zero units after curation: WARNING, not error (pipeline continues).
+
+    Raises:
+        CurateError: If sorting or recording cannot be loaded.
     """
 
     STAGE_NAME = "curate"
 
     def __init__(
         self,
-        session: "Session",
+        session: Session,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> None:
         """Initialize the curate stage.
@@ -36,23 +48,28 @@ class CurateStage(BaseStage):
             session: Active pipeline session with sorting results available.
             progress_callback: Optional GUI/progress callback; None in CLI mode.
         """
-        raise NotImplementedError("TODO")
+        super().__init__(session, progress_callback)
 
     def run(self) -> None:
-        """Compute quality metrics and curate all probes serially.
+        """Compute quality metrics and curate all probes serially."""
+        if self._is_complete():
+            self._report_progress("Curate already complete", 1.0)
+            return
 
-        For each probe (skipping those with a completed checkpoint):
-        1. Load sorting result.
-        2. Create lightweight SortingAnalyzer (quality metrics only).
-        3. Compute quality metrics.
-        4. Filter units by configured thresholds.
-        5. Save curated sorting and quality_metrics.csv.
-        6. Write per-probe checkpoint; del analyzer + gc.collect().
+        self._report_progress("Starting curate", 0.0)
 
-        Note: An empty curated sorting (0 good units) is NOT an error. A warning
-        is logged and processing continues with the empty sorting.
-        """
-        raise NotImplementedError("TODO")
+        n_probes = len(self.session.probes)
+        for i, probe in enumerate(self.session.probes):
+            probe_id = probe.probe_id
+            try:
+                self._curate_probe(probe_id)
+            except Exception as exc:
+                self._write_failed_checkpoint(exc, probe_id=probe_id)
+                raise
+            self._report_progress(f"Curated {probe_id}", (i + 1) / n_probes)
+
+        self._write_checkpoint({"probe_ids": [p.probe_id for p in self.session.probes]})
+        self._report_progress("Curate complete", 1.0)
 
     def _curate_probe(self, probe_id: str) -> tuple[int, int]:
         """Run curation for a single probe.
@@ -63,4 +80,78 @@ class CurateStage(BaseStage):
         Returns:
             Tuple (n_units_before, n_units_after).
         """
-        raise NotImplementedError("TODO")
+        if self._is_complete(probe_id=probe_id):
+            return (0, 0)
+
+        sorted_path = self.session.output_dir / "sorted" / probe_id
+        recording_path = self.session.output_dir / "preprocessed" / probe_id
+
+        try:
+            sorting = si.load(sorted_path)
+            recording = si.load(recording_path)
+        except Exception as exc:
+            raise CurateError(f"Failed to load data for {probe_id}: {exc}") from exc
+
+        cfg = self.session.config
+        resources = cfg.resources
+        n_jobs = resources.n_jobs if resources.n_jobs != "auto" else 1
+        chunk_duration = resources.chunk_duration if resources.chunk_duration != "auto" else "1s"
+
+        analyzer = si.create_sorting_analyzer(
+            sorting,
+            recording,
+            format="memory",
+            sparse=True,
+        )
+        analyzer.compute("random_spikes")
+        analyzer.compute("waveforms", chunk_duration=chunk_duration, n_jobs=n_jobs)
+        analyzer.compute("templates")
+        analyzer.compute("noise_levels")
+        analyzer.compute(
+            "quality_metrics",
+            metric_names=["isi_violation_ratio", "amplitude_cutoff", "presence_ratio", "snr"],
+        )
+
+        qm = analyzer.get_extension("quality_metrics").get_data()
+
+        output_probe_dir = self.session.output_dir / "curated" / probe_id
+        output_probe_dir.mkdir(parents=True, exist_ok=True)
+        qm.to_csv(output_probe_dir / "quality_metrics.csv")
+
+        n_before = len(sorting.get_unit_ids())
+
+        curation = cfg.curation
+        keep_mask = (
+            (qm["isi_violation_ratio"] <= curation.isi_violation_ratio_max)
+            & (qm["amplitude_cutoff"] <= curation.amplitude_cutoff_max)
+            & (qm["presence_ratio"] >= curation.presence_ratio_min)
+            & (qm["snr"] >= curation.snr_min)
+        )
+        good_unit_ids = qm.index[keep_mask].tolist()
+        curated_sorting = sorting.select_units(good_unit_ids)
+
+        n_after = len(good_unit_ids)
+        if n_after == 0:
+            self.logger.warning("Zero units after curation", probe_id=probe_id)
+
+        curated_sorting.save(folder=output_probe_dir, format="binary_folder")
+
+        self._write_checkpoint(
+            {
+                "probe_id": probe_id,
+                "n_units_before": n_before,
+                "n_units_after": n_after,
+                "thresholds": {
+                    "isi_violation_ratio_max": curation.isi_violation_ratio_max,
+                    "amplitude_cutoff_max": curation.amplitude_cutoff_max,
+                    "presence_ratio_min": curation.presence_ratio_min,
+                    "snr_min": curation.snr_min,
+                },
+            },
+            probe_id=probe_id,
+        )
+
+        del analyzer, sorting, recording
+        gc.collect()
+
+        return (n_before, n_after)

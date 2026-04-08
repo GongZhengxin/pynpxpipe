@@ -7,17 +7,11 @@ priority resolution, not the hardware itself.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from pynpxpipe.core.resources import (
     FALLBACK_BATCH_SIZE,
-    FALLBACK_CHUNK_DURATION,
-    FALLBACK_MAX_WORKERS,
-    FALLBACK_N_JOBS,
     CPUInfo,
     DiskInfo,
     GPUInfo,
@@ -28,14 +22,15 @@ from pynpxpipe.core.resources import (
     ResourceDetector,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_cpu(physical=8, logical=16, freq=3600.0, name="Test CPU") -> CPUInfo:
-    return CPUInfo(physical_cores=physical, logical_processors=logical,
-                   frequency_max_mhz=freq, name=name)
+    return CPUInfo(
+        physical_cores=physical, logical_processors=logical, frequency_max_mhz=freq, name=name
+    )
 
 
 def _make_ram(total_gb=64.0, available_gb=32.0, used_percent=50.0) -> RAMInfo:
@@ -43,19 +38,30 @@ def _make_ram(total_gb=64.0, available_gb=32.0, used_percent=50.0) -> RAMInfo:
 
 
 def _make_gpu(vram_free_gb=22.0) -> GPUInfo:
-    return GPUInfo(index=0, name="RTX 3090", vram_total_gb=24.0,
-                   vram_free_gb=vram_free_gb, cuda_available=True,
-                   driver_version="535.104", detection_method="pynvml")
+    return GPUInfo(
+        index=0,
+        name="RTX 3090",
+        vram_total_gb=24.0,
+        vram_free_gb=vram_free_gb,
+        cuda_available=True,
+        driver_version="535.104",
+        detection_method="pynvml",
+    )
 
 
 def _make_disk(tmp_path: Path) -> DiskInfo:
-    return DiskInfo(session_dir=tmp_path, session_dir_free_gb=1000.0,
-                    output_dir=tmp_path, output_dir_free_gb=500.0,
-                    estimated_required_gb=None)
+    return DiskInfo(
+        session_dir=tmp_path,
+        session_dir_free_gb=1000.0,
+        output_dir=tmp_path,
+        output_dir_free_gb=500.0,
+        estimated_required_gb=None,
+    )
 
 
 def _make_profile(tmp_path: Path, gpus=None) -> HardwareProfile:
     import datetime
+
     return HardwareProfile(
         cpu=_make_cpu(),
         ram=_make_ram(),
@@ -73,20 +79,25 @@ def _make_detector(tmp_path: Path) -> ResourceDetector:
 # Group A — Detection (mocked psutil)
 # ---------------------------------------------------------------------------
 
+
 class TestDetectCPU:
     def test_cpu_count_none_falls_back_to_os_cpu_count(self, tmp_path):
         det = _make_detector(tmp_path)
-        with patch("psutil.cpu_count", side_effect=lambda logical=True: None if not logical else 8), \
-             patch("psutil.cpu_freq", return_value=None), \
-             patch("os.cpu_count", return_value=8):
+        with (
+            patch("psutil.cpu_count", side_effect=lambda logical=True: None if not logical else 8),
+            patch("psutil.cpu_freq", return_value=None),
+            patch("os.cpu_count", return_value=8),
+        ):
             cpu = det._detect_cpu()
         # fallback: os.cpu_count() // 2 = 4
         assert cpu.physical_cores == 4
 
     def test_cpu_freq_none_does_not_raise(self, tmp_path):
         det = _make_detector(tmp_path)
-        with patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8), \
-             patch("psutil.cpu_freq", return_value=None):
+        with (
+            patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8),
+            patch("psutil.cpu_freq", return_value=None),
+        ):
             cpu = det._detect_cpu()
         assert cpu.frequency_max_mhz is None
         assert cpu.physical_cores == 8
@@ -95,8 +106,10 @@ class TestDetectCPU:
         det = _make_detector(tmp_path)
         freq_mock = MagicMock()
         freq_mock.max = 4200.0
-        with patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8), \
-             patch("psutil.cpu_freq", return_value=freq_mock):
+        with (
+            patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8),
+            patch("psutil.cpu_freq", return_value=freq_mock),
+        ):
             cpu = det._detect_cpu()
         assert cpu.frequency_max_mhz == 4200.0
 
@@ -126,10 +139,12 @@ class TestDetect:
         vm.percent = 50.0
         disk_mock = MagicMock()
         disk_mock.free = 500 * 10**9
-        with patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8), \
-             patch("psutil.cpu_freq", return_value=freq_mock), \
-             patch("psutil.virtual_memory", return_value=vm), \
-             patch("psutil.disk_usage", return_value=disk_mock):
+        with (
+            patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8),
+            patch("psutil.cpu_freq", return_value=freq_mock),
+            patch("psutil.virtual_memory", return_value=vm),
+            patch("psutil.disk_usage", return_value=disk_mock),
+        ):
             profile = det.detect()
         assert isinstance(profile, HardwareProfile)
         assert isinstance(profile.warnings, list)
@@ -144,10 +159,12 @@ class TestDetect:
         vm.percent = 50.0
         disk_mock = MagicMock()
         disk_mock.free = 200 * 10**9
-        with patch("psutil.cpu_count", side_effect=RuntimeError("fail")), \
-             patch("psutil.cpu_freq", return_value=None), \
-             patch("psutil.virtual_memory", return_value=vm), \
-             patch("psutil.disk_usage", return_value=disk_mock):
+        with (
+            patch("psutil.cpu_count", side_effect=RuntimeError("fail")),
+            patch("psutil.cpu_freq", return_value=None),
+            patch("psutil.virtual_memory", return_value=vm),
+            patch("psutil.disk_usage", return_value=disk_mock),
+        ):
             profile = det.detect()  # must not raise
         assert isinstance(profile, HardwareProfile)
 
@@ -155,6 +172,7 @@ class TestDetect:
 # ---------------------------------------------------------------------------
 # Group B — GPU Fallback
 # ---------------------------------------------------------------------------
+
 
 class TestDetectGPU:
     def test_pynvml_success_returns_gpuinfo_list(self, tmp_path):
@@ -202,17 +220,21 @@ class TestDetectGPU:
 
     def test_all_gpu_detection_fails_returns_empty_list(self, tmp_path):
         det = _make_detector(tmp_path)
-        with patch.object(det, "_try_detect_gpu_pynvml", return_value=None), \
-             patch.object(det, "_try_detect_gpu_nvidia_smi", return_value=None), \
-             patch.object(det, "_try_detect_gpu_torch", return_value=None):
+        with (
+            patch.object(det, "_try_detect_gpu_pynvml", return_value=None),
+            patch.object(det, "_try_detect_gpu_nvidia_smi", return_value=None),
+            patch.object(det, "_try_detect_gpu_torch", return_value=None),
+        ):
             gpus = det._detect_gpus()
         assert gpus == []
 
     def test_all_gpu_detection_fails_adds_warning(self, tmp_path):
         det = _make_detector(tmp_path)
-        with patch.object(det, "_try_detect_gpu_pynvml", return_value=None), \
-             patch.object(det, "_try_detect_gpu_nvidia_smi", return_value=None), \
-             patch.object(det, "_try_detect_gpu_torch", return_value=None):
+        with (
+            patch.object(det, "_try_detect_gpu_pynvml", return_value=None),
+            patch.object(det, "_try_detect_gpu_nvidia_smi", return_value=None),
+            patch.object(det, "_try_detect_gpu_torch", return_value=None),
+        ):
             det._detect_gpus()
         assert any("GPU" in w or "gpu" in w.lower() for w in det._warnings)
 
@@ -220,8 +242,10 @@ class TestDetectGPU:
         """If pynvml succeeds, nvidia-smi is never tried."""
         det = _make_detector(tmp_path)
         gpu_list = [_make_gpu()]
-        with patch.object(det, "_try_detect_gpu_pynvml", return_value=gpu_list) as mock_pynvml, \
-             patch.object(det, "_try_detect_gpu_nvidia_smi") as mock_smi:
+        with (
+            patch.object(det, "_try_detect_gpu_pynvml", return_value=gpu_list),
+            patch.object(det, "_try_detect_gpu_nvidia_smi") as mock_smi,
+        ):
             result = det._detect_gpus()
         assert result == gpu_list
         mock_smi.assert_not_called()
@@ -230,6 +254,7 @@ class TestDetectGPU:
 # ---------------------------------------------------------------------------
 # Group C — Recommendation Formulas
 # ---------------------------------------------------------------------------
+
 
 class TestRecommendChunkDuration:
     """Verify the discrete binning rules from spec §7.1."""
@@ -346,6 +371,7 @@ class TestRecommendBatchSize:
 # Group D — ResourceConfig
 # ---------------------------------------------------------------------------
 
+
 class TestResolveValue:
     def test_explicit_user_value_returns_user_config(self):
         val, source = ResourceConfig._resolve_value(8, 12, 4, "n_jobs")
@@ -366,21 +392,25 @@ class TestResolveValue:
 class TestResourceConfig:
     def test_resolve_pipeline_config_replaces_auto_n_jobs(self, tmp_path):
         from pynpxpipe.core.config import load_pipeline_config
+
         config = load_pipeline_config(None)  # defaults: n_jobs="auto"
         profile = _make_profile(tmp_path)
-        recommended = RecommendedParams(n_jobs=12, chunk_duration="2s",
-                                        max_workers=2, sorting_batch_size=60000)
+        recommended = RecommendedParams(
+            n_jobs=12, chunk_duration="2s", max_workers=2, sorting_batch_size=60000
+        )
         resolver = ResourceConfig(profile, recommended)
         resolved = resolver.resolve_pipeline_config(config)
         assert resolved.resources.n_jobs == 12
 
     def test_resolve_pipeline_config_preserves_explicit_value(self, tmp_path):
         from pynpxpipe.core.config import load_pipeline_config, merge_with_overrides
+
         config = load_pipeline_config(None)
         config = merge_with_overrides(config, {"resources": {"n_jobs": 4}})
         profile = _make_profile(tmp_path)
-        recommended = RecommendedParams(n_jobs=12, chunk_duration="2s",
-                                        max_workers=2, sorting_batch_size=60000)
+        recommended = RecommendedParams(
+            n_jobs=12, chunk_duration="2s", max_workers=2, sorting_batch_size=60000
+        )
         resolver = ResourceConfig(profile, recommended)
         resolved = resolver.resolve_pipeline_config(config)
         # User set n_jobs=4 explicitly → must be preserved
@@ -388,21 +418,29 @@ class TestResourceConfig:
 
     def test_resolve_pipeline_config_returns_new_object(self, tmp_path):
         from pynpxpipe.core.config import load_pipeline_config
+
         config = load_pipeline_config(None)
         profile = _make_profile(tmp_path)
-        recommended = RecommendedParams(n_jobs=12, chunk_duration="2s",
-                                        max_workers=2, sorting_batch_size=60000)
+        recommended = RecommendedParams(
+            n_jobs=12, chunk_duration="2s", max_workers=2, sorting_batch_size=60000
+        )
         resolver = ResourceConfig(profile, recommended)
         resolved = resolver.resolve_pipeline_config(config)
         assert resolved is not config
 
     def test_validate_user_config_warns_on_n_jobs_exceeding_cores(self, tmp_path):
-        from pynpxpipe.core.config import load_pipeline_config, merge_with_overrides, load_sorting_config
+        from pynpxpipe.core.config import (
+            load_pipeline_config,
+            load_sorting_config,
+            merge_with_overrides,
+        )
+
         pipeline = merge_with_overrides(load_pipeline_config(None), {"resources": {"n_jobs": 32}})
         sorting = load_sorting_config(None)
         profile = _make_profile(tmp_path)  # cpu has physical_cores=8
-        recommended = RecommendedParams(n_jobs=6, chunk_duration="1s",
-                                        max_workers=1, sorting_batch_size=60000)
+        recommended = RecommendedParams(
+            n_jobs=6, chunk_duration="1s", max_workers=1, sorting_batch_size=60000
+        )
         resolver = ResourceConfig(profile, recommended)
         warnings = resolver.validate_user_config(pipeline, sorting)
         assert len(warnings) > 0
@@ -412,6 +450,7 @@ class TestResourceConfig:
 # ---------------------------------------------------------------------------
 # Group E — HardwareProfile serialization
 # ---------------------------------------------------------------------------
+
 
 class TestHardwareProfileSerialization:
     def test_to_log_dict_returns_nested_dict(self, tmp_path):
@@ -449,6 +488,7 @@ class TestHardwareProfileSerialization:
 # Group F — cached_detect
 # ---------------------------------------------------------------------------
 
+
 class TestCachedDetect:
     def test_second_call_does_not_re_detect(self, tmp_path):
         # Clear cache before test
@@ -461,10 +501,12 @@ class TestCachedDetect:
         vm.percent = 50.0
         disk_mock = MagicMock()
         disk_mock.free = 200 * 10**9
-        with patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8), \
-             patch("psutil.cpu_freq", return_value=freq_mock), \
-             patch("psutil.virtual_memory", return_value=vm), \
-             patch("psutil.disk_usage", return_value=disk_mock):
+        with (
+            patch("psutil.cpu_count", side_effect=lambda logical=True: 16 if logical else 8),
+            patch("psutil.cpu_freq", return_value=freq_mock),
+            patch("psutil.virtual_memory", return_value=vm),
+            patch("psutil.disk_usage", return_value=disk_mock),
+        ):
             p1 = ResourceDetector.cached_detect(tmp_path, tmp_path)
             p2 = ResourceDetector.cached_detect(tmp_path, tmp_path)
         assert p1 is p2  # same object from cache

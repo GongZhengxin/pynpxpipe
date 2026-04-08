@@ -512,7 +512,9 @@ def _build_postprocess(raw: dict) -> PostprocessConfig:
     eye_validation = _build_eye_validation(raw.get("eye_validation") or {})
 
     handled = {"eye_validation"}
-    top_known = _extract_known({k: v for k, v in raw.items() if k not in handled}, PostprocessConfig)
+    top_known = _extract_known(
+        {k: v for k, v in raw.items() if k not in handled}, PostprocessConfig
+    )
 
     return PostprocessConfig(eye_validation=eye_validation, **top_known)
 

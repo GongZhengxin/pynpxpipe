@@ -5,12 +5,19 @@ Handles multi-probe SpikeGLX recording folders. No UI dependencies.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+import spikeinterface.core as si
+import spikeinterface.extractors as se
+
+from pynpxpipe.core.errors import DiscoverError
+from pynpxpipe.core.session import ProbeInfo
+
 if TYPE_CHECKING:
-    import spikeinterface.core as si
-    from pynpxpipe.core.session import ProbeInfo
+    pass
 
 
 class SpikeGLXDiscovery:
@@ -30,7 +37,9 @@ class SpikeGLXDiscovery:
         Raises:
             FileNotFoundError: If session_dir does not exist.
         """
-        raise NotImplementedError("TODO")
+        if not session_dir.exists():
+            raise FileNotFoundError(f"Session directory not found: {session_dir}")
+        self.session_dir = session_dir
 
     def discover_probes(self) -> list[ProbeInfo]:
         """Scan session_dir for all imec{N} probe directories.
@@ -44,9 +53,54 @@ class SpikeGLXDiscovery:
         Raises:
             DiscoverError: If no imec directories are found.
         """
-        raise NotImplementedError("TODO")
+        probes: list[tuple[int, ProbeInfo]] = []
 
-    def validate_probe(self, probe: "ProbeInfo") -> list[str]:
+        for candidate in self.session_dir.iterdir():
+            if not candidate.is_dir():
+                continue
+            match = re.search(r"_imec(\d+)$", candidate.name)
+            if match is None:
+                continue
+            probe_idx = int(match.group(1))
+
+            meta_files = list(candidate.glob("*.ap.meta"))
+            if not meta_files:
+                continue
+            meta_path = meta_files[0]
+            meta = self.parse_meta(meta_path)
+
+            # Infer bin path from meta filename (.ap.meta → .ap.bin)
+            ap_bin = meta_path.parent / meta_path.name.replace(".ap.meta", ".ap.bin")
+
+            # Optional LF files
+            lf_meta_files = list(candidate.glob("*.lf.meta"))
+            lf_meta = lf_meta_files[0] if lf_meta_files else None
+            lf_bin: Path | None = None
+            if lf_meta is not None:
+                lf_bin_candidate = lf_meta.parent / lf_meta.name.replace(".lf.meta", ".lf.bin")
+                lf_bin = lf_bin_candidate if lf_bin_candidate.exists() else None
+
+            probe_id = f"imec{probe_idx}"
+            probe = ProbeInfo(
+                probe_id=probe_id,
+                ap_bin=ap_bin,
+                ap_meta=meta_path,
+                lf_bin=lf_bin,
+                lf_meta=lf_meta,
+                sample_rate=float(meta.get("imSampRate", 0)),
+                n_channels=int(meta.get("nSavedChans", 0)),
+                serial_number=meta.get("imProbeSN", "unknown"),
+                probe_type=meta.get("imProbeOpt", meta.get("imProbeType", "unknown")),
+            )
+            probes.append((probe_idx, probe))
+
+        if not probes:
+            raise DiscoverError(f"No imec probe directories found in {self.session_dir}")
+
+        probes.sort(key=lambda t: t[0])
+        return [p for _, p in probes]
+
+    def validate_probe(self, probe: ProbeInfo) -> list[str]:
         """Validate data integrity for a single probe.
 
         Checks:
@@ -60,7 +114,32 @@ class SpikeGLXDiscovery:
         Returns:
             List of warning messages (empty list means validation passed).
         """
-        raise NotImplementedError("TODO")
+        warnings: list[str] = []
+
+        if not probe.ap_bin.exists():
+            warnings.append(f"ap.bin not found: {probe.ap_bin}")
+
+        if not probe.ap_meta.exists():
+            warnings.append(f"ap.meta not found: {probe.ap_meta}")
+            return warnings  # Can't check further without meta
+
+        meta = self.parse_meta(probe.ap_meta)
+
+        # Size check (only if both bin exists and meta has fileSizeBytes)
+        if probe.ap_bin.exists() and "fileSizeBytes" in meta:
+            expected = int(meta["fileSizeBytes"])
+            actual = probe.ap_bin.stat().st_size
+            if actual != expected:
+                warnings.append(
+                    f"ap.bin size mismatch: expected {expected} bytes, got {actual} bytes"
+                )
+
+        # Required field checks
+        for field in ("imSampRate", "nSavedChans"):
+            if field not in meta:
+                warnings.append(f"Required meta field missing: {field}")
+
+        return warnings
 
     def discover_nidq(self) -> tuple[Path, Path]:
         """Locate the NIDQ .bin and .meta files in session_dir.
@@ -71,7 +150,16 @@ class SpikeGLXDiscovery:
         Raises:
             DiscoverError: If NIDQ files are not found.
         """
-        raise NotImplementedError("TODO")
+        nidq_bins = list(self.session_dir.glob("*.nidq.bin"))
+        if not nidq_bins:
+            raise DiscoverError(f"No .nidq.bin file found in {self.session_dir}")
+
+        nidq_bin = nidq_bins[0]
+        nidq_meta = nidq_bin.parent / nidq_bin.name.replace(".nidq.bin", ".nidq.meta")
+        if not nidq_meta.exists():
+            raise DiscoverError(f"No .nidq.meta file found alongside {nidq_bin}")
+
+        return nidq_bin, nidq_meta
 
     def parse_meta(self, meta_path: Path) -> dict[str, str]:
         """Parse a SpikeGLX .meta file into a key-value dict.
@@ -87,7 +175,16 @@ class SpikeGLXDiscovery:
         Raises:
             FileNotFoundError: If meta_path does not exist.
         """
-        raise NotImplementedError("TODO")
+        result: dict[str, str] = {}
+        for line in meta_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+        return result
 
 
 class SpikeGLXLoader:
@@ -98,7 +195,7 @@ class SpikeGLXLoader:
     """
 
     @staticmethod
-    def load_ap(probe: "ProbeInfo") -> "si.BaseRecording":
+    def load_ap(probe: ProbeInfo) -> si.BaseRecording:
         """Load the AP recording for a probe as a lazy SpikeInterface Recording.
 
         Uses ``spikeinterface.extractors.read_spikeglx()`` with the probe's
@@ -109,14 +206,16 @@ class SpikeGLXLoader:
 
         Returns:
             Lazy SpikeInterface BaseRecording for the AP stream.
-
-        Raises:
-            FileNotFoundError: If probe.ap_bin does not exist.
         """
-        raise NotImplementedError("TODO")
+        stream_name = f"{probe.probe_id}.ap"
+        return se.read_spikeglx(
+            probe.ap_bin.parent,
+            stream_name=stream_name,
+            load_sync_channel=True,
+        )
 
     @staticmethod
-    def load_nidq(nidq_bin: Path, nidq_meta: Path) -> "si.BaseRecording":
+    def load_nidq(nidq_bin: Path, nidq_meta: Path) -> si.BaseRecording:
         """Load the NIDQ recording as a lazy SpikeInterface Recording.
 
         Args:
@@ -126,10 +225,10 @@ class SpikeGLXLoader:
         Returns:
             Lazy SpikeInterface BaseRecording for the NIDQ stream.
         """
-        raise NotImplementedError("TODO")
+        return se.read_spikeglx(nidq_bin.parent, stream_name="nidq")
 
     @staticmethod
-    def load_preprocessed(recording_path: Path) -> "si.BaseRecording":
+    def load_preprocessed(recording_path: Path) -> si.BaseRecording:
         """Load a preprocessed Zarr recording from disk.
 
         Args:
@@ -137,15 +236,12 @@ class SpikeGLXLoader:
 
         Returns:
             Lazy SpikeInterface BaseRecording (Zarr-backed).
-
-        Raises:
-            FileNotFoundError: If recording_path does not exist.
         """
-        raise NotImplementedError("TODO")
+        return si.load(recording_path)
 
     @staticmethod
     def extract_sync_edges(
-        recording: "si.BaseRecording",
+        recording: si.BaseRecording,
         sync_bit: int,
         sample_rate: float,
     ) -> list[float]:
@@ -162,4 +258,8 @@ class SpikeGLXLoader:
         Returns:
             List of sync pulse rising-edge times in seconds.
         """
-        raise NotImplementedError("TODO")
+        raw = recording.get_traces()
+        digital = (raw.flatten().astype(np.uint16) >> sync_bit) & 1
+        diff = np.diff(digital.astype(np.int8))
+        rising_indices = np.where(diff == 1)[0] + 1
+        return (rising_indices / sample_rate).tolist()

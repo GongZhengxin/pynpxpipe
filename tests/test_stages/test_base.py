@@ -21,6 +21,7 @@ from pynpxpipe.stages.base import BaseStage
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_subject() -> SubjectConfig:
     return SubjectConfig(
         subject_id="test",
@@ -53,6 +54,7 @@ class ConcreteStage(BaseStage):
 # ---------------------------------------------------------------------------
 # Group A — __init__
 # ---------------------------------------------------------------------------
+
 
 class TestInit:
     def test_stores_session(self, tmp_path):
@@ -90,6 +92,7 @@ class TestInit:
 # Group B — _report_progress
 # ---------------------------------------------------------------------------
 
+
 class TestReportProgress:
     def test_calls_callback_with_message_and_fraction(self, tmp_path):
         calls: list[tuple[str, float]] = []
@@ -119,6 +122,7 @@ class TestReportProgress:
 # ---------------------------------------------------------------------------
 # Group C — Checkpoint integration
 # ---------------------------------------------------------------------------
+
 
 class TestCheckpointIntegration:
     def test_is_complete_false_initially(self, tmp_path):
@@ -172,6 +176,7 @@ class TestCheckpointIntegration:
 # ---------------------------------------------------------------------------
 # Group D — STAGE_NAME guard
 # ---------------------------------------------------------------------------
+
 
 class TestStageNameGuard:
     def test_empty_stage_name_raises_on_init(self, tmp_path):

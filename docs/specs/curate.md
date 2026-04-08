@@ -254,3 +254,30 @@ class CurateStage(BaseStage):
 | `gc` | 标准库 | 显式内存释放 |
 | `pandas` | 第三方 | quality_metrics CSV |
 | `pathlib.Path` | 标准库 | 路径操作 |
+
+---
+
+## 8. MATLAB 对照
+
+| 项目 | 说明 |
+|------|------|
+| **对应 MATLAB 步骤** | step #14（Bombcell 质控） |
+| **Ground Truth 详情** | `docs/ground_truth/step4_full_pipeline_analysis.md` step #14 段落 |
+
+### MATLAB 算法概要
+
+MATLAB step #14 使用 Bombcell 工具箱进行质控：
+1. 运行 `bc_qualityParamValues` 获取默认参数
+2. 运行 `bc_runAllQualityMetrics` 计算全套 Bombcell 指标（ISI contamination、presence ratio、amplitude distribution 等）
+3. 使用 `bc_getQualityUnitType` 将 unit 自动分类为 good/mua/noise
+4. 输出 `_bc_qualityMetrics.parquet` + `_bc_unitType.tsv`
+
+### 有意偏离
+
+| 偏离 | 理由 |
+|------|------|
+| 使用手动阈值过滤而非 Bombcell 自动标注 | Bombcell 的 good/mua/noise 分类基于固定阈值组合，灵活性不足；手动阈值过滤允许用户通过 YAML 参数快速迭代过滤策略 |
+| 使用 SpikeInterface 内置 quality_metrics | Bombcell 是 MATLAB 工具箱（有 Python port `bombcell` 但成熟度不确定）；SI 内置指标更稳定且维护活跃 |
+| SortingAnalyzer 用 memory 格式 | Bombcell 需要完整的 waveform 文件在磁盘上；Python curate 阶段仅需指标数值，不需持久化 analyzer |
+| 保存全部 unit 的 CSV（含被过滤的） | MATLAB Bombcell 也保存全套指标文件；Python 同样保留供人工检查 |
+| 零 unit 后 WARNING 继续 | MATLAB Bombcell 无此处理；Python 允许 pipeline 继续到 export（生成空 NWB 也是有效输出） |

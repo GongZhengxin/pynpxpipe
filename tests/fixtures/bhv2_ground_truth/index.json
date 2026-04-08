@@ -1,0 +1,27 @@
+{
+  "source_file": "241026_MaoDan_YJ_WordLOC.bhv2",
+  "md5": "e53327b039a1a85db09b13e7e0afe0eb",
+  "trial_count": 11,
+  "exported_variables": [
+    "Trial1",
+    "Trial2",
+    "Trial3",
+    "Trial4",
+    "Trial5",
+    "Trial6",
+    "Trial7",
+    "Trial8",
+    "Trial9",
+    "Trial10",
+    "Trial11",
+    "MLConfig",
+    "FileInfo",
+    "FileIndex"
+  ],
+  "extra_variables": [
+    "IndexPosition",
+    "TrialRecord"
+  ],
+  "exported_at": "2026-04-08 05:08:52",
+  "matlab_version": "24.2.0.2712019 (R2024b)"
+}

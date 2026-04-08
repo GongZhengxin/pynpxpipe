@@ -6,9 +6,18 @@ Always runs serially (GPU resource constraint). No UI dependencies.
 
 from __future__ import annotations
 
+import dataclasses
+import gc
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
+import spikeinterface.core as si
+import spikeinterface.extractors as se
+import spikeinterface.sorters as ss
+
+from pynpxpipe.core.config import SortingConfig
+from pynpxpipe.core.errors import SortError
 from pynpxpipe.stages.base import BaseStage
 
 if TYPE_CHECKING:
@@ -24,61 +33,176 @@ class SortStage(BaseStage):
 
     This stage always processes probes serially regardless of the pipeline's
     ``parallel.enabled`` setting, because spike sorting requires exclusive
-    GPU access.
+    GPU access. Zero units after sorting emits a WARNING but does not raise.
+
+    Raises:
+        SortError: If mode is unknown, sorter fails (CUDA OOM etc.), or
+            import path doesn't exist.
     """
 
     STAGE_NAME = "sort"
 
     def __init__(
         self,
-        session: "Session",
+        session: Session,
+        sorting_config: SortingConfig | None = None,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> None:
         """Initialize the sort stage.
 
         Args:
             session: Active pipeline session with preprocessed recordings available.
+            sorting_config: Sorting configuration; uses SortingConfig defaults when
+                None (e.g. standalone testing without a runner).
             progress_callback: Optional GUI/progress callback; None in CLI mode.
         """
-        raise NotImplementedError("TODO")
+        super().__init__(session, progress_callback)
+        self.sorting_config = sorting_config if sorting_config is not None else SortingConfig()
 
     def run(self) -> None:
-        """Sort all probes serially.
-
-        For each probe (skipping those with a completed checkpoint):
-        - In "local" mode: runs the configured sorter on the preprocessed recording.
-        - In "import" mode: loads and validates the external sorting folder.
+        """Sort all probes serially (always, regardless of parallel config).
 
         Raises:
-            SortError: If sorting fails (CUDA OOM, invalid import path, etc.).
+            SortError: If mode is unknown or sorting fails for any probe.
         """
-        raise NotImplementedError("TODO")
+        mode = self.sorting_config.mode
+        if mode not in ("local", "import"):
+            raise SortError(f"Unknown mode: {mode}")
+
+        if self._is_complete():
+            self._report_progress("Sort already complete", 1.0)
+            return
+
+        self._report_progress("Starting sort (always serial)", 0.0)
+
+        n_probes = len(self.session.probes)
+        for i, probe in enumerate(self.session.probes):
+            probe_id = probe.probe_id
+            if mode == "local":
+                self._sort_probe_local(probe_id)
+            else:
+                paths = self.sorting_config.import_cfg.paths
+                import_path = paths.get(probe_id)
+                if import_path is None:
+                    err = SortError(
+                        f"Import path not found: no entry for {probe_id} in import_cfg.paths"
+                    )
+                    self._write_failed_checkpoint(err, probe_id=probe_id)
+                    raise err
+                self._import_sorting(probe_id, Path(import_path))
+
+            self._report_progress(f"Sorted {probe_id}", (i + 1) / n_probes)
+
+        self._write_checkpoint(
+            {
+                "probe_ids": [p.probe_id for p in self.session.probes],
+                "mode": mode,
+            }
+        )
+        self._report_progress("Sort complete", 1.0)
 
     def _sort_probe_local(self, probe_id: str) -> None:
         """Run the configured sorter locally for one probe.
 
         Loads the Zarr preprocessed recording, calls si.run_sorter(), validates
-        the output, then releases the recording object.
+        the output, saves to disk, and releases memory.
 
         Args:
-            probe_id: Identifier of the probe to sort.
+            probe_id: Identifier of the probe to sort (e.g. "imec0").
 
         Raises:
-            SortError: On sorting failure or empty sorting result.
+            SortError: On sorting failure (CUDA OOM, sorter not installed, etc.).
         """
-        raise NotImplementedError("TODO")
+        if self._is_complete(probe_id=probe_id):
+            self._report_progress(f"Skipping already sorted probe {probe_id}", 0.0)
+            return
+
+        zarr_path = self.session.output_dir / "preprocessed" / probe_id
+        recording = si.load(zarr_path)
+
+        sorter_output = self.session.output_dir / "sorter_output" / probe_id
+        params = dataclasses.asdict(self.sorting_config.sorter.params)
+
+        try:
+            sorting = ss.run_sorter(
+                self.sorting_config.sorter.name,
+                recording,
+                output_folder=sorter_output,
+                **params,
+            )
+        except Exception as exc:
+            err = SortError(f"Sorter failed for {probe_id}: {exc}")
+            self._write_failed_checkpoint(err, probe_id=probe_id)
+            raise err from exc
+
+        n_units = len(sorting.get_unit_ids())
+        if n_units == 0:
+            self.logger.warning("Zero units after sorting", probe_id=probe_id)
+
+        save_path = self.session.output_dir / "sorted" / probe_id
+        sorting.save(folder=save_path, format="binary_folder")
+
+        self._write_checkpoint(
+            {
+                "probe_id": probe_id,
+                "mode": "local",
+                "sorter_name": self.sorting_config.sorter.name,
+                "n_units": n_units,
+                "output_path": str(save_path),
+            },
+            probe_id=probe_id,
+        )
+
+        del sorting, recording
+        gc.collect()
 
     def _import_sorting(self, probe_id: str, import_path: Path) -> None:
         """Import an externally computed sorting result for one probe.
-
-        Loads the sorting folder via si.read_sorter_folder() or si.read_kilosort(),
-        validates completeness, and saves to the standard output location.
 
         Args:
             probe_id: Identifier of the probe.
             import_path: Path to the external Kilosort/Phy output folder.
 
         Raises:
-            SortError: If import_path does not exist or sorting result is invalid.
+            SortError: If import_path does not exist or loading fails.
         """
-        raise NotImplementedError("TODO")
+        if self._is_complete(probe_id=probe_id):
+            self._report_progress(f"Skipping already imported probe {probe_id}", 0.0)
+            return
+
+        if not import_path.exists():
+            err = SortError(f"Import path not found: {import_path}")
+            self._write_failed_checkpoint(err, probe_id=probe_id)
+            raise err
+
+        fmt = self.sorting_config.import_cfg.format
+        try:
+            if fmt == "phy":
+                sorting = se.read_phy(import_path)
+            else:  # "kilosort4" or "kilosort"
+                sorting = ss.read_sorter_folder(import_path)
+        except Exception as exc:
+            err = SortError(f"Failed to load sorting for {probe_id}: {exc}")
+            self._write_failed_checkpoint(err, probe_id=probe_id)
+            raise err from exc
+
+        n_units = len(sorting.get_unit_ids())
+        if n_units == 0:
+            self.logger.warning("Zero units after import", probe_id=probe_id)
+
+        save_path = self.session.output_dir / "sorted" / probe_id
+        sorting.save(folder=save_path, format="binary_folder")
+
+        self._write_checkpoint(
+            {
+                "probe_id": probe_id,
+                "mode": "import",
+                "sorter_name": fmt,
+                "n_units": n_units,
+                "output_path": str(save_path),
+            },
+            probe_id=probe_id,
+        )
+
+        del sorting
+        gc.collect()
