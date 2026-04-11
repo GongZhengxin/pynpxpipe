@@ -63,7 +63,7 @@ def _make_qm_df(unit_ids: list, n_pass: int | None = None) -> pd.DataFrame:
         n_pass = n
     return pd.DataFrame(
         {
-            "isi_violation_ratio": [0.05] * n_pass + [0.2] * (n - n_pass),
+            "isi_violations_ratio": [0.05] * n_pass + [0.2] * (n - n_pass),
             "amplitude_cutoff": [0.05] * n_pass + [0.2] * (n - n_pass),
             "presence_ratio": [0.95] * n_pass + [0.8] * (n - n_pass),
             "snr": [1.0] * n_pass + [0.3] * (n - n_pass),
@@ -358,11 +358,11 @@ class TestFilterLogic:
         assert set(good_ids) == {"u0", "u1", "u2"}
 
     def test_units_failing_any_threshold_removed(self, single_session: Session) -> None:
-        """Unit with isi_violation_ratio > max is excluded."""
+        """Unit with isi_violations_ratio > max is excluded."""
         unit_ids = ["u0", "u1"]
         qm_df = pd.DataFrame(
             {
-                "isi_violation_ratio": [0.05, 0.5],  # u1 fails isi
+                "isi_violations_ratio": [0.05, 0.5],  # u1 fails isi
                 "amplitude_cutoff": [0.05, 0.05],
                 "presence_ratio": [0.95, 0.95],
                 "snr": [1.0, 1.0],
@@ -421,7 +421,7 @@ class TestFilterLogic:
         # both units have snr=1.0, which is < 2.0 → both should fail
         qm_df = pd.DataFrame(
             {
-                "isi_violation_ratio": [0.05, 0.05],
+                "isi_violations_ratio": [0.05, 0.05],
                 "amplitude_cutoff": [0.05, 0.05],
                 "presence_ratio": [0.95, 0.95],
                 "snr": [1.0, 1.0],  # below custom snr_min=2.0
@@ -476,7 +476,7 @@ class TestAnalyzerConstruction:
         assert kwargs.get("format") == "memory"
 
     def test_extension_order_correct(self, single_session: Session) -> None:
-        """Extensions computed in required order: random_spikes→waveforms→templates→noise_levels→quality_metrics."""
+        """Extensions computed in required order: random_spikes→waveforms→templates→noise_levels→spike_amplitudes→quality_metrics."""
         unit_ids = ["u0"]
         mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
 
@@ -499,6 +499,7 @@ class TestAnalyzerConstruction:
             "waveforms",
             "templates",
             "noise_levels",
+            "spike_amplitudes",
             "quality_metrics",
         ]
         assert compute_calls == expected_order
@@ -608,7 +609,7 @@ class TestCsvContent:
         assert len(written_df) == 8
 
     def test_quality_metrics_csv_has_required_columns(self, single_session: Session) -> None:
-        """CSV contains isi_violation_ratio, amplitude_cutoff, presence_ratio, snr columns."""
+        """CSV contains isi_violations_ratio, amplitude_cutoff, presence_ratio, snr columns."""
         unit_ids = ["u0", "u1"]
         qm_df = _make_qm_df(unit_ids)
         mock_sorting = _make_mock_sorting(unit_ids)
@@ -630,7 +631,7 @@ class TestCsvContent:
 
         csv_path = single_session.output_dir / "curated" / "imec0" / "quality_metrics.csv"
         written_df = pd.read_csv(csv_path, index_col=0)
-        for col in ["isi_violation_ratio", "amplitude_cutoff", "presence_ratio", "snr"]:
+        for col in ["isi_violations_ratio", "amplitude_cutoff", "presence_ratio", "snr"]:
             assert col in written_df.columns
 
 
@@ -652,7 +653,7 @@ def test_amplitude_cutoff_is_computed_and_applied(tmp_path: Path) -> None:
 
     qm_df = pd.DataFrame(
         {
-            "isi_violation_ratio": [0.05, 0.05],
+            "isi_violations_ratio": [0.05, 0.05],
             "amplitude_cutoff": [0.05, 0.15],  # unit1 exceeds 0.1 max
             "presence_ratio": [0.95, 0.95],
             "snr": [1.5, 1.5],

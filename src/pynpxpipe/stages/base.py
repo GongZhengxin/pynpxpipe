@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import spikeinterface.core as si
+
 from pynpxpipe.core.checkpoint import CheckpointManager
 from pynpxpipe.core.logging import get_logger
 
@@ -74,7 +76,7 @@ class BaseStage(ABC):
             fraction: Completion fraction in [0.0, 1.0].
         """
         if self.progress_callback:
-            self.progress_callback(message, fraction)
+            self.progress_callback(f"{self.STAGE_NAME}:{message}", fraction)
         self.logger.info(message, progress=fraction)
 
     def _is_complete(self, probe_id: str | None = None) -> bool:
@@ -105,3 +107,34 @@ class BaseStage(ABC):
             probe_id: Probe identifier for per-probe checkpoints, or None.
         """
         self.checkpoint_manager.mark_failed(self.STAGE_NAME, str(error), probe_id)
+
+    def _setup_spikeinterface_jobs(self, config=None) -> tuple[int, str]:
+        """Configure SpikeInterface global job kwargs from resource config.
+
+        Sets ``si.set_global_job_kwargs`` so all subsequent ``analyzer.compute()``
+        and ``recording.save()`` calls inherit n_jobs and chunk_duration without
+        per-call repetition.
+
+        Args:
+            config: A PipelineConfig object; defaults to ``self.session.config``.
+                Pass an explicit config when a stage holds its own config reference
+                (e.g. PreprocessStage.pipeline_config).
+
+        Returns:
+            Tuple of (n_jobs, chunk_duration) actually applied.
+        """
+        cfg = config if config is not None else self.session.config
+        resources = cfg.resources
+        n_jobs = resources.n_jobs if resources.n_jobs != "auto" else 4
+        chunk_duration = resources.chunk_duration if resources.chunk_duration != "auto" else "1s"
+        si.set_global_job_kwargs(
+            n_jobs=n_jobs,
+            chunk_duration=chunk_duration,
+            progress_bar=True,
+        )
+        self.logger.info(
+            "SpikeInterface job kwargs configured",
+            n_jobs=n_jobs,
+            chunk_duration=chunk_duration,
+        )
+        return n_jobs, chunk_duration

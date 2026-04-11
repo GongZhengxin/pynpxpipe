@@ -77,6 +77,13 @@ class PreprocessStage(BaseStage):
             return
 
         self._report_progress("Starting preprocess", 0.0)
+        self._setup_spikeinterface_jobs(self.pipeline_config)
+
+        if not self.session.probes:
+            raise PreprocessError(
+                "No probes in session. The discover stage may not have run or "
+                "failed to populate probes. Re-run from discover."
+            )
 
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):
@@ -125,7 +132,7 @@ class PreprocessStage(BaseStage):
         )
 
         # Step 5: remove bad channels (only if any found)
-        if bad_channel_ids:
+        if len(bad_channel_ids) > 0:
             recording = recording.remove_channels(bad_channel_ids)
 
         # Step 6: common median reference
@@ -143,13 +150,11 @@ class PreprocessStage(BaseStage):
             )
 
         # Step 8: save as Zarr
-        zarr_path = self.session.output_dir / "preprocessed" / probe_id
+        zarr_path = self.session.output_dir / "preprocessed" / f"{probe_id}.zarr"
         try:
             recording.save(
                 folder=zarr_path,
                 format="zarr",
-                chunk_duration=cfg.resources.chunk_duration,
-                n_jobs=cfg.resources.n_jobs,
             )
         except Exception as exc:
             err = PreprocessError(f"Failed to save Zarr for {probe_id}: {exc}")

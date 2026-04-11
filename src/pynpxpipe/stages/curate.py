@@ -57,6 +57,7 @@ class CurateStage(BaseStage):
             return
 
         self._report_progress("Starting curate", 0.0)
+        self._setup_spikeinterface_jobs()
 
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):
@@ -92,11 +93,6 @@ class CurateStage(BaseStage):
         except Exception as exc:
             raise CurateError(f"Failed to load data for {probe_id}: {exc}") from exc
 
-        cfg = self.session.config
-        resources = cfg.resources
-        n_jobs = resources.n_jobs if resources.n_jobs != "auto" else 1
-        chunk_duration = resources.chunk_duration if resources.chunk_duration != "auto" else "1s"
-
         analyzer = si.create_sorting_analyzer(
             sorting,
             recording,
@@ -104,10 +100,10 @@ class CurateStage(BaseStage):
             sparse=True,
         )
         analyzer.compute("random_spikes")
-        analyzer.compute("waveforms", chunk_duration=chunk_duration, n_jobs=n_jobs)
+        analyzer.compute("waveforms")
         analyzer.compute("templates")
         analyzer.compute("noise_levels")
-        analyzer.compute("spike_amplitudes", chunk_duration=chunk_duration, n_jobs=n_jobs)
+        analyzer.compute("spike_amplitudes")
         analyzer.compute(
             "quality_metrics",
             metric_names=["isi_violation", "amplitude_cutoff", "presence_ratio", "snr"],
@@ -120,7 +116,7 @@ class CurateStage(BaseStage):
 
         n_before = len(sorting.get_unit_ids())
 
-        curation = cfg.curation
+        curation = self.session.config.curation
         keep_mask = (
             (qm["isi_violations_ratio"] <= curation.isi_violation_ratio_max)
             & (qm["amplitude_cutoff"] <= curation.amplitude_cutoff_max)

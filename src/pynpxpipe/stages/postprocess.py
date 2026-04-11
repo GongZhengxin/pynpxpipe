@@ -76,6 +76,7 @@ class PostprocessStage(BaseStage):
         behavior_events_df = pd.read_parquet(behavior_events_path)
 
         self._report_progress("Starting postprocess", 0.0)
+        self._setup_spikeinterface_jobs()
 
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):
@@ -106,23 +107,36 @@ class PostprocessStage(BaseStage):
             return
 
         cfg = self.session.config
-        n_jobs = cfg.resources.n_jobs
-        chunk_duration = cfg.resources.chunk_duration
         slay_pre_s = cfg.postprocess.slay_pre_s
         slay_post_s = cfg.postprocess.slay_post_s
 
         # Load resources
         curated_dir = self.session.output_dir / "curated" / probe_id
-        preprocessed_dir = self.session.output_dir / "preprocessed" / probe_id
+        preprocessed_dir = self.session.output_dir / "preprocessed" / f"{probe_id}.zarr"
         sorting = si.load(curated_dir)
         recording = si.load(preprocessed_dir)
 
-        # Create SortingAnalyzer (binary_folder, written to disk)
+        # Skip if no units survived curation
+        n_units = len(sorting.get_unit_ids())
+        if n_units == 0:
+            self.logger.warning(
+                "Zero units after curation — skipping postprocess", probe_id=probe_id
+            )
+            output_dir = self.session.output_dir / "postprocessed" / probe_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            slay_path = output_dir / "slay_scores.json"
+            slay_path.write_text("{}", encoding="utf-8")
+            self._write_checkpoint(
+                {"probe_id": probe_id, "n_units": 0, "slay_mean": None, "slay_nan_count": 0},
+                probe_id=probe_id,
+            )
+            return
+
+        # Create SortingAnalyzer (written to disk)
         output_dir = self.session.output_dir / "postprocessed" / probe_id
         analyzer = si.create_sorting_analyzer(
             sorting,
             recording,
-            format="binary_folder",
             folder=output_dir,
             sparse=True,
         )
@@ -132,14 +146,16 @@ class PostprocessStage(BaseStage):
 
         # Waveforms with OOM retry
         try:
-            analyzer.compute("waveforms", chunk_duration=chunk_duration, n_jobs=n_jobs)
+            analyzer.compute("waveforms")
         except MemoryError:
+            chunk_duration = self.session.config.resources.chunk_duration
             reduced = _halve_chunk_duration(chunk_duration)
             self.logger.warning(
                 "MemoryError on waveforms, retrying with chunk_duration=%s", reduced
             )
+            si.set_global_job_kwargs(chunk_duration=reduced)
             try:
-                analyzer.compute("waveforms", chunk_duration=reduced, n_jobs=n_jobs)
+                analyzer.compute("waveforms")
             except MemoryError as exc:
                 raise PostprocessError(f"OOM on waveforms even with {reduced}: {exc}") from exc
 
