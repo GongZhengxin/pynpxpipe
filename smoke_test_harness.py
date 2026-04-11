@@ -241,21 +241,31 @@ def validate(
             stage_results.append(_make_skipped_result(stage_name))
             continue
 
-        # Load checkpoint status
+        # Load checkpoint status — check both global and per-probe checkpoints
         cp_status = "completed"
         cp_error_msg = ""
-        for probe_id in probe_ids if probe_ids else [None]:  # type: ignore[assignment]
-            p = (
-                output_dir
-                / "checkpoints"
-                / (f"{stage_name}_{probe_id}.json" if probe_id else f"{stage_name}.json")
-            )
-            if p.exists():
-                data = json.loads(p.read_text(encoding="utf-8"))
-                if data.get("status") == "failed":
-                    cp_status = "failed"
-                    cp_error_msg = data.get("error", "")
-                    break
+
+        # First check global checkpoint (e.g. synchronize.json)
+        if cp_path.exists():
+            data = json.loads(cp_path.read_text(encoding="utf-8"))
+            if data.get("status") == "failed":
+                cp_status = "failed"
+                cp_error_msg = data.get("error", "")
+
+        # Then check per-probe checkpoints
+        if cp_status == "completed":
+            for probe_id in probe_ids if probe_ids else [None]:  # type: ignore[assignment]
+                p = (
+                    output_dir
+                    / "checkpoints"
+                    / (f"{stage_name}_{probe_id}.json" if probe_id else f"{stage_name}.json")
+                )
+                if p.exists():
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    if data.get("status") == "failed":
+                        cp_status = "failed"
+                        cp_error_msg = data.get("error", "")
+                        break
 
         if cp_status == "completed":
             validations = _run_validator(stage_name, output_dir, probe_ids, pipeline_config)

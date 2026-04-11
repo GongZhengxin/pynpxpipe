@@ -13,14 +13,19 @@ class SortValidator:
         items: list[ValidationItem] = []
         for probe_id in probe_ids:
             cp_path = output_dir / "checkpoints" / f"sort_{probe_id}.json"
-            sorting_dir = output_dir / "sorting" / probe_id
+            sorting_dir = output_dir / "sorted" / probe_id
+            # Also check legacy path "sorting/"
+            legacy_dir = output_dir / "sorting" / probe_id
 
-            if sorting_dir.exists() and any(sorting_dir.iterdir()):
+            if (sorting_dir.exists() and any(sorting_dir.iterdir())) or (
+                legacy_dir.exists() and any(legacy_dir.iterdir())
+            ):
+                found = sorting_dir if sorting_dir.exists() else legacy_dir
                 items.append(
                     ValidationItem(
                         f"sorting_output_exists_{probe_id}",
                         "pass",
-                        f"Sorting dir exists: {sorting_dir}",
+                        f"Sorting dir exists: {found}",
                     )
                 )
             else:

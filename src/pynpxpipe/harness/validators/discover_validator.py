@@ -17,28 +17,46 @@ class DiscoverValidator:
             return items
 
         cp = json.loads(cp_path.read_text(encoding="utf-8"))
+
+        # Support both checkpoint formats:
+        #   - "probes": [{"probe_id": ..., "sample_rate": ...}]  (list of dicts)
+        #   - "probe_ids": ["imec0", ...]  (list of strings, actual format)
         probes = cp.get("probes", [])
+        probe_ids_list = cp.get("probe_ids", [])
         if probes:
             ids = [p["probe_id"] for p in probes]
+        elif probe_ids_list:
+            ids = probe_ids_list
+        else:
+            ids = []
+
+        if ids:
             items.append(
-                ValidationItem("probes_found", "pass", f"{len(probes)} probes: {', '.join(ids)}")
+                ValidationItem("probes_found", "pass", f"{len(ids)} probes: {', '.join(ids)}")
             )
         else:
             items.append(
                 ValidationItem("probes_found", "fail", "No probes found in discover checkpoint")
             )
 
-        missing_sr = [p["probe_id"] for p in probes if not p.get("sample_rate")]
-        if missing_sr:
-            items.append(
-                ValidationItem("meta_parsed", "warn", f"Missing sample_rate for: {missing_sr}")
-            )
+        # Sample rate check: only possible with the "probes" dict format
+        if probes:
+            missing_sr = [p["probe_id"] for p in probes if not p.get("sample_rate")]
+            if missing_sr:
+                items.append(
+                    ValidationItem("meta_parsed", "warn", f"Missing sample_rate for: {missing_sr}")
+                )
+            else:
+                sr_info = ", ".join(f"{p['probe_id']}={p.get('sample_rate')}Hz" for p in probes)
+                items.append(ValidationItem("meta_parsed", "pass", f"Sample rates: {sr_info}"))
         else:
-            sr_info = (
-                ", ".join(f"{p['probe_id']}={p.get('sample_rate')}Hz" for p in probes)
-                if probes
-                else "no probes"
+            n_probes = cp.get("n_probes", len(ids))
+            items.append(
+                ValidationItem(
+                    "meta_parsed",
+                    "pass",
+                    f"Discover found {n_probes} probe(s) (no per-probe SR in checkpoint)",
+                )
             )
-            items.append(ValidationItem("meta_parsed", "pass", f"Sample rates: {sr_info}"))
 
         return items
