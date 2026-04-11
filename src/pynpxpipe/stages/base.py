@@ -130,6 +130,7 @@ class BaseStage(ABC):
         si.set_global_job_kwargs(
             n_jobs=n_jobs,
             chunk_duration=chunk_duration,
+            pool_engine="thread",
             progress_bar=True,
         )
         self.logger.info(
