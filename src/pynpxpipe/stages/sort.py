@@ -8,9 +8,16 @@ from __future__ import annotations
 
 import dataclasses
 import gc
+import os
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+# Force non-interactive matplotlib backend before any SI import triggers Tk.
+# KS4 uses matplotlib internally; without this, the Tk backend initializes
+# in the worker thread and produces "main thread is not in main loop" errors.
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import spikeinterface.core as si
 import spikeinterface.extractors as se
@@ -18,6 +25,7 @@ import spikeinterface.sorters as ss
 
 from pynpxpipe.core.config import SortingConfig
 from pynpxpipe.core.errors import SortError
+from pynpxpipe.core.resources import ResourceDetector
 from pynpxpipe.stages.base import BaseStage
 
 if TYPE_CHECKING:
@@ -75,6 +83,12 @@ class SortStage(BaseStage):
 
         self._report_progress("Starting sort (always serial)", 0.0)
 
+        if not self.session.probes:
+            raise SortError(
+                "No probes in session. The discover stage may not have run or "
+                "failed to populate probes. Re-run from discover."
+            )
+
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):
             probe_id = probe.probe_id
@@ -117,19 +131,58 @@ class SortStage(BaseStage):
             self._report_progress(f"Skipping already sorted probe {probe_id}", 0.0)
             return
 
-        zarr_path = self.session.output_dir / "preprocessed" / probe_id
+        zarr_path = self.session.output_dir / "preprocessed" / f"{probe_id}.zarr"
         recording = si.load(zarr_path)
 
         sorter_output = self.session.output_dir / "sorter_output" / probe_id
         params = dataclasses.asdict(self.sorting_config.sorter.params)
 
+        # --- CUDA guard: warn and fall back to cpu if no GPU detected ---
+        if params.get("torch_device") == "cuda":
+            profile = ResourceDetector(self.session.session_dir, self.session.output_dir).detect()
+            if profile.primary_gpu is None:
+                warnings.warn(
+                    "torch_device='cuda' requested but no GPU detected; falling back to 'cpu'",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                params["torch_device"] = "cpu"
+
         try:
             sorting = ss.run_sorter(
                 self.sorting_config.sorter.name,
                 recording,
-                output_folder=sorter_output,
+                folder=sorter_output,
+                remove_existing_folder=True,
                 **params,
             )
+        except RuntimeError as exc:
+            if "CUDA out of memory" in str(exc) or "OutOfMemoryError" in str(exc):
+                original_batch = params.get("batch_size", 60000)
+                reduced_batch = max(20000, original_batch // 2)
+                self.logger.warning(
+                    "CUDA OOM; retrying with reduced batch_size",
+                    original_batch_size=original_batch,
+                    reduced_batch_size=reduced_batch,
+                    probe_id=probe_id,
+                )
+                params["batch_size"] = reduced_batch
+                try:
+                    sorting = ss.run_sorter(
+                        self.sorting_config.sorter.name,
+                        recording,
+                        folder=sorter_output,
+                        remove_existing_folder=True,
+                        **params,
+                    )
+                except Exception as retry_exc:
+                    err = SortError(f"Sorter failed for {probe_id}: {retry_exc}")
+                    self._write_failed_checkpoint(err, probe_id=probe_id)
+                    raise err from retry_exc
+            else:
+                err = SortError(f"Sorter failed for {probe_id}: {exc}")
+                self._write_failed_checkpoint(err, probe_id=probe_id)
+                raise err from exc
         except Exception as exc:
             err = SortError(f"Sorter failed for {probe_id}: {exc}")
             self._write_failed_checkpoint(err, probe_id=probe_id)
@@ -140,7 +193,7 @@ class SortStage(BaseStage):
             self.logger.warning("Zero units after sorting", probe_id=probe_id)
 
         save_path = self.session.output_dir / "sorted" / probe_id
-        sorting.save(folder=save_path, format="binary_folder")
+        sorting.save(folder=save_path, overwrite=True)
 
         self._write_checkpoint(
             {
@@ -191,7 +244,7 @@ class SortStage(BaseStage):
             self.logger.warning("Zero units after import", probe_id=probe_id)
 
         save_path = self.session.output_dir / "sorted" / probe_id
-        sorting.save(folder=save_path, format="binary_folder")
+        sorting.save(folder=save_path, overwrite=True)
 
         self._write_checkpoint(
             {

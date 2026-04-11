@@ -433,3 +433,83 @@ class TestGcRelease:
 
         # 2 probes → gc.collect called at least 2 times
         assert mock_gc.collect.call_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# Group G — CUDA guard + OOM retry
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_sort_session(
+    tmp_path: Path,
+    torch_device: str = "auto",
+    mode: str = "local",
+    batch_size: int | str = "auto",
+) -> Session:
+    """Build a Session with one imec0 probe and a SortStage-compatible config.
+
+    Mutates the session's sorting_config by constructing SortStage with it.
+    Callers use `SortStage(session, _make_sorting_config(...))` directly instead.
+    Returns a plain Session; the caller provides SortingConfig separately.
+    """
+    session_dir = tmp_path / "session_g0"
+    session_dir.mkdir(exist_ok=True)
+    bhv_file = tmp_path / "test.bhv2"
+    bhv_file.write_bytes(b"\x00" * 30)
+    output_dir = tmp_path / "output"
+    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s.probes = [_make_probe("imec0", tmp_path)]
+    # Store requested params on the session so callers can build SortingConfig
+    s._test_torch_device = torch_device  # type: ignore[attr-defined]
+    s._test_batch_size = batch_size  # type: ignore[attr-defined]
+    s._test_mode = mode  # type: ignore[attr-defined]
+    return s
+
+
+def test_sort_warns_and_falls_back_when_cuda_requested_but_unavailable(
+    tmp_path: Path,
+) -> None:
+    """When torch_device='cuda' but no GPU, warn and switch to cpu before running."""
+    session = _make_mock_sort_session(tmp_path, torch_device="cuda", mode="local")
+    sorting_cfg = _make_sorting_config(mode="local")
+    sorting_cfg.sorter.params.torch_device = "cuda"
+
+    with (
+        patch("pynpxpipe.stages.sort.ResourceDetector") as mock_rd,
+        patch("pynpxpipe.stages.sort.ss") as mock_ss,
+        patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+    ):
+        mock_rd.return_value.detect.return_value.primary_gpu = None  # no GPU
+        mock_ss.run_sorter.return_value = _make_mock_sorting()
+
+        with pytest.warns(UserWarning, match="torch_device.*cuda.*no GPU"):
+            stage = SortStage(session, sorting_cfg)
+            stage._sort_probe_local("imec0")
+
+    # Verify the sorter was called with cpu, not cuda
+    call_kwargs = mock_ss.run_sorter.call_args[1]
+    assert call_kwargs.get("torch_device") == "cpu"
+
+
+def test_sort_retries_with_lower_batch_size_on_cuda_oom(tmp_path: Path) -> None:
+    """On CUDA OOM, retry _sort_probe_local once with batch_size halved."""
+    session = _make_mock_sort_session(tmp_path, torch_device="cuda", mode="local", batch_size=60000)
+    sorting_cfg = _make_sorting_config(mode="local")
+    sorting_cfg.sorter.params.batch_size = 60000
+
+    oom_error = RuntimeError("CUDA out of memory. Tried to allocate 2.50 GiB")
+    success_result = _make_mock_sorting()
+
+    with (
+        patch("pynpxpipe.stages.sort.ss") as mock_ss,
+        patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+    ):
+        mock_ss.run_sorter.side_effect = [oom_error, success_result]
+
+        stage = SortStage(session, sorting_cfg)
+        stage._sort_probe_local("imec0")  # should not raise
+
+    assert mock_ss.run_sorter.call_count == 2
+    first_call_params = mock_ss.run_sorter.call_args_list[0][1]
+    second_call_params = mock_ss.run_sorter.call_args_list[1][1]
+    assert second_call_params["batch_size"] < first_call_params["batch_size"]
