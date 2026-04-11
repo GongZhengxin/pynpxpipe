@@ -632,3 +632,51 @@ class TestCsvContent:
         written_df = pd.read_csv(csv_path, index_col=0)
         for col in ["isi_violation_ratio", "amplitude_cutoff", "presence_ratio", "snr"]:
             assert col in written_df.columns
+
+
+def test_amplitude_cutoff_is_computed_and_applied(tmp_path: Path) -> None:
+    """Regression: amplitude_cutoff_max must filter units, not just be in config.
+
+    unit0: amplitude_cutoff=0.05 (passes 0.1 max)
+    unit1: amplitude_cutoff=0.15 (fails 0.1 max)
+    Verify unit1 is excluded from select_units call.
+    """
+    session_dir = tmp_path / "session_g0"
+    session_dir.mkdir()
+    bhv_file = tmp_path / "test.bhv2"
+    bhv_file.write_bytes(b"\x00" * 30)
+    output_dir = tmp_path / "output"
+    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s.probes = [_make_probe("imec0", tmp_path)]
+    s.config = _make_pipeline_config(amp_max=0.1)
+
+    qm_df = pd.DataFrame(
+        {
+            "isi_violation_ratio": [0.05, 0.05],
+            "amplitude_cutoff": [0.05, 0.15],  # unit1 exceeds 0.1 max
+            "presence_ratio": [0.95, 0.95],
+            "snr": [1.5, 1.5],
+        },
+        index=["unit0", "unit1"],
+    )
+    mock_sorting = _make_mock_sorting(["unit0", "unit1"])
+    mock_recording = MagicMock()
+    mock_analyzer = _make_mock_analyzer(qm_df)
+
+    with (
+        patch(
+            "pynpxpipe.stages.curate.si.load",
+            side_effect=[mock_sorting, mock_recording],
+        ),
+        patch(
+            "pynpxpipe.stages.curate.si.create_sorting_analyzer",
+            return_value=mock_analyzer,
+        ),
+        patch("pynpxpipe.stages.curate.gc"),
+    ):
+        stage = CurateStage(s)
+        stage._curate_probe("imec0")
+
+    good_ids = mock_sorting.select_units.call_args[0][0]
+    assert "unit0" in good_ids
+    assert "unit1" not in good_ids
