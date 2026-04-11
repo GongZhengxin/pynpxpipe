@@ -47,15 +47,18 @@ class Fixer:
     def fix_disable_motion_correction(self, pipeline_yaml: Path) -> dict[str, Any]:
         """Disable motion correction when nblocks > 0 (mutual exclusivity fix)."""
         content = yaml.safe_load(pipeline_yaml.read_text(encoding="utf-8"))
-        content.setdefault("preprocess", {})["run_motion_correction"] = False
+        preprocess = content.setdefault("preprocess", {})
+        mc = preprocess.setdefault("motion_correction", {})
+        before = mc.get("method", None)
+        mc["method"] = None
         pipeline_yaml.write_text(yaml.dump(content, default_flow_style=False), encoding="utf-8")
         return {
             "tier": "GREEN",
             "target": "config",
             "description": "Disabled motion correction (mutually exclusive with KS4 nblocks > 0)",
             "file": str(pipeline_yaml),
-            "before": "run_motion_correction: true",
-            "after": "run_motion_correction: false",
+            "before": f"motion_correction.method: {before!r}",
+            "after": "motion_correction.method: null",
             "reversible": True,
             "timestamp": datetime.now(UTC).isoformat(),
         }

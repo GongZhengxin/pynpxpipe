@@ -35,6 +35,25 @@ def test_fix_batch_size(sorting_yaml: Path) -> None:
     assert fix_record["after"] == 40000
 
 
+def test_fix_disable_motion_correction(tmp_path: Path) -> None:
+    cfg = {
+        "preprocess": {
+            "motion_correction": {"method": "dredge", "preset": "dredge"},
+        }
+    }
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(yaml.dump(cfg), encoding="utf-8")
+
+    fixer = Fixer()
+    record = fixer.fix_disable_motion_correction(pipeline_yaml)
+
+    content = yaml.safe_load(pipeline_yaml.read_text(encoding="utf-8"))
+    assert content["preprocess"]["motion_correction"]["method"] is None
+    assert record["tier"] == "GREEN"
+    assert "dredge" in record["before"]
+    assert record["after"] == "motion_correction.method: null"
+
+
 def test_record_yellow_fix(tmp_path: Path) -> None:
     fixer = Fixer()
     record = fixer.record_yellow_fix(

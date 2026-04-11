@@ -9,11 +9,12 @@ mode: "local"
 sorter:
   name: "kilosort4"
   params:
-    nblocks: 15                  # Drift correction blocks (0 = no drift correction)
+    nblocks: 0                   # Drift correction blocks (0 = no drift correction)
     Th_learned: 7.0              # Learning threshold
     do_CAR: false                # KS internal CAR (disable: preprocessing already did CMR)
     batch_size: auto             # "auto" or integer; auto = ResourceDetector recommends based on free VRAM
     n_jobs: 1                    # KS internal parallelism (typically 1 for GPU)
+    torch_device: auto           # "cuda" | "cpu" | "auto" (auto = CUDA if available)
 
 # Import parameters (used when mode: import)
 import:
