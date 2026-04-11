@@ -55,8 +55,8 @@ class CurateValidator:
 
             if cp_path.exists():
                 cp = json.loads(cp_path.read_text(encoding="utf-8"))
-                n_good = cp.get("n_good", 0)
-                n_total = cp.get("n_total", 0)
+                n_good = cp.get("n_units_after", cp.get("n_good", 0))
+                n_total = cp.get("n_units_before", cp.get("n_total", 0))
                 if n_good > 0:
                     items.append(
                         ValidationItem(

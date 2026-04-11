@@ -84,7 +84,7 @@ class CurateStage(BaseStage):
             return (0, 0)
 
         sorted_path = self.session.output_dir / "sorted" / probe_id
-        recording_path = self.session.output_dir / "preprocessed" / probe_id
+        recording_path = self.session.output_dir / "preprocessed" / f"{probe_id}.zarr"
 
         try:
             sorting = si.load(sorted_path)
@@ -107,22 +107,22 @@ class CurateStage(BaseStage):
         analyzer.compute("waveforms", chunk_duration=chunk_duration, n_jobs=n_jobs)
         analyzer.compute("templates")
         analyzer.compute("noise_levels")
+        analyzer.compute("spike_amplitudes", chunk_duration=chunk_duration, n_jobs=n_jobs)
         analyzer.compute(
             "quality_metrics",
-            metric_names=["isi_violation_ratio", "amplitude_cutoff", "presence_ratio", "snr"],
+            metric_names=["isi_violation", "amplitude_cutoff", "presence_ratio", "snr"],
         )
 
         qm = analyzer.get_extension("quality_metrics").get_data()
 
         output_probe_dir = self.session.output_dir / "curated" / probe_id
         output_probe_dir.mkdir(parents=True, exist_ok=True)
-        qm.to_csv(output_probe_dir / "quality_metrics.csv")
 
         n_before = len(sorting.get_unit_ids())
 
         curation = cfg.curation
         keep_mask = (
-            (qm["isi_violation_ratio"] <= curation.isi_violation_ratio_max)
+            (qm["isi_violations_ratio"] <= curation.isi_violation_ratio_max)
             & (qm["amplitude_cutoff"] <= curation.amplitude_cutoff_max)
             & (qm["presence_ratio"] >= curation.presence_ratio_min)
             & (qm["snr"] >= curation.snr_min)
@@ -134,7 +134,9 @@ class CurateStage(BaseStage):
         if n_after == 0:
             self.logger.warning("Zero units after curation", probe_id=probe_id)
 
-        curated_sorting.save(folder=output_probe_dir, format="binary_folder")
+        curated_sorting.save(folder=output_probe_dir, overwrite=True)
+        # Write csv after save so overwrite=True doesn't delete it
+        qm.to_csv(output_probe_dir / "quality_metrics.csv")
 
         self._write_checkpoint(
             {
