@@ -20,7 +20,7 @@ pynpxpipe：神经电生理数据预处理工具包。
 输入：SpikeGLX 录制数据文件夹（含 AP/LF/NI 三类数据流，支持多 probe）+ MonkeyLogic BHV2 行为文件
 输出：标准 NWB 格式文件（一个 session 一个 NWB，包含所有 probe 的数据）
 
-当前开发阶段：M2（UI + Pure-Python BHV2）。M1 已完成（22/22 模块，779 tests）。路线图见 `docs/ROADMAP.md`，进度见 `docs/progress.md`。
+当前开发阶段：M2（UI + Pure-Python BHV2 + 生产环境验证）。M1 已完成（22/22 模块，779 tests）。路线图见 `docs/ROADMAP.md`，进度见 `docs/progress.md`。新用户教程见 `docs/getting_started.md`。
 
 ## 核心设计原则
 
@@ -357,3 +357,47 @@ CI 在 PR 和 push to main 时触发：
 - Photodiode 校准必须包含极性校正（旧 Python 代码缺失，MATLAB 有）
 - IMEC↔NIDQ 对齐必须包含丢脉冲修复逻辑（旧 Python 代码缺失，MATLAB 有）
 - DREDge 运动校正与 KS4 内部 nblocks 互斥，二选一
+
+## 自调试闭环规则（Debugging Harness）
+
+### 核心层（L0–L3）——全自动闭环
+
+每个 session 的 TDD-GREEN 阶段完成后，CC **必须**执行以下步骤，禁止跳过：
+
+**1. 预检**（pipeline 运行前）：
+
+```bash
+python smoke_test_harness.py preflight \
+    --session-dir <path> \
+    --config config/pipeline.yaml \
+    --sorting-config config/sorting.yaml \
+    --output-dir <output>
+```
+
+读取 `<output>/.harness/preflight_report.json`，处理所有 FAIL 项。
+
+**2. 逐 stage 验证**（pipeline 运行后）：
+
+```bash
+python smoke_test_harness.py validate \
+    --session-dir <path> \
+    --output-dir <output> \
+    --stop-after <当前模块所在最高stage>
+```
+
+读取 `.harness/validation_report.json` + `.harness/suggested_fixes.md`。
+
+**3. 闭环**：修复 → 重新运行 harness → 直到全绿 → 将最终输出摘要粘贴在 session 收尾报告中。
+
+### UI 层（L4）——分离测试
+
+UI 调试分两级，CC 负责第一级，人工负责第二级：
+
+1. **CC 自动跑**：`uv run pytest tests/test_ui_contract.py -v`（无浏览器）
+2. **人工执行**：参照 `docs/UI_CHECKLIST.md`，每次 UI 有改动时跑一轮
+
+### 禁止事项
+
+- 禁止只跑 `uv run pytest` 就声称"完成"——必须同时跑 harness
+- 禁止在 harness 中 mock SpikeGLX IO 层（harness 的价值在于真实数据路径）
+- 禁止 harness FAIL 时跳过进入下一模块
