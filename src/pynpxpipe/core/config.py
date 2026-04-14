@@ -977,7 +977,15 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
 
     # Log unknown top-level keys
-    known_top_keys = {"resources", "parallel", "preprocess", "curation", "sync", "postprocess", "merge"}
+    known_top_keys = {
+        "resources",
+        "parallel",
+        "preprocess",
+        "curation",
+        "sync",
+        "postprocess",
+        "merge",
+    }
     for key in raw:
         if key not in known_top_keys:
             _log.debug("unknown config key ignored", key=key, section="PipelineConfig")
@@ -1069,6 +1077,35 @@ def load_subject_config(yaml_path: Path) -> SubjectConfig:
         sex=subject_raw["sex"],
         age=subject_raw["age"],
         weight=subject_raw.get("weight", ""),
+    )
+
+
+def save_subject_config(cfg: SubjectConfig, yaml_path: Path) -> None:
+    """Write a SubjectConfig to a YAML file with a top-level ``Subject:`` block.
+
+    Format matches ``monkeys/MonkeyTemplate.yaml``. Missing parent directories
+    are created automatically. Existing files are overwritten without warning —
+    callers (e.g. the SubjectForm UI) are responsible for confirmation.
+
+    Args:
+        cfg: A fully-populated ``SubjectConfig`` to persist.
+        yaml_path: Target file path (typically ``monkeys/<subject_id>.yaml``).
+    """
+    yaml_path = Path(yaml_path)
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "Subject": {
+            "subject_id": cfg.subject_id,
+            "description": cfg.description,
+            "species": cfg.species,
+            "sex": cfg.sex,
+            "age": cfg.age,
+            "weight": cfg.weight,
+        }
+    }
+    yaml_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
     )
 
 

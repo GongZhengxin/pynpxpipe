@@ -1132,6 +1132,130 @@ def test_subject_form_yaml_input_auto_loads_on_value_change(tmp_path: Path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# F2. SubjectForm — Save to monkeys/ (Task 5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _fill_valid_subject(form, subject_id="Koko"):
+    form.subject_id_input.value = subject_id
+    form.description_input.value = "calm"
+    form.species_input.value = "Macaca mulatta"
+    form.sex_select.value = "M"
+    form.age_input.value = "P4Y"
+    form.weight_input.value = "9kg"
+
+
+def test_subject_form_has_save_button(tmp_path):
+    """SubjectForm exposes a save_btn, save_path_input, and save_message."""
+    from pynpxpipe.ui.components.browsable_input import BrowsableInput
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    assert isinstance(form.save_btn, pn.widgets.Button)
+    assert isinstance(form.save_path_input, BrowsableInput)
+    assert isinstance(form.save_message, pn.pane.Alert)
+    assert form.save_message.visible is False
+
+
+def test_subject_form_save_default_path_uses_monkeys_dir(tmp_path):
+    """Clicking save with empty save_path writes to project_root/monkeys/<subject_id>.yaml."""
+    from pynpxpipe.core.config import load_subject_config
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    _fill_valid_subject(form, subject_id="MaoDan")
+    form.save_path_input.value = ""
+    form._on_save_click(None)
+
+    target = tmp_path / "monkeys" / "MaoDan.yaml"
+    assert target.exists()
+    loaded = load_subject_config(target)
+    assert loaded.subject_id == "MaoDan"
+    assert form.save_message.alert_type == "success"
+    assert form.save_message.visible is True
+
+
+def test_subject_form_save_custom_path_is_honored(tmp_path):
+    """A user-provided save_path_input value overrides the default location."""
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    _fill_valid_subject(form, subject_id="Pippo")
+
+    custom = tmp_path / "custom" / "elsewhere" / "Pippo.yaml"
+    form.save_path_input.value = str(custom)
+    form._on_save_click(None)
+
+    assert custom.exists()
+    assert not (tmp_path / "monkeys" / "Pippo.yaml").exists()
+
+
+def test_subject_form_save_without_required_fields_warns(tmp_path):
+    """If required fields are missing (state.subject_config is None), save warns and does nothing."""
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    form.subject_id_input.value = ""  # invalid
+    form._on_save_click(None)
+
+    assert form.save_message.alert_type == "warning"
+    assert not (tmp_path / "monkeys").exists()
+
+
+def test_subject_form_save_warns_before_overwriting_existing_file(tmp_path):
+    """First click on an existing file only warns; second click actually overwrites."""
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    target = tmp_path / "monkeys" / "Mono.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("old content\n", encoding="utf-8")
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    _fill_valid_subject(form, subject_id="Mono")
+
+    # First click — warn, no overwrite
+    form._on_save_click(None)
+    assert form.save_message.alert_type == "warning"
+    assert target.read_text(encoding="utf-8") == "old content\n"
+    assert form._pending_overwrite_path == target
+
+    # Second click on the same path — overwrite
+    form._on_save_click(None)
+    assert form.save_message.alert_type == "success"
+    assert "old content" not in target.read_text(encoding="utf-8")
+    assert form._pending_overwrite_path is None
+
+
+def test_subject_form_save_changing_path_resets_overwrite_gate(tmp_path):
+    """Switching save paths between clicks cancels the pending overwrite."""
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    existing = tmp_path / "monkeys" / "Mono.yaml"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("old\n", encoding="utf-8")
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    _fill_valid_subject(form, subject_id="Mono")
+
+    # Arm overwrite warning on default path
+    form._on_save_click(None)
+    assert form._pending_overwrite_path == existing
+
+    # Change to a fresh path and click — should save cleanly (no double-click required)
+    fresh = tmp_path / "other" / "Mono.yaml"
+    form.save_path_input.value = str(fresh)
+    form._on_save_click(None)
+    assert fresh.exists()
+    assert form.save_message.alert_type == "success"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # G. SessionLoader — BrowsableInput for dir_input (T3)
 # ─────────────────────────────────────────────────────────────────────────────
 

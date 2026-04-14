@@ -121,6 +121,58 @@ class ProgressBridge:
 
 支持从 YAML 文件加载预填（`load_subject_config(yaml_path)` → 填充表单）。
 
+#### Save Subject YAML（保存到 monkeys/）
+
+允许用户把当前表单填写的 Subject 信息写回磁盘，默认存入项目根目录的 `monkeys/{subject_id}.yaml`，便于后续 session 通过 YAML loader 一键复用。
+
+**目标**
+- 把表单内存态 `SubjectConfig` 持久化为 YAML 文件，格式对齐 `monkeys/MonkeyTemplate.yaml`（顶层 `Subject:` 块）。
+
+**输入**
+- 表单当前值（必须先通过 `_rebuild_config` 生成一个合法的 `SubjectConfig`；未通过则按钮禁用 / 报错）。
+- 可选用户自定义保存路径（`BrowsableInput`，`only_files=True`）。默认值：`<project_root>/monkeys/<subject_id>.yaml`。`<project_root>` 来自 `Path(__file__).resolve().parents[4]`。
+
+**输出**
+- 磁盘上的 YAML 文件，内容示例：
+  ```yaml
+  Subject:
+    subject_id: "MaoDan"
+    description: "good monkey"
+    species: "Macaca mulatta"
+    sex: "M"
+    age: "P5Y"
+    weight: "10kg"
+  ```
+- UI 反馈（`pn.pane.Alert`）：`success` / `warning` / `danger` 三态消息。
+
+**处理步骤**
+1. 点击 `Save to monkeys/` 按钮 → 读 `state.subject_config`。若为 `None`（必填项未填完）→ 显示 `warning` 消息，直接返回。
+2. 读保存路径输入框。空 → 用默认路径 `<project_root>/monkeys/<subject_id>.yaml`。
+3. **覆盖保护**：若目标文件已存在且 `_pending_overwrite_path` 未指向同一路径 → 显示 `warning` 消息 `File exists. Click again to overwrite.`，把路径记到 `_pending_overwrite_path`，等用户二次点击。
+4. 二次点击（或文件不存在）→ 调用 `save_subject_config(cfg, path)` 写盘；清空 `_pending_overwrite_path`。
+5. 任一步抛异常 → 转 `danger` 消息展示 `exc` 文本。
+
+**可配参数**
+- `project_root`：构造时注入（默认 `Path(__file__).resolve().parents[4]`），便于测试用 `tmp_path`。
+- 文件落盘格式固定（顶层 `Subject:`、`yaml.safe_dump(sort_keys=False, allow_unicode=True)`），不对外暴露。
+
+**新模块函数（`core/config.py`）**
+- `save_subject_config(cfg: SubjectConfig, yaml_path: Path) -> None`
+  - 写入顶层 `Subject:` 块；缺失父目录自动 `mkdir(parents=True, exist_ok=True)`；使用 `encoding="utf-8"`。
+  - 不做覆盖检查（由 UI 层处理）。
+
+**UI 层新增**
+- `SubjectForm.save_btn`（`pn.widgets.Button`, name=`"Save to monkeys/"`, button_type=`"success"`）。
+- `SubjectForm.save_path_input`（`BrowsableInput`, `file_pattern="*.yaml"`, `only_files=True`）。
+- `SubjectForm.save_message`（`pn.pane.Alert`, 初始 `visible=False`）。
+- `SubjectForm._on_save_click(event)` 处理 steps 1–5。
+- `SubjectForm._pending_overwrite_path: Path | None` 状态位。
+
+**与现有约定的关系**
+- 不新增 `state.py` 字段；`SubjectForm` 内部自治。
+- 不写 project 级 spec（本功能纯 UI + 一条 `core/config.py` 辅助函数）。
+- `load_subject_config` / `save_subject_config` 成对，格式必须互逆（加载后立即保存 → 内容等价）。
+
 ### 3.5 pipeline_form.py — Pipeline 参数面板
 
 按分组可折叠 Card 展示 `PipelineConfig` 所有子配置。每个分组对应一个 dataclass，字段类型、默认值严格对齐 `core/config.py`。

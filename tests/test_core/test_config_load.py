@@ -15,6 +15,7 @@ from pynpxpipe.core.config import (
     load_sorting_config,
     load_subject_config,
     merge_with_overrides,
+    save_subject_config,
 )
 from pynpxpipe.core.errors import ConfigError
 
@@ -35,8 +36,8 @@ def test_load_pipeline_config_none_returns_defaults():
     assert config.parallel.max_workers == "auto"
     assert config.preprocess.bandpass.freq_min == 300.0
     assert config.preprocess.bandpass.freq_max == 6000.0
-    assert config.curation.isi_violation_ratio_max == 0.1
-    assert config.sync.sync_bit == 0
+    assert config.curation.isi_violation_ratio_max == 2.0
+    assert config.sync.imec_sync_bit == 6
     assert config.sync.stim_onset_code == 64
 
 
@@ -69,7 +70,7 @@ def test_load_pipeline_config_from_file_reads_fields(tmp_path):
         "curation:\n"
         "  snr_min: 1.0\n"
         "sync:\n"
-        "  sync_bit: 1\n"
+        "  imec_sync_bit: 1\n"
         "  stim_onset_code: 32\n"
     )
     config_file = tmp_path / "pipeline.yaml"
@@ -85,7 +86,7 @@ def test_load_pipeline_config_from_file_reads_fields(tmp_path):
     assert config.preprocess.bandpass.freq_min == 200.0
     assert config.preprocess.bandpass.freq_max == 5000.0
     assert config.curation.snr_min == 1.0
-    assert config.sync.sync_bit == 1
+    assert config.sync.imec_sync_bit == 1
     assert config.sync.stim_onset_code == 32
 
 
@@ -358,3 +359,78 @@ def test_load_sorting_config_none_returns_defaults():
     assert config.sorter.name == "kilosort4"
     assert config.sorter.params.batch_size == "auto"
     assert config.import_cfg.format == "kilosort4"
+
+
+# ===========================================================================
+# save_subject_config — round-trip with load_subject_config
+# ===========================================================================
+
+
+def test_save_subject_config_writes_top_level_block(tmp_path):
+    """save_subject_config writes a file with the top-level Subject: key."""
+    cfg = SubjectConfig(
+        subject_id="Koko",
+        description="calm monkey",
+        species="Macaca mulatta",
+        sex="F",
+        age="P6Y",
+        weight="9.5kg",
+    )
+    target = tmp_path / "Koko.yaml"
+    save_subject_config(cfg, target)
+
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("Subject:")
+    assert "subject_id: Koko" in text
+    assert "species: Macaca mulatta" in text
+
+
+def test_save_subject_config_round_trips_via_load(tmp_path):
+    """Saved file loads back into an equivalent SubjectConfig."""
+    cfg = SubjectConfig(
+        subject_id="Pippo",
+        description="curious monkey",
+        species="Macaca fascicularis",
+        sex="M",
+        age="P2Y",
+        weight="7kg",
+    )
+    target = tmp_path / "Pippo.yaml"
+    save_subject_config(cfg, target)
+
+    loaded = load_subject_config(target)
+    assert loaded == cfg
+
+
+def test_save_subject_config_creates_parent_directories(tmp_path):
+    """Missing parent directories are created automatically."""
+    cfg = SubjectConfig(
+        subject_id="Nested",
+        description="",
+        species="Macaca mulatta",
+        sex="U",
+        age="P1Y",
+        weight="5kg",
+    )
+    nested_target = tmp_path / "deep" / "subfolder" / "Nested.yaml"
+    save_subject_config(cfg, nested_target)
+    assert nested_target.exists()
+
+
+def test_save_subject_config_overwrites_existing_file(tmp_path):
+    """save_subject_config replaces any existing file content (UI gates this)."""
+    target = tmp_path / "Mono.yaml"
+    target.write_text("old content\n", encoding="utf-8")
+
+    cfg = SubjectConfig(
+        subject_id="Mono",
+        description="fresh",
+        species="Macaca mulatta",
+        sex="M",
+        age="P3Y",
+        weight="8kg",
+    )
+    save_subject_config(cfg, target)
+    assert "old content" not in target.read_text(encoding="utf-8")
+    loaded = load_subject_config(target)
+    assert loaded.description == "fresh"
