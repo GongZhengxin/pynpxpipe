@@ -162,11 +162,18 @@ class PipelineForm:
         # ── Sync ──
         _sync = _DEFAULTS.sync
         self.sync_bit_input = pn.widgets.IntInput(
-            name="Sync Bit",
+            name="IMEC Sync Bit",
             value=_sync.imec_sync_bit,
             start=0,
             end=7,
-            description="Digital bit index for IMEC-NIDQ clock sync pulses. Check SpikeGLX configuration for your setup.",
+            description="Digital bit index for IMEC sync pulses on the IMEC stream. Check SpikeGLX configuration.",
+        )
+        self.nidq_sync_bit_input = pn.widgets.IntInput(
+            name="NIDQ Sync Bit",
+            value=_sync.nidq_sync_bit,
+            start=0,
+            end=7,
+            description="Bit position of sync pulse in NIDQ digital word (wiring-dependent, typically 0).",
         )
         self.event_bits_input = pn.widgets.TextInput(
             name="Event Bits",
@@ -187,15 +194,88 @@ class PipelineForm:
             end=255,
             description="Event code on NIDQ digital lines that marks IMEC sync pulses. Used for clock alignment.",
         )
+        self.max_time_error_input = pn.widgets.FloatInput(
+            name="Max Time Error (ms)",
+            value=_sync.max_time_error_ms,
+            start=0.0,
+            step=1.0,
+            description="Maximum allowed IMEC<->NIDQ alignment residual. Alignment fails above this.",
+        )
+        self.trial_count_tolerance_input = pn.widgets.IntInput(
+            name="Trial Count Tolerance",
+            value=_sync.trial_count_tolerance,
+            start=0,
+            description="Maximum BHV2<->NIDQ trial count mismatch auto-repaired via padding/trimming.",
+        )
+        self.gap_threshold_enable_checkbox = pn.widgets.Checkbox(
+            name="Enable Dropped-Pulse Gap Detection",
+            value=_sync.gap_threshold_ms is not None,
+        )
+        self.gap_threshold_input = pn.widgets.FloatInput(
+            name="Gap Threshold (ms)",
+            value=_sync.gap_threshold_ms if _sync.gap_threshold_ms is not None else 1200.0,
+            start=0.0,
+            step=50.0,
+            disabled=_sync.gap_threshold_ms is None,
+            description="Intervals above this are flagged as dropped pulses for repair.",
+        )
+        self.trial_start_bit_enable_checkbox = pn.widgets.Checkbox(
+            name="Enable Explicit Trial Start Bit",
+            value=_sync.trial_start_bit is not None,
+        )
+        self.trial_start_bit_input = pn.widgets.IntInput(
+            name="Trial Start Bit",
+            value=_sync.trial_start_bit if _sync.trial_start_bit is not None else 0,
+            start=0,
+            end=7,
+            disabled=_sync.trial_start_bit is None,
+            description="Optional NIDQ bit marking trial start (leave disabled to infer from event codes).",
+        )
+        self.photodiode_channel_input = pn.widgets.IntInput(
+            name="Photodiode Channel Index",
+            value=_sync.photodiode_channel_index,
+            start=0,
+            description="NIDQ analog channel index for the photodiode signal.",
+        )
         self.monitor_delay_input = pn.widgets.FloatInput(
             name="Monitor Delay (ms)",
             value=_sync.monitor_delay_ms,
             step=1.0,
             description="Expected monitor display delay in ms. Used by photodiode calibration to correct stimulus onset times.",
         )
+        self.pd_window_pre_input = pn.widgets.FloatInput(
+            name="PD Window Pre (ms)",
+            value=_sync.pd_window_pre_ms,
+            start=0.0,
+            step=1.0,
+            description="Baseline window before photodiode event for calibration.",
+        )
+        self.pd_window_post_input = pn.widgets.FloatInput(
+            name="PD Window Post (ms)",
+            value=_sync.pd_window_post_ms,
+            start=0.0,
+            step=5.0,
+            description="Detection window after photodiode event for calibration.",
+        )
+        self.pd_min_variance_input = pn.widgets.FloatInput(
+            name="PD Min Signal Variance",
+            value=_sync.pd_min_signal_variance,
+            start=0.0,
+            step=1e-6,
+            description="Below this variance the photodiode channel is treated as absent (skip calibration).",
+        )
         self.generate_plots_checkbox = pn.widgets.Checkbox(
             name="Generate Sync Diagnostic Plots (requires matplotlib)",
             value=_sync.generate_plots,
+        )
+
+        self.gap_threshold_enable_checkbox.param.watch(
+            lambda e: setattr(self.gap_threshold_input, "disabled", not e.new),
+            "value",
+        )
+        self.trial_start_bit_enable_checkbox.param.watch(
+            lambda e: setattr(self.trial_start_bit_input, "disabled", not e.new),
+            "value",
         )
 
         # ── Postprocess ──
@@ -246,10 +326,21 @@ class PipelineForm:
             self.good_isi_max_input,
             self.good_snr_min_input,
             self.sync_bit_input,
+            self.nidq_sync_bit_input,
             self.event_bits_input,
             self.stim_onset_code_input,
             self.imec_sync_code_input,
+            self.max_time_error_input,
+            self.trial_count_tolerance_input,
+            self.gap_threshold_enable_checkbox,
+            self.gap_threshold_input,
+            self.trial_start_bit_enable_checkbox,
+            self.trial_start_bit_input,
+            self.photodiode_channel_input,
             self.monitor_delay_input,
+            self.pd_window_pre_input,
+            self.pd_window_post_input,
+            self.pd_min_variance_input,
             self.generate_plots_checkbox,
             self.slay_pre_input,
             self.slay_post_input,
@@ -324,11 +415,28 @@ class PipelineForm:
             ),
             sync=SyncConfig(
                 imec_sync_bit=self.sync_bit_input.value,
+                nidq_sync_bit=self.nidq_sync_bit_input.value,
                 event_bits=event_bits,
+                max_time_error_ms=self.max_time_error_input.value,
+                trial_count_tolerance=self.trial_count_tolerance_input.value,
+                photodiode_channel_index=self.photodiode_channel_input.value,
+                monitor_delay_ms=self.monitor_delay_input.value,
                 stim_onset_code=self.stim_onset_code_input.value,
                 imec_sync_code=self.imec_sync_code_input.value,
-                monitor_delay_ms=self.monitor_delay_input.value,
                 generate_plots=self.generate_plots_checkbox.value,
+                gap_threshold_ms=(
+                    self.gap_threshold_input.value
+                    if self.gap_threshold_enable_checkbox.value
+                    else None
+                ),
+                trial_start_bit=(
+                    self.trial_start_bit_input.value
+                    if self.trial_start_bit_enable_checkbox.value
+                    else None
+                ),
+                pd_window_pre_ms=self.pd_window_pre_input.value,
+                pd_window_post_ms=self.pd_window_post_input.value,
+                pd_min_signal_variance=self.pd_min_variance_input.value,
             ),
             postprocess=PostprocessConfig(
                 slay_pre_s=self.slay_pre_input.value,
@@ -391,10 +499,21 @@ class PipelineForm:
             ),
             pn.Card(
                 self.sync_bit_input,
+                self.nidq_sync_bit_input,
+                self.max_time_error_input,
+                self.gap_threshold_enable_checkbox,
+                self.gap_threshold_input,
                 self.event_bits_input,
                 self.stim_onset_code_input,
                 self.imec_sync_code_input,
+                self.trial_count_tolerance_input,
+                self.trial_start_bit_enable_checkbox,
+                self.trial_start_bit_input,
+                self.photodiode_channel_input,
                 self.monitor_delay_input,
+                self.pd_window_pre_input,
+                self.pd_window_post_input,
+                self.pd_min_variance_input,
                 self.generate_plots_checkbox,
                 title="Synchronization",
                 collapsed=True,
