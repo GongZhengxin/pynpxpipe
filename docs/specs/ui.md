@@ -123,36 +123,168 @@ class ProgressBridge:
 
 ### 3.5 pipeline_form.py — Pipeline 参数面板
 
-按分组折叠面板展示所有 `PipelineConfig` 子配置：
+按分组可折叠 Card 展示 `PipelineConfig` 所有子配置。每个分组对应一个 dataclass，字段类型、默认值严格对齐 `core/config.py`。
 
-| 分组 | 配置类 | 参数 |
-|------|--------|------|
-| Resources | `ResourcesConfig` | n_jobs (`auto`/int), chunk_duration (`auto`/str), max_memory (`auto`/str) |
-| Parallel | `ParallelConfig` | enabled (bool), max_workers (`auto`/int) |
-| Bandpass | `BandpassConfig` | freq_min (float, 300.0), freq_max (float, 6000.0) |
-| Bad Channel | `BadChannelConfig` | method (str), dead_channel_threshold (float) |
-| Common Ref | `CommonReferenceConfig` | reference (`global`/`local`), operator (`median`/`mean`) |
-| Motion Correction | `MotionCorrectionConfig` | method (`dredge`/`kilosort`/None), preset (str) |
-| Curation | `CurationConfig` | isi_violation_ratio_max, amplitude_cutoff_max, presence_ratio_min, snr_min |
-| Sync | `SyncConfig` | sync_bit, event_bits, max_time_error_ms, 等 |
-| Postprocess | `PostprocessConfig` | slay_pre_s, slay_post_s, eye_validation.enabled, eye_threshold |
+#### Resources (`ResourcesConfig`)
 
-`"auto"` 字段用 Switch + 数值输入组合：开关打开时显示 "auto"，关闭时用户输入具体数值。
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| n_jobs | TextInput | `"auto"` | `"auto"` 或正整数字符串 | SpikeInterface 并行线程数；auto 由 ResourceDetector 按 CPU/RAM 推算 |
+| chunk_duration | TextInput | `"auto"` | `"auto"` 或时间字符串（如 `"1s"`） | 分块处理时间窗；auto 按可用 RAM 推算 |
+| max_memory | TextInput | `"auto"` | `"auto"` 或大小字符串（如 `"32G"`） | 内存上限提示（仅日志警告，不强制） |
+
+#### Parallel (`ParallelConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| enabled | Checkbox | `False` | bool | 是否并行处理多个 probe（默认串行） |
+| max_workers | TextInput | `"auto"` | `"auto"` 或正整数字符串 | ProcessPoolExecutor 最大 worker 数 |
+
+#### Bandpass Filter (`BandpassConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| freq_min | FloatInput | `300.0` | `> 0`，`< freq_max` | 高通截止频率 (Hz) |
+| freq_max | FloatInput | `6000.0` | `> freq_min` | 低通截止频率 (Hz) |
+
+#### Bad Channel Detection (`BadChannelConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| method | TextInput | `"coherence+psd"` | 合法 SI 方法名 | 坏道检测算法 |
+| dead_channel_threshold | FloatInput | `0.5` | `0.0–1.0` | 死通道判定阈值 |
+
+#### Common Reference (`CommonReferenceConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| reference | Select | `"global"` | `["global", "local"]` | 共参考作用范围 |
+| operator | Select | `"median"` | `["median", "mean"]` | 聚合算子 |
+
+#### Motion Correction (`MotionCorrectionConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| method | Checkbox | `"dredge"` (enabled) | `"dredge"` 或 `None` | **开关**：勾选→`"dredge"` 启用运动校正；不勾选→`None` 跳过 |
+| preset | Select | `"dredge"` | SI 合法 preset 名 | 实际算法 preset（传给 `spp.correct_motion(preset=...)`） |
+
+注：method 仅作 enable/disable 开关，算法由 preset 决定。
+
+#### Curation (`CurationConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| use_bombcell | Checkbox | `True` | bool | 启用 SI `bombcell_label_units()` 四分类（SUA/MUA/NON-SOMA/NOISE） |
+| isi_violation_ratio_max | FloatInput | `2.0` | `> 0` | ISI 违反率上限（NOISE 过滤阈值） |
+| amplitude_cutoff_max | FloatInput | `0.5` | `> 0` | 幅度截断上限（NOISE 过滤阈值） |
+| presence_ratio_min | FloatInput | `0.5` | `0.0–1.0` | 在线率下限（NOISE 过滤阈值） |
+| snr_min | FloatInput | `0.3` | `> 0` | 信噪比下限（NOISE 过滤阈值） |
+| good_isi_max | FloatInput | `0.1` | `> 0` | SUA 分类的 ISI 上限（**仅 use_bombcell=False 时生效**） |
+| good_snr_min | FloatInput | `3.0` | `> 0` | SUA 分类的 SNR 下限（**仅 use_bombcell=False 时生效**） |
+
+注：`use_bombcell=True` 时，`isi/amplitude/presence/snr` 四个 max/min 字段作为 NOISE 过滤阈值（bombcell 内部判断 SUA/MUA/NON-SOMA）；`use_bombcell=False` 时改用手动阈值分类，此时 `good_isi_max`、`good_snr_min` 决定 SUA/MUA 边界。
+
+#### Sync (`SyncConfig`)
+
+**Clock Alignment（IMEC↔NIDQ 时钟对齐）**
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| imec_sync_bit | IntInput | `6` | `0–7` | IMEC AP sync 通道的脉冲位（NP 硬件标准 bit 6） |
+| nidq_sync_bit | IntInput | `0` | `0–7` | NIDQ digital word 的 sync 脉冲位 |
+| max_time_error_ms | FloatInput | `17.0` | `> 0` | IMEC↔NIDQ 允许的最大对齐误差 (ms) |
+| imec_sync_code | IntInput | `64` | `> 0` | IMEC digital 通道上 sync marker 值 |
+| generate_plots | Checkbox | `True` | bool | 是否生成同步诊断 PNG 图 |
+
+**Event + Trial（事件码与 trial 匹配）**
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| event_bits | TextInput (逗号分隔) | `[1, 2, 3, 4, 5, 6, 7]` | 各 bit ∈ `0–7` | MonkeyLogic 事件码使用的 bit 位列表 |
+| stim_onset_code | IntInput | `64` | `> 0` | NIDQ 上代表 stim onset 的事件码 |
+| trial_count_tolerance | IntInput | `2` | `>= 0` | 允许的 trial 数量不匹配容差（自动修复上限） |
+| gap_threshold_ms | Checkbox + FloatInput | `1200.0`（nullable） | `> 0` 或 None | Trial 间最小间隔 (ms)；Checkbox 未勾选 → `None` 禁用 gap 修复 |
+| trial_start_bit | Checkbox + IntInput | `None` | `0–7` 或 None | Trial 起始 bit 位（可选）；Checkbox 未勾选 → `None` 回退到 event_bits |
+
+**Photodiode Calibration（光电二极管校准）**
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| photodiode_channel_index | IntInput | `0` | `>= 0` | NIDQ 模拟通道 index（光电信号位置） |
+| monitor_delay_ms | FloatInput | `-5.0` | 任意 float | 显示器系统延迟补偿 (ms)，60 Hz 约 `-5` |
+| pd_window_pre_ms | FloatInput | `10.0` | `>= 0` | 相对事件 onset 的前置搜索窗 (ms) |
+| pd_window_post_ms | FloatInput | `100.0` | `>= 0` | 相对事件 onset 的后置搜索窗 (ms) |
+| pd_min_signal_variance | FloatInput | `1e-6` | `> 0` | PD 信号有效性最小方差阈值 |
+
+#### Postprocess (`PostprocessConfig` + `EyeValidationConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| slay_pre_s | FloatInput | `0.05` | `>= 0` | SLAy 窗前侧秒数（behavior_events 缺失时的 fallback） |
+| slay_post_s | FloatInput | `0.30` | `>= 0` | SLAy 窗后侧秒数（fallback） |
+| pre_onset_ms | FloatInput | `50.0` | `>= 0` | 动态 SLAy 窗前置 (ms)，`pre_s = pre_onset_ms / 1000` |
+| eye_validation.enabled | Checkbox | `True` | bool | 是否启用眼动验证 |
+| eye_validation.eye_threshold | FloatInput | `0.999` | `0.0–1.0` | 注视率阈值，低于此值 trial 判为无效 |
+
+#### Merge (`MergeConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| enabled | Checkbox | `False` | bool | 启用 `auto_merge()`（**opt-in, irreversible** — 合并不可逆，需用户手动勾选确认） |
+
+---
+
+**关键规则**
+
+- **`"auto"|value` 字段模式**：`n_jobs`、`chunk_duration`、`max_memory`、`max_workers` 等字段均用 **TextInput**（而非 IntInput/FloatInput），允许用户输入字符串 `"auto"` 或具体数值字符串。UI 层在 `_rebuild_config` 中按字段类型注解转换（`int | str` → 尝试 int 失败则保留字符串）。
+- **nullable 字段模式**（`gap_threshold_ms: float | None`, `trial_start_bit: int | None`）：采用 **Checkbox + 数值输入** 组合。Checkbox 未勾选时数值输入 `disabled=True`，对应 config 字段写入 `None`；勾选后启用数值输入，写入用户输入值。
 
 ### 3.6 sorting_form.py — Sorting 参数面板
 
-| 参数 | Widget 类型 | 默认值 |
-|------|-------------|--------|
-| sorter name | Select | "kilosort4" |
-| mode | Select | "local" / "import" |
-| nblocks | IntInput | 15 |
-| Th_learned | FloatInput | 7.0 |
-| do_CAR | Checkbox | False |
-| batch_size | auto/int | "auto" |
-| n_jobs | IntInput | 1 |
-| import_path | TextInput | (mode=import 时显示) |
+按分组展示 `SortingConfig` 所有子配置。字段类型、默认值严格对齐 `core/config.py`。
 
-GPU 检测状态指示器：调用 `ResourceDetector().detect()` 显示 GPU 可用性。
+#### Sorter 选择
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| sorter name | Select | `"kilosort4"` | SI 支持的 sorter 名 | `SortingConfig.sorter.name` |
+| mode | Select | `"local"` | `["local", "import"]` | `local` 本地运行 sorter；`import` 导入外部结果 |
+| import_path | TextInput | `""` | 合法目录路径（**仅 mode=import 可见**） | `SortingConfig.import_cfg.paths`（UI 暂按单 probe 展示） |
+
+#### Sorter Parameters (`SorterParams`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| nblocks | IntInput | `15` | `>= 0` | KS4 drift 校正块数（0 = 禁用） |
+| Th_learned | FloatInput | `7.0` | `> 0` | 学习阈值 |
+| do_CAR | Checkbox | `False` | bool | KS4 内部是否做 CAR（已预处理时关闭） |
+| batch_size | TextInput | `"auto"` | `"auto"` 或正整数字符串 | 每 batch 样本数；auto 由 GPU VRAM 推算 |
+| n_jobs | IntInput | `1` | `>= 1` | 内部并行度（GPU 通常为 1） |
+| torch_device | Select | `"auto"` | `["auto", "cuda", "cpu"]` | PyTorch 设备；auto 自动选用 CUDA（不可用时回退 CPU） |
+
+#### Analyzer: Random Spikes (`RandomSpikesConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| max_spikes_per_unit | IntInput | `500` | `>= 1` | 每 unit 采样上限 |
+| method | Select | `"uniform"` | `["uniform", "all", "smart"]` | 采样方法 |
+
+#### Analyzer: Waveforms (`WaveformConfig`)
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| ms_before | FloatInput | `1.0` | `> 0` | spike 前窗 (ms) |
+| ms_after | FloatInput | `2.0` | `> 0` | spike 后窗 (ms) |
+
+#### Analyzer: Template / Similarity
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| template_operators | MultiChoice | `["average", "std"]` | `["average", "std", "median"]` | 模板计算算子（可多选） |
+| unit_locations_method | Select | `"monopolar_triangulation"` | `["monopolar_triangulation", "center_of_mass", "grid_convolution"]` | unit 空间定位方法 |
+| template_similarity_method | Select | `"cosine_similarity"` | `["cosine_similarity", "l1", "l2"]` | 模板相似度度量 |
+
+GPU 检测状态指示器：调用 `ResourceDetector().detect()` 显示 GPU 可用性（CUDA 设备名 / VRAM / 不可用提示），辅助用户判断 `torch_device="auto"` 的实际回退行为及 `batch_size="auto"` 的推算依据。
 
 ### 3.7 stage_selector.py — Stage 选择器
 
