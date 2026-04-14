@@ -1182,7 +1182,6 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     "sync.photodiode_channel_index": "photodiode_channel_input",
     "sync.monitor_delay_ms": "monitor_delay_input",
     "sync.stim_onset_code": "stim_onset_code_input",
-    "sync.imec_sync_code": "imec_sync_code_input",
     "sync.generate_plots": "generate_plots_checkbox",
     "sync.gap_threshold_ms": "gap_threshold_input",
     "sync.trial_start_bit": "trial_start_bit_input",

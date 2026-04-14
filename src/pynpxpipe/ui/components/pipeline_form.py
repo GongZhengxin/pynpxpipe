@@ -166,7 +166,7 @@ class PipelineForm:
             value=_sync.imec_sync_bit,
             start=0,
             end=7,
-            description="Digital bit index for IMEC sync pulses on the IMEC stream. Check SpikeGLX configuration.",
+            description="IMEC AP digital channel bit index for IMEC sync pulses (Neuropixels hardware standard: bit 6). This is on the IMEC stream itself, NOT the NIDQ — NIDQ Sync Bit is a separate hardware line.",
         )
         self.nidq_sync_bit_input = pn.widgets.IntInput(
             name="NIDQ Sync Bit",
@@ -186,13 +186,6 @@ class PipelineForm:
             start=0,
             end=255,
             description="Event code value that marks stimulus onset in the BHV2 file. Must match MonkeyLogic task configuration.",
-        )
-        self.imec_sync_code_input = pn.widgets.IntInput(
-            name="IMEC Sync Code",
-            value=_sync.imec_sync_code,
-            start=0,
-            end=255,
-            description="Event code on NIDQ digital lines that marks IMEC sync pulses. Used for clock alignment.",
         )
         self.max_time_error_input = pn.widgets.FloatInput(
             name="Max Time Error (ms)",
@@ -341,7 +334,6 @@ class PipelineForm:
             self.nidq_sync_bit_input,
             self.event_bits_input,
             self.stim_onset_code_input,
-            self.imec_sync_code_input,
             self.max_time_error_input,
             self.trial_count_tolerance_input,
             self.gap_threshold_enable_checkbox,
@@ -436,7 +428,6 @@ class PipelineForm:
                 photodiode_channel_index=self.photodiode_channel_input.value,
                 monitor_delay_ms=self.monitor_delay_input.value,
                 stim_onset_code=self.stim_onset_code_input.value,
-                imec_sync_code=self.imec_sync_code_input.value,
                 generate_plots=self.generate_plots_checkbox.value,
                 gap_threshold_ms=(
                     self.gap_threshold_input.value
@@ -521,7 +512,6 @@ class PipelineForm:
                 self.gap_threshold_input,
                 self.event_bits_input,
                 self.stim_onset_code_input,
-                self.imec_sync_code_input,
                 self.trial_count_tolerance_input,
                 self.trial_start_bit_enable_checkbox,
                 self.trial_start_bit_input,

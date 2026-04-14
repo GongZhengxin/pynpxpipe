@@ -193,7 +193,6 @@ class ProgressBridge:
 | imec_sync_bit | IntInput | `6` | `0–7` | IMEC AP sync 通道的脉冲位（NP 硬件标准 bit 6） |
 | nidq_sync_bit | IntInput | `0` | `0–7` | NIDQ digital word 的 sync 脉冲位 |
 | max_time_error_ms | FloatInput | `17.0` | `> 0` | IMEC↔NIDQ 允许的最大对齐误差 (ms) |
-| imec_sync_code | IntInput | `64` | `> 0` | IMEC digital 通道上 sync marker 值 |
 | generate_plots | Checkbox | `True` | bool | 是否生成同步诊断 PNG 图 |
 
 **Event + Trial（事件码与 trial 匹配）**

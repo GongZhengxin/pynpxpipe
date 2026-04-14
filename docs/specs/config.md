@@ -147,7 +147,6 @@ class SyncConfig:
     photodiode_channel_index: int = 0                          # ≥ 0
     monitor_delay_ms: float = -5.0                             # 无约束，通常 -20 ~ 0
     stim_onset_code: int = 64                                  # 0–255
-    imec_sync_code: int = 64                                   # 0–255
     generate_plots: bool = True
     gap_threshold_ms: float | None = 1200.0                    # 丢脉冲检测阈值，None 禁用修复
     trial_start_bit: int | None = None                         # trial start 的 NIDQ bit；None 时自动检测
@@ -269,7 +268,6 @@ class SubjectConfig:
 | `sync.max_time_error_ms` | `> 0` | `max_time_error_ms: 0` |
 | `sync.trial_count_tolerance` | `≥ 0` | `trial_count_tolerance: -1` |
 | `sync.stim_onset_code` | `0 ≤ x ≤ 255` | `stim_onset_code: 300` |
-| `sync.imec_sync_code` | `0 ≤ x ≤ 255` | `imec_sync_code: 300` |
 | `sorter.params.nblocks` | `≥ 0` | `nblocks: -1` |
 | `sorter.params.Th_learned` | `> 0` | `Th_learned: 0` |
 | `sorter.params.batch_size` | 若非 "auto"，则 `isinstance(v, int) and v >= 1` | `batch_size: 0` |

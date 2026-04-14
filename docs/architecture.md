@@ -233,7 +233,6 @@ sync:
   photodiode_channel_index: 0
   monitor_delay_ms: -5
   stim_onset_code: 64
-  imec_sync_code: 64
   generate_plots: true
 ```
 
@@ -473,3 +472,5 @@ MATLAB 参考实现的 21 个处理步骤（详见 `docs/ground_truth/step4_full
 3. **#13 预处理顺序**：phase_shift 必须在 bandpass 之前。新架构已修正（ADR-002），旧代码需迁移。
 4. **#19 方向性过滤**：MATLAB 要求 `mean(response) > mean(baseline)`（排除抑制性响应）。Python 缺失此条件。
 5. **#9 trial_valid_idx 语义**：MATLAB 无效眼动偏移量=0；Python 为所有 onset 赋值图像编号，有效性由 `dataset_valid_idx` 控制。结果一致性需验证。
+
+

@@ -1,8 +1,10 @@
 curation:
-  amplitude_cutoff_max: 0.1
-  isi_violation_ratio_max: 0.1
-  presence_ratio_min: 0.9
-  snr_min: 0.5
+  amplitude_cutoff_max: 0.5
+  isi_violation_ratio_max: 2.0
+  presence_ratio_min: 0.5
+  snr_min: 0.3
+  good_isi_max: 0.1
+  good_snr_min: 3.0
 parallel:
   enabled: false
   max_workers: auto
@@ -33,11 +35,10 @@ sync:
   - 6
   - 7
   generate_plots: true
-  imec_sync_code: 64
   max_time_error_ms: 17.0
   monitor_delay_ms: -5.0
   photodiode_channel_index: 0
   stim_onset_code: 64
   nidq_sync_bit: 0
-  sync_bit: 6
+  imec_sync_bit: 6
   trial_count_tolerance: 2

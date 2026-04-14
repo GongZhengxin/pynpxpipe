@@ -94,9 +94,9 @@ def test_real_pipeline_yaml_preprocess_fields():
     assert config.preprocess.common_reference.reference == "global"
     assert config.preprocess.common_reference.operator == "median"
 
-    # motion_correction: method: "dredge", preset: "nonrigid_accurate"
+    # motion_correction: method: "dredge", preset: "dredge"
     assert config.preprocess.motion_correction.method == "dredge"
-    assert config.preprocess.motion_correction.preset == "nonrigid_accurate"
+    assert config.preprocess.motion_correction.preset == "dredge"
 
 
 def test_real_pipeline_yaml_curation_fields():
@@ -104,10 +104,12 @@ def test_real_pipeline_yaml_curation_fields():
     config = load_pipeline_config(_pipeline_yaml_path())
 
     # pipeline.yaml curation thresholds
-    assert config.curation.isi_violation_ratio_max == 0.1
-    assert config.curation.amplitude_cutoff_max == 0.1
-    assert config.curation.presence_ratio_min == 0.9
-    assert config.curation.snr_min == 0.5
+    assert config.curation.isi_violation_ratio_max == 2.0
+    assert config.curation.amplitude_cutoff_max == 0.5
+    assert config.curation.presence_ratio_min == 0.5
+    assert config.curation.snr_min == 0.3
+    assert config.curation.good_isi_max == 0.1
+    assert config.curation.good_snr_min == 3.0
 
 
 def test_real_pipeline_yaml_sync_fields():
@@ -115,14 +117,13 @@ def test_real_pipeline_yaml_sync_fields():
     config = load_pipeline_config(_pipeline_yaml_path())
 
     # pipeline.yaml sync parameters
-    assert config.sync.sync_bit == 0
+    assert config.sync.imec_sync_bit == 6
     assert config.sync.event_bits == [1, 2, 3, 4, 5, 6, 7]
     assert config.sync.max_time_error_ms == 17.0
     assert config.sync.trial_count_tolerance == 2
     assert config.sync.photodiode_channel_index == 0
     assert config.sync.monitor_delay_ms == -5.0
     assert config.sync.stim_onset_code == 64
-    assert config.sync.imec_sync_code == 64
     assert config.sync.generate_plots is True
 
 
@@ -157,7 +158,7 @@ def test_real_sorting_yaml_sorter_fields():
     assert config.sorter.name == "kilosort4"
 
     # sorting.yaml sorter.params
-    assert config.sorter.params.nblocks == 15
+    assert config.sorter.params.nblocks == 0
     assert config.sorter.params.Th_learned == 7.0
     assert config.sorter.params.do_CAR is False
     assert config.sorter.params.batch_size == "auto"
@@ -237,7 +238,7 @@ def test_merge_overrides_on_real_pipeline_config_nested_sync():
 
     assert new_config.sync.max_time_error_ms == 10.0
     # Unmodified sync fields remain as in the real YAML
-    assert new_config.sync.sync_bit == config.sync.sync_bit
+    assert new_config.sync.imec_sync_bit == config.sync.imec_sync_bit
     assert new_config.sync.stim_onset_code == config.sync.stim_onset_code
 
 

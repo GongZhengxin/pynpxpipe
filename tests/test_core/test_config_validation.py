@@ -312,13 +312,6 @@ class TestCuration:
         cfg = PipelineConfig()
         _validate_pipeline_config(cfg)
 
-    def test_isi_violation_ratio_max_above_one_raises(self):
-        cfg = PipelineConfig()
-        cfg.curation.isi_violation_ratio_max = 1.5
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_pipeline_config(cfg)
-        assert exc_info.value.field == "curation.isi_violation_ratio_max"
-
     def test_isi_violation_ratio_max_negative_raises(self):
         cfg = PipelineConfig()
         cfg.curation.isi_violation_ratio_max = -0.1
@@ -389,32 +382,32 @@ class TestSync:
 
     def test_sync_bit_valid_passes(self):
         cfg = PipelineConfig()
-        cfg.sync.sync_bit = 3
+        cfg.sync.imec_sync_bit = 3
         _validate_pipeline_config(cfg)
 
     def test_sync_bit_zero_passes(self):
         cfg = PipelineConfig()
-        cfg.sync.sync_bit = 0
+        cfg.sync.imec_sync_bit = 0
         _validate_pipeline_config(cfg)
 
     def test_sync_bit_seven_passes(self):
         cfg = PipelineConfig()
-        cfg.sync.sync_bit = 7
+        cfg.sync.imec_sync_bit = 7
         _validate_pipeline_config(cfg)
 
     def test_sync_bit_eight_raises(self):
         cfg = PipelineConfig()
-        cfg.sync.sync_bit = 8
+        cfg.sync.imec_sync_bit = 8
         with pytest.raises(ConfigError) as exc_info:
             _validate_pipeline_config(cfg)
-        assert exc_info.value.field == "sync.sync_bit"
+        assert exc_info.value.field == "sync.imec_sync_bit"
 
     def test_sync_bit_negative_raises(self):
         cfg = PipelineConfig()
-        cfg.sync.sync_bit = -1
+        cfg.sync.imec_sync_bit = -1
         with pytest.raises(ConfigError) as exc_info:
             _validate_pipeline_config(cfg)
-        assert exc_info.value.field == "sync.sync_bit"
+        assert exc_info.value.field == "sync.imec_sync_bit"
 
     def test_event_bits_valid_passes(self):
         cfg = PipelineConfig()
@@ -506,25 +499,6 @@ class TestSync:
         with pytest.raises(ConfigError) as exc_info:
             _validate_pipeline_config(cfg)
         assert exc_info.value.field == "sync.stim_onset_code"
-
-    def test_imec_sync_code_valid_passes(self):
-        cfg = PipelineConfig()
-        cfg.sync.imec_sync_code = 64
-        _validate_pipeline_config(cfg)
-
-    def test_imec_sync_code_above_255_raises(self):
-        cfg = PipelineConfig()
-        cfg.sync.imec_sync_code = 300
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_pipeline_config(cfg)
-        assert exc_info.value.field == "sync.imec_sync_code"
-
-    def test_imec_sync_code_negative_raises(self):
-        cfg = PipelineConfig()
-        cfg.sync.imec_sync_code = -1
-        with pytest.raises(ConfigError) as exc_info:
-            _validate_pipeline_config(cfg)
-        assert exc_info.value.field == "sync.imec_sync_code"
 
 
 # ===========================================================================

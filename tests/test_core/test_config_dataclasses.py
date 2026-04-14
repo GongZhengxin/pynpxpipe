@@ -321,11 +321,11 @@ def test_pipeline_config_has_exactly_7_fields():
     assert len(fields) == 7
 
 
-def test_sync_config_has_exactly_15_fields():
+def test_sync_config_has_exactly_14_fields():
     import dataclasses
 
     fields = dataclasses.fields(SyncConfig)
-    assert len(fields) == 15
+    assert len(fields) == 14
 
 
 def test_postprocess_config_has_exactly_4_fields():
@@ -382,10 +382,6 @@ def test_bandpass_config_freq_max_default():
 
 def test_sync_config_stim_onset_code_default():
     assert SyncConfig().stim_onset_code == 64
-
-
-def test_sync_config_imec_sync_code_default():
-    assert SyncConfig().imec_sync_code == 64
 
 
 def test_sorter_params_batch_size_default_is_auto():

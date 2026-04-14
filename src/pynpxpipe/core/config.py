@@ -169,7 +169,6 @@ class SyncConfig:
         photodiode_channel_index: NIDQ analog channel index for the photodiode signal.
         monitor_delay_ms: Monitor system delay correction in ms (60 Hz ≈ -5).
         stim_onset_code: Event code value representing stimulus onset on NIDQ.
-        imec_sync_code: Sync marker code value on IMEC digital channel.
         generate_plots: Whether to generate sync diagnostic plots.
     """
 
@@ -181,7 +180,6 @@ class SyncConfig:
     photodiode_channel_index: int = 0
     monitor_delay_ms: float = -5.0
     stim_onset_code: int = 64
-    imec_sync_code: int = 64
     generate_plots: bool = True
     gap_threshold_ms: float | None = 1200.0
     trial_start_bit: int | None = None
@@ -810,9 +808,6 @@ def _validate_pipeline_config(config: PipelineConfig) -> None:
     # sync.stim_onset_code
     if not (0 <= s.stim_onset_code <= 255):
         raise ConfigError("sync.stim_onset_code", s.stim_onset_code, "must satisfy 0 <= x <= 255")
-    # sync.imec_sync_code
-    if not (0 <= s.imec_sync_code <= 255):
-        raise ConfigError("sync.imec_sync_code", s.imec_sync_code, "must satisfy 0 <= x <= 255")
 
 
 def _validate_sorting_config(config: SortingConfig) -> None:
