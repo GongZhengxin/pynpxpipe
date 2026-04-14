@@ -1144,3 +1144,201 @@ def test_session_loader_dir_input_is_browsable_input():
     state = AppState()
     loader = SessionLoader(state)
     assert isinstance(loader.dir_input, BrowsableInput)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H. Coverage harness — config<->form drift detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Each leaf field in PipelineConfig must map to a widget attribute on
+# PipelineForm. When a new field is added to core/config.py without exposing
+# it in the UI, the coverage test below FAILS with a clear message.
+PIPELINE_FORM_FIELD_TO_WIDGET = {
+    "resources.n_jobs": "n_jobs_input",
+    "resources.chunk_duration": "chunk_duration_input",
+    "resources.max_memory": "max_memory_input",
+    "parallel.enabled": "parallel_enabled_checkbox",
+    "parallel.max_workers": "parallel_max_workers_input",
+    "preprocess.bandpass.freq_min": "freq_min_input",
+    "preprocess.bandpass.freq_max": "freq_max_input",
+    "preprocess.bad_channel_detection.method": "bad_channel_method_input",
+    "preprocess.bad_channel_detection.dead_channel_threshold": "dead_channel_threshold_input",
+    "preprocess.common_reference.reference": "cmr_reference_select",
+    "preprocess.common_reference.operator": "cmr_operator_select",
+    "preprocess.motion_correction.method": "motion_enabled_checkbox",
+    "preprocess.motion_correction.preset": "motion_preset_select",
+    "curation.isi_violation_ratio_max": "isi_max_input",
+    "curation.amplitude_cutoff_max": "amp_cutoff_input",
+    "curation.presence_ratio_min": "presence_min_input",
+    "curation.snr_min": "snr_min_input",
+    "curation.good_isi_max": "good_isi_max_input",
+    "curation.good_snr_min": "good_snr_min_input",
+    "curation.use_bombcell": "use_bombcell_checkbox",
+    "sync.imec_sync_bit": "sync_bit_input",
+    "sync.nidq_sync_bit": "nidq_sync_bit_input",
+    "sync.event_bits": "event_bits_input",
+    "sync.max_time_error_ms": "max_time_error_input",
+    "sync.trial_count_tolerance": "trial_count_tolerance_input",
+    "sync.photodiode_channel_index": "photodiode_channel_input",
+    "sync.monitor_delay_ms": "monitor_delay_input",
+    "sync.stim_onset_code": "stim_onset_code_input",
+    "sync.imec_sync_code": "imec_sync_code_input",
+    "sync.generate_plots": "generate_plots_checkbox",
+    "sync.gap_threshold_ms": "gap_threshold_input",
+    "sync.trial_start_bit": "trial_start_bit_input",
+    "sync.pd_window_pre_ms": "pd_window_pre_input",
+    "sync.pd_window_post_ms": "pd_window_post_input",
+    "sync.pd_min_signal_variance": "pd_min_variance_input",
+    "postprocess.slay_pre_s": "slay_pre_input",
+    "postprocess.slay_post_s": "slay_post_input",
+    "postprocess.pre_onset_ms": "pre_onset_ms_input",
+    "postprocess.eye_validation.enabled": "eye_enabled_checkbox",
+    "postprocess.eye_validation.eye_threshold": "eye_threshold_input",
+    "merge.enabled": "merge_enabled_checkbox",
+}
+
+
+SORTING_FORM_FIELD_TO_WIDGET = {
+    "mode": "mode_select",
+    "sorter.name": "sorter_select",
+    "sorter.params.nblocks": "nblocks_input",
+    "sorter.params.Th_learned": "th_learned_input",
+    "sorter.params.do_CAR": "do_car_checkbox",
+    "sorter.params.batch_size": "batch_size_input",
+    "sorter.params.n_jobs": "n_jobs_input",
+    "sorter.params.torch_device": "torch_device_select",
+    # import_cfg.format is derived from sorter_select.value (no dedicated widget)
+    "import_cfg.format": "sorter_select",
+    "import_cfg.paths": "import_path_input",
+    "analyzer.random_spikes.max_spikes_per_unit": "analyzer_max_spikes_input",
+    "analyzer.random_spikes.method": "analyzer_random_method_select",
+    "analyzer.waveforms.ms_before": "analyzer_ms_before_input",
+    "analyzer.waveforms.ms_after": "analyzer_ms_after_input",
+    "analyzer.template_operators": "analyzer_template_operators_input",
+    "analyzer.unit_locations_method": "analyzer_unit_locations_select",
+    "analyzer.template_similarity_method": "analyzer_template_similarity_select",
+}
+
+
+def _enumerate_leaf_fields(dc_cls, prefix=""):
+    import dataclasses
+
+    leaves = []
+    for fld in dataclasses.fields(dc_cls):
+        full = f"{prefix}{fld.name}"
+        if dataclasses.is_dataclass(fld.type) if isinstance(fld.type, type) else False:
+            leaves.extend(_enumerate_leaf_fields(fld.type, prefix=f"{full}."))
+            continue
+        # fld.type may be a string due to from __future__ import annotations.
+        # Resolve by inspecting the default factory's class.
+        try:
+            default = (
+                fld.default_factory()  # type: ignore[misc]
+                if fld.default_factory is not dataclasses.MISSING
+                else fld.default
+            )
+        except Exception:
+            default = None
+        if dataclasses.is_dataclass(default):
+            leaves.extend(_enumerate_leaf_fields(type(default), prefix=f"{full}."))
+        else:
+            leaves.append(full)
+    return leaves
+
+
+def test_pipeline_form_covers_all_pipeline_config_fields():
+    """Every leaf field in PipelineConfig must have a matching widget on PipelineForm."""
+    from pynpxpipe.core.config import PipelineConfig
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+
+    leaves = _enumerate_leaf_fields(PipelineConfig)
+    missing_in_map = [f for f in leaves if f not in PIPELINE_FORM_FIELD_TO_WIDGET]
+    assert not missing_in_map, (
+        f"PipelineConfig has fields without an entry in PIPELINE_FORM_FIELD_TO_WIDGET: "
+        f"{missing_in_map}. Add the field to the harness map AND expose a widget."
+    )
+    extra_in_map = [
+        f for f in PIPELINE_FORM_FIELD_TO_WIDGET if f not in leaves
+    ]
+    assert not extra_in_map, (
+        f"PIPELINE_FORM_FIELD_TO_WIDGET references non-existent PipelineConfig fields: "
+        f"{extra_in_map}"
+    )
+    missing_widgets = [
+        (f, w)
+        for f, w in PIPELINE_FORM_FIELD_TO_WIDGET.items()
+        if not hasattr(form, w)
+    ]
+    assert not missing_widgets, (
+        f"PipelineForm is missing widget attributes for fields: {missing_widgets}"
+    )
+
+
+def test_sorting_form_covers_all_sorting_config_fields():
+    """Every leaf field in SortingConfig must have a matching widget on SortingForm."""
+    from pynpxpipe.core.config import SortingConfig
+    from pynpxpipe.ui.components.sorting_form import SortingForm
+
+    state = AppState()
+    form = SortingForm(state)
+
+    leaves = _enumerate_leaf_fields(SortingConfig)
+    missing_in_map = [f for f in leaves if f not in SORTING_FORM_FIELD_TO_WIDGET]
+    assert not missing_in_map, (
+        f"SortingConfig has fields without an entry in SORTING_FORM_FIELD_TO_WIDGET: "
+        f"{missing_in_map}"
+    )
+    extra_in_map = [
+        f for f in SORTING_FORM_FIELD_TO_WIDGET if f not in leaves
+    ]
+    assert not extra_in_map, (
+        f"SORTING_FORM_FIELD_TO_WIDGET references non-existent SortingConfig fields: "
+        f"{extra_in_map}"
+    )
+    missing_widgets = [
+        (f, w)
+        for f, w in SORTING_FORM_FIELD_TO_WIDGET.items()
+        if not hasattr(form, w)
+    ]
+    assert not missing_widgets, (
+        f"SortingForm is missing widget attributes for fields: {missing_widgets}"
+    )
+
+
+def test_pipeline_form_default_roundtrip():
+    """Constructing PipelineForm with no edits must produce default PipelineConfig."""
+    import dataclasses
+
+    from pynpxpipe.core.config import PipelineConfig
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    PipelineForm(state)
+    assert state.pipeline_config is not None
+    actual = dataclasses.asdict(state.pipeline_config)
+    expected = dataclasses.asdict(PipelineConfig())
+    assert actual == expected, (
+        f"PipelineForm default state drift: diff fields: "
+        f"{[k for k in expected if expected[k] != actual.get(k)]}"
+    )
+
+
+def test_sorting_form_default_roundtrip():
+    """Constructing SortingForm with no edits must produce default SortingConfig."""
+    import dataclasses
+
+    from pynpxpipe.core.config import SortingConfig
+    from pynpxpipe.ui.components.sorting_form import SortingForm
+
+    state = AppState()
+    SortingForm(state)
+    assert state.sorting_config is not None
+    actual = dataclasses.asdict(state.sorting_config)
+    expected = dataclasses.asdict(SortingConfig())
+    assert actual == expected, (
+        f"SortingForm default state drift: diff fields: "
+        f"{[k for k in expected if expected[k] != actual.get(k)]}"
+    )
