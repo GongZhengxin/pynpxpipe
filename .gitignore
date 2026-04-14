@@ -1,12 +1,51 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg
 *.egg-info/
 dist/
 build/
 .eggs/
-*.mat
+
+# Virtualenv
+.venv/
+venv/
+
+# Test / lint / type cache
 .pytest_cache/
 .ruff_cache/
-*.egg
-.venv/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Tool working dirs
+.claude/
+.superpowers/
+.prompt4claude/
+.graphify_cached.json
+graphify-out/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Runtime / data outputs
+kilosort4_output/
+logs/
+*.nwb
+*.zarr/
+*.mat
+
+# Private / internal dirs (not distributed)
+legacy_reference/
+spec_manifests/
+tests/fixtures/bhv2_ground_truth/
+docs/audit/
+docs/bug_spec/
+docs/temp/
+docs/superpowers/
+
+# Private subject configs — keep only the template
+monkeys/*.yaml
+!monkeys/MonkeyTemplate.yaml

@@ -1,7 +1,0 @@
-Subject:
-  subject_id: "MaoDan" # required by DANDI
-  description: "good monkey"
-  species: "Macaca mulatta" # required by DANDI
-  sex: "M" # required by DANDI
-  age: "P4Y" # required by DANDI
-  weight: "12.8kg"

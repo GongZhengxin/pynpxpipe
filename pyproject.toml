@@ -3,10 +3,33 @@ name = "pynpxpipe"
 version = "0.1.0"
 description = "Neural electrophysiology preprocessing pipeline for SpikeGLX multi-probe recordings"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "GongZhengxin", email = "1045418215@qq.com" }
 ]
 requires-python = ">=3.11,<3.13"
+keywords = [
+    "neuroscience",
+    "electrophysiology",
+    "neuropixels",
+    "spikeglx",
+    "kilosort",
+    "nwb",
+    "dandi",
+    "spikeinterface",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 dependencies = [
     # Core scientific computing
     "numpy>=1.24.0",
@@ -61,6 +84,11 @@ dev = [
 [project.scripts]
 pynpxpipe = "pynpxpipe.cli.main:cli"
 pynpxpipe-ui = "pynpxpipe.ui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/GongZhengxin/pynpxpipe"
+Repository = "https://github.com/GongZhengxin/pynpxpipe"
+Issues = "https://github.com/GongZhengxin/pynpxpipe/issues"
 
 [build-system]
 requires = ["uv_build>=0.10.11,<0.11.0"]

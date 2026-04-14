@@ -1,0 +1,7 @@
+Subject:
+  subject_id: "[xx]"          # required by DANDI
+  description: "good monkey"      # free text
+  species: "Macaca mulatta"        # required by DANDI
+  sex: "M"                         # required by DANDI
+  age: "P[x]Y"                       # ISO 8601 duration, required by DANDI
+  weight: "[xx]kg"                  # body weight with unit

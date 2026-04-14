@@ -1,7 +1,0 @@
-Subject:
-  subject_id: "JianJian"          # required by DANDI
-  description: "good monkey"      # free text
-  species: "Macaca mulatta"        # required by DANDI
-  sex: "M"                         # required by DANDI
-  age: "P4Y"                       # ISO 8601 duration, required by DANDI
-  weight: "6.4kg"                  # body weight with unit
