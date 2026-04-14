@@ -1260,17 +1260,13 @@ def test_pipeline_form_covers_all_pipeline_config_fields():
         f"PipelineConfig has fields without an entry in PIPELINE_FORM_FIELD_TO_WIDGET: "
         f"{missing_in_map}. Add the field to the harness map AND expose a widget."
     )
-    extra_in_map = [
-        f for f in PIPELINE_FORM_FIELD_TO_WIDGET if f not in leaves
-    ]
+    extra_in_map = [f for f in PIPELINE_FORM_FIELD_TO_WIDGET if f not in leaves]
     assert not extra_in_map, (
         f"PIPELINE_FORM_FIELD_TO_WIDGET references non-existent PipelineConfig fields: "
         f"{extra_in_map}"
     )
     missing_widgets = [
-        (f, w)
-        for f, w in PIPELINE_FORM_FIELD_TO_WIDGET.items()
-        if not hasattr(form, w)
+        (f, w) for f, w in PIPELINE_FORM_FIELD_TO_WIDGET.items() if not hasattr(form, w)
     ]
     assert not missing_widgets, (
         f"PipelineForm is missing widget attributes for fields: {missing_widgets}"
@@ -1291,17 +1287,12 @@ def test_sorting_form_covers_all_sorting_config_fields():
         f"SortingConfig has fields without an entry in SORTING_FORM_FIELD_TO_WIDGET: "
         f"{missing_in_map}"
     )
-    extra_in_map = [
-        f for f in SORTING_FORM_FIELD_TO_WIDGET if f not in leaves
-    ]
+    extra_in_map = [f for f in SORTING_FORM_FIELD_TO_WIDGET if f not in leaves]
     assert not extra_in_map, (
-        f"SORTING_FORM_FIELD_TO_WIDGET references non-existent SortingConfig fields: "
-        f"{extra_in_map}"
+        f"SORTING_FORM_FIELD_TO_WIDGET references non-existent SortingConfig fields: {extra_in_map}"
     )
     missing_widgets = [
-        (f, w)
-        for f, w in SORTING_FORM_FIELD_TO_WIDGET.items()
-        if not hasattr(form, w)
+        (f, w) for f, w in SORTING_FORM_FIELD_TO_WIDGET.items() if not hasattr(form, w)
     ]
     assert not missing_widgets, (
         f"SortingForm is missing widget attributes for fields: {missing_widgets}"
