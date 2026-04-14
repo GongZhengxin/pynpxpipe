@@ -62,7 +62,7 @@ def test_build_common_reference_empty_returns_defaults():
 def test_build_motion_correction_empty_returns_defaults():
     cfg = _build_motion_correction({})
     assert cfg.method == "dredge"
-    assert cfg.preset == "nonrigid_accurate"
+    assert cfg.preset == "dredge"
 
 
 def test_build_preprocess_empty_returns_defaults():
@@ -78,15 +78,17 @@ def test_build_preprocess_empty_returns_defaults():
 
 def test_build_curation_empty_returns_defaults():
     cfg = _build_curation({})
-    assert cfg.isi_violation_ratio_max == 0.1
-    assert cfg.amplitude_cutoff_max == 0.1
-    assert cfg.presence_ratio_min == 0.9
-    assert cfg.snr_min == 0.5
+    assert cfg.isi_violation_ratio_max == 2.0
+    assert cfg.amplitude_cutoff_max == 0.5
+    assert cfg.presence_ratio_min == 0.5
+    assert cfg.snr_min == 0.3
+    assert cfg.good_isi_max == 0.1
+    assert cfg.good_snr_min == 3.0
 
 
 def test_build_sync_empty_returns_defaults():
     cfg = _build_sync({})
-    assert cfg.sync_bit == 0
+    assert cfg.imec_sync_bit == 6
     assert cfg.event_bits == [1, 2, 3, 4, 5, 6, 7]
     assert cfg.max_time_error_ms == 17.0
     assert cfg.generate_plots is True
@@ -96,7 +98,7 @@ def test_build_sorter_empty_returns_defaults():
     cfg = _build_sorter({})
     assert cfg.name == "kilosort4"
     assert cfg.params.batch_size == "auto"
-    assert cfg.params.nblocks == 15
+    assert cfg.params.nblocks == 0
 
 
 def test_build_import_cfg_empty_returns_defaults():
@@ -179,7 +181,7 @@ def test_build_curation_thresholds_set():
     cfg = _build_curation({"snr_min": 2.0, "presence_ratio_min": 0.8})
     assert cfg.snr_min == 2.0
     assert cfg.presence_ratio_min == 0.8
-    assert cfg.isi_violation_ratio_max == 0.1  # unchanged
+    assert cfg.isi_violation_ratio_max == 2.0  # unchanged default
 
 
 def test_build_sync_event_bits_set():
@@ -188,8 +190,8 @@ def test_build_sync_event_bits_set():
 
 
 def test_build_sync_sync_bit_set():
-    cfg = _build_sync({"sync_bit": 7})
-    assert cfg.sync_bit == 7
+    cfg = _build_sync({"imec_sync_bit": 7})
+    assert cfg.imec_sync_bit == 7
     assert cfg.event_bits == [1, 2, 3, 4, 5, 6, 7]  # unchanged
 
 
@@ -214,7 +216,7 @@ def test_build_sorter_params_nested():
 def test_build_sorter_params_do_car():
     cfg = _build_sorter({"params": {"do_CAR": True}})
     assert cfg.params.do_CAR is True
-    assert cfg.params.nblocks == 15  # unchanged
+    assert cfg.params.nblocks == 0  # unchanged
 
 
 def test_build_import_cfg_format_set():
@@ -322,8 +324,8 @@ def test_build_curation_unknown_key_ignored():
 
 
 def test_build_sync_unknown_key_ignored():
-    cfg = _build_sync({"sync_bit": 1, "not_a_real_field": "oops"})
-    assert cfg.sync_bit == 1
+    cfg = _build_sync({"imec_sync_bit": 1, "not_a_real_field": "oops"})
+    assert cfg.imec_sync_bit == 1
 
 
 def test_build_sorter_unknown_key_ignored():

@@ -129,14 +129,18 @@ class PreprocessConfig:
 
 @dataclass
 class CurationConfig:
-    isi_violation_ratio_max: float = 0.1   # 0 ≤ x ≤ 1
-    amplitude_cutoff_max: float = 0.1      # 0 ≤ x ≤ 1
-    presence_ratio_min: float = 0.9        # 0 ≤ x ≤ 1
-    snr_min: float = 0.5                   # ≥ 0
+    isi_violation_ratio_max: float = 2.0   # NOISE 阈值：ISI violation ratio 上限
+    amplitude_cutoff_max: float = 0.5      # NOISE 阈值：amplitude cutoff 上限
+    presence_ratio_min: float = 0.5        # NOISE 阈值：presence ratio 下限
+    snr_min: float = 0.3                   # NOISE 阈值：SNR 下限
+    good_isi_max: float = 0.1             # SUA 分类：ISI violation ratio 上限
+    good_snr_min: float = 3.0             # SUA 分类：SNR 下限
+    use_bombcell: bool = True             # True: bombcell_label_units() 四分类；False: 手动阈值 fallback
 
 @dataclass
 class SyncConfig:
-    sync_bit: int = 0                                          # 0–7
+    imec_sync_bit: int = 6                                     # IMEC AP 数字通道 sync bit（0–7）
+    nidq_sync_bit: int = 0                                     # NIDQ 数字通道 sync bit（0–7）
     event_bits: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7])
     max_time_error_ms: float = 17.0                            # > 0
     trial_count_tolerance: int = 2                             # ≥ 0
@@ -158,9 +162,14 @@ class EyeValidationConfig:
 
 @dataclass
 class PostprocessConfig:
-    slay_pre_s: float = 0.05                                   # SLAY 预刺激窗口（秒）
-    slay_post_s: float = 0.30                                  # SLAY 刺激后窗口（秒）
+    slay_pre_s: float = 0.05                                   # SLAY 预刺激窗口（秒），fallback 默认值
+    slay_post_s: float = 0.30                                  # SLAY 刺激后窗口（秒），fallback 默认值
+    pre_onset_ms: float = 50.0                                 # 动态 SLAY 窗口的 pre-stimulus（ms）
     eye_validation: EyeValidationConfig = field(default_factory=EyeValidationConfig)
+
+@dataclass
+class MergeConfig:
+    enabled: bool = False                                      # auto-merge 默认关闭
 
 @dataclass
 class PipelineConfig:
@@ -170,6 +179,7 @@ class PipelineConfig:
     curation: CurationConfig = field(default_factory=CurationConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    merge: MergeConfig = field(default_factory=MergeConfig)
 ```
 
 ### 5.3 Sorting 配置层级
@@ -177,7 +187,7 @@ class PipelineConfig:
 ```python
 @dataclass
 class SorterParams:
-    nblocks: int = 15           # ≥ 0
+    nblocks: int = 0            # ≥ 0；默认 0（与 DREDge 互斥，精度优先）
     Th_learned: float = 7.0     # > 0
     do_CAR: bool = False
     batch_size: int | str = "auto"  # int ≥ 1 或 "auto"

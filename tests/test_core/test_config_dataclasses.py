@@ -314,25 +314,25 @@ def test_preprocess_config_has_exactly_4_fields():
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_config_has_exactly_6_fields():
+def test_pipeline_config_has_exactly_7_fields():
     import dataclasses
 
     fields = dataclasses.fields(PipelineConfig)
-    assert len(fields) == 6
+    assert len(fields) == 7
 
 
-def test_sync_config_has_exactly_14_fields():
+def test_sync_config_has_exactly_15_fields():
     import dataclasses
 
     fields = dataclasses.fields(SyncConfig)
-    assert len(fields) == 14
+    assert len(fields) == 15
 
 
-def test_postprocess_config_has_exactly_3_fields():
+def test_postprocess_config_has_exactly_4_fields():
     import dataclasses
 
     fields = dataclasses.fields(PostprocessConfig)
-    assert len(fields) == 3
+    assert len(fields) == 4
 
 
 def test_analyzer_config_has_random_spikes_field():
@@ -472,11 +472,11 @@ def test_subject_config_subject_id_default():
 
 
 def test_curation_config_isi_violation_ratio_max_default():
-    assert CurationConfig().isi_violation_ratio_max == 0.1
+    assert CurationConfig().isi_violation_ratio_max == 2.0
 
 
 def test_sorter_params_nblocks_default():
-    assert SorterParams().nblocks == 15
+    assert SorterParams().nblocks == 0
 
 
 def test_sorter_params_do_car_default():

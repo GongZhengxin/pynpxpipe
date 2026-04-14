@@ -95,12 +95,15 @@ class MotionCorrectionConfig:
     """Motion correction (drift correction) parameters.
 
     Attributes:
-        method: Method to use: "dredge", "kilosort", or None to skip.
-        preset: Method-specific preset string.
+        method: "dredge" to enable or None to skip. The actual algorithm is
+            determined by ``preset``, not ``method`` — method is only an
+            enable/disable toggle.
+        preset: SpikeInterface motion correction preset name passed to
+            ``spp.correct_motion(preset=...)``. See SI docs for full list.
     """
 
     method: str | None = "dredge"
-    preset: str = "nonrigid_accurate"
+    preset: str = "dredge"
 
 
 @dataclass
@@ -124,17 +127,31 @@ class PreprocessConfig:
 class CurationConfig:
     """Quality metric thresholds for the curate stage.
 
+    Units are classified into SUA/MUA/NON-SOMA/NOISE using Bombcell
+    (``use_bombcell=True``) or manual thresholds (``use_bombcell=False``).
+    Only NOISE units are discarded; SUA, MUA, and NON-SOMA are kept.
+
     Attributes:
-        isi_violation_ratio_max: ISI violation ratio upper bound (0–1).
-        amplitude_cutoff_max: Amplitude cutoff upper bound (0–1).
-        presence_ratio_min: Presence ratio lower bound (0–1).
-        snr_min: Signal-to-noise ratio lower bound.
+        isi_violation_ratio_max: ISI violation ratio upper bound for NOISE filter.
+            Units above this are discarded. Default 2.0 keeps ~98% of units.
+        amplitude_cutoff_max: Amplitude cutoff upper bound for NOISE filter.
+        presence_ratio_min: Presence ratio lower bound for NOISE filter.
+        snr_min: Signal-to-noise ratio lower bound for NOISE filter.
+        good_isi_max: ISI violation ratio upper bound for SUA classification
+            (manual fallback only).
+        good_snr_min: SNR lower bound for SUA classification (manual fallback only).
+        use_bombcell: If True, use SI ``bombcell_label_units()`` for four-class
+            classification (SUA/MUA/NON-SOMA/NOISE). If False, use manual
+            threshold-based classification.
     """
 
-    isi_violation_ratio_max: float = 0.1
-    amplitude_cutoff_max: float = 0.1
-    presence_ratio_min: float = 0.9
-    snr_min: float = 0.5
+    isi_violation_ratio_max: float = 2.0
+    amplitude_cutoff_max: float = 0.5
+    presence_ratio_min: float = 0.5
+    snr_min: float = 0.3
+    good_isi_max: float = 0.1
+    good_snr_min: float = 3.0
+    use_bombcell: bool = True
 
 
 @dataclass
@@ -142,7 +159,10 @@ class SyncConfig:
     """Time synchronization parameters for the synchronize stage.
 
     Attributes:
-        sync_bit: Bit position of the SpikeGLX sync pulse in digital channels.
+        imec_sync_bit: Bit position of the sync pulse in the IMEC AP sync channel.
+            Neuropixels hardware standard is bit 6.
+        nidq_sync_bit: Bit position of the sync pulse in the NIDQ digital word.
+            Depends on wiring; typically bit 0.
         event_bits: List of bit positions used by MonkeyLogic for event codes.
         max_time_error_ms: Maximum allowed IMEC↔NIDQ alignment error in ms.
         trial_count_tolerance: Maximum trial count mismatch for auto-repair.
@@ -153,7 +173,8 @@ class SyncConfig:
         generate_plots: Whether to generate sync diagnostic plots.
     """
 
-    sync_bit: int = 0
+    imec_sync_bit: int = 6
+    nidq_sync_bit: int = 0
     event_bits: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7])
     max_time_error_ms: float = 17.0
     trial_count_tolerance: int = 2
@@ -183,17 +204,35 @@ class EyeValidationConfig:
 
 
 @dataclass
+class MergeConfig:
+    """Optional auto-merge stage parameters.
+
+    Attributes:
+        enabled: Whether to run auto_merge(). Default False — merge is
+            irreversible, so the user must opt in explicitly after reviewing
+            sorting quality.
+    """
+
+    enabled: bool = False
+
+
+@dataclass
 class PostprocessConfig:
     """Postprocess stage parameters.
 
     Attributes:
-        slay_pre_s: Pre-stimulus window for SLAY merging (seconds).
-        slay_post_s: Post-stimulus window for SLAY merging (seconds).
+        slay_pre_s: Pre-stimulus window for SLAY score (seconds). Fallback
+            default used when behavior_events lacks onset_time_ms/offset_time_ms.
+        slay_post_s: Post-stimulus window for SLAY score (seconds). Fallback
+            default used when behavior_events lacks onset_time_ms/offset_time_ms.
+        pre_onset_ms: Pre-stimulus window in ms for dynamic SLAY window
+            calculation (``pre_s = pre_onset_ms / 1000``).
         eye_validation: Eye movement validation parameters.
     """
 
     slay_pre_s: float = 0.05
     slay_post_s: float = 0.30
+    pre_onset_ms: float = 50.0
     eye_validation: EyeValidationConfig = field(default_factory=EyeValidationConfig)
 
 
@@ -208,6 +247,7 @@ class PipelineConfig:
         curation: Curation thresholds.
         sync: Synchronization parameters.
         postprocess: Postprocess stage parameters.
+        merge: Optional auto-merge stage parameters.
     """
 
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
@@ -216,6 +256,7 @@ class PipelineConfig:
     curation: CurationConfig = field(default_factory=CurationConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    merge: MergeConfig = field(default_factory=MergeConfig)
 
 
 @dataclass
@@ -229,13 +270,16 @@ class SorterParams:
         batch_size: Number of samples per batch.
             "auto" = ResourceDetector recommends based on free GPU VRAM.
         n_jobs: Internal parallelism (usually 1 for GPU).
+        torch_device: PyTorch device for sorting. "cuda" for GPU, "cpu" for CPU.
+            "auto" = use CUDA if available, else CPU.
     """
 
-    nblocks: int = 15
+    nblocks: int = 0
     Th_learned: float = 7.0
     do_CAR: bool = False
     batch_size: int | str = "auto"
     n_jobs: int = 1
+    torch_device: str = "auto"
 
 
 @dataclass
@@ -519,6 +563,18 @@ def _build_postprocess(raw: dict) -> PostprocessConfig:
     return PostprocessConfig(eye_validation=eye_validation, **top_known)
 
 
+def _build_merge(raw: dict) -> MergeConfig:
+    """Build a MergeConfig from a raw YAML dict.
+
+    Args:
+        raw: Mapping of merge config keys. Unknown keys are ignored.
+
+    Returns:
+        MergeConfig with known keys applied and defaults for the rest.
+    """
+    return MergeConfig(**_extract_known(raw, MergeConfig))
+
+
 def _build_sync(raw: dict) -> SyncConfig:
     """Build a SyncConfig from a raw YAML dict.
 
@@ -680,20 +736,29 @@ def _validate_pipeline_config(config: PipelineConfig) -> None:
             "must be 'dredge', 'kilosort', or None",
         )
     # preprocess.motion_correction.preset
-    if mc.preset not in {"rigid_fast", "nonrigid_accurate"}:
+    _valid_presets = {
+        "dredge",
+        "dredge_fast",
+        "nonrigid_accurate",
+        "nonrigid_fast_and_accurate",
+        "rigid_fast",
+        "kilosort_like",
+        "medicine",
+    }
+    if mc.preset not in _valid_presets:
         raise ConfigError(
             "preprocess.motion_correction.preset",
             mc.preset,
-            "must be 'rigid_fast' or 'nonrigid_accurate'",
+            f"must be one of {sorted(_valid_presets)}",
         )
 
     c = config.curation
     # curation.isi_violation_ratio_max
-    if not (0.0 <= c.isi_violation_ratio_max <= 1.0):
+    if c.isi_violation_ratio_max < 0.0:
         raise ConfigError(
             "curation.isi_violation_ratio_max",
             c.isi_violation_ratio_max,
-            "must satisfy 0.0 <= x <= 1.0",
+            "must be >= 0.0",
         )
     # curation.amplitude_cutoff_max
     if not (0.0 <= c.amplitude_cutoff_max <= 1.0):
@@ -712,11 +777,20 @@ def _validate_pipeline_config(config: PipelineConfig) -> None:
     # curation.snr_min
     if c.snr_min < 0.0:
         raise ConfigError("curation.snr_min", c.snr_min, "must be >= 0.0")
+    # curation.good_isi_max
+    if c.good_isi_max < 0.0:
+        raise ConfigError("curation.good_isi_max", c.good_isi_max, "must be >= 0.0")
+    # curation.good_snr_min
+    if c.good_snr_min < 0.0:
+        raise ConfigError("curation.good_snr_min", c.good_snr_min, "must be >= 0.0")
 
     s = config.sync
-    # sync.sync_bit
-    if not (0 <= s.sync_bit <= 7):
-        raise ConfigError("sync.sync_bit", s.sync_bit, "must satisfy 0 <= x <= 7")
+    # sync.imec_sync_bit (AP)
+    if not (0 <= s.imec_sync_bit <= 7):
+        raise ConfigError("sync.imec_sync_bit", s.imec_sync_bit, "must satisfy 0 <= x <= 7")
+    # sync.nidq_sync_bit
+    if not (0 <= s.nidq_sync_bit <= 7):
+        raise ConfigError("sync.nidq_sync_bit", s.nidq_sync_bit, "must satisfy 0 <= x <= 7")
     # sync.event_bits
     if not s.event_bits:
         raise ConfigError("sync.event_bits", s.event_bits, "must be a non-empty list")
@@ -771,6 +845,13 @@ def _validate_sorting_config(config: SortingConfig) -> None:
     # sorter.params.n_jobs
     if sp.n_jobs < 1:
         raise ConfigError("sorter.params.n_jobs", sp.n_jobs, "must be >= 1")
+    # sorter.params.torch_device
+    if sp.torch_device not in {"auto", "cuda", "cpu"}:
+        raise ConfigError(
+            "sorter.params.torch_device",
+            sp.torch_device,
+            "must be 'auto', 'cuda', or 'cpu'",
+        )
 
     # import_cfg.format
     if config.import_cfg.format not in {"kilosort4", "phy"}:
@@ -901,7 +982,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
 
     # Log unknown top-level keys
-    known_top_keys = {"resources", "parallel", "preprocess", "curation", "sync", "postprocess"}
+    known_top_keys = {"resources", "parallel", "preprocess", "curation", "sync", "postprocess", "merge"}
     for key in raw:
         if key not in known_top_keys:
             _log.debug("unknown config key ignored", key=key, section="PipelineConfig")
@@ -913,6 +994,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         curation=_build_curation(raw.get("curation") or {}),
         sync=_build_sync(raw.get("sync") or {}),
         postprocess=_build_postprocess(raw.get("postprocess") or {}),
+        merge=_build_merge(raw.get("merge") or {}),
     )
 
     _validate_pipeline_config(config)

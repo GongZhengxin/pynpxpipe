@@ -49,7 +49,7 @@ class SortingForm:
             name="nblocks",
             value=_DEFAULT_PARAMS.nblocks,
             start=0,
-            description="KS4 internal drift correction blocks. If Motion Correction is enabled in preprocessing, set to 0 to avoid double correction. Otherwise 1 (rigid) or 5 (non-rigid).",
+            description="KS4 internal drift correction blocks. Default 0 (mutually exclusive with preprocess DREDge — keep 0 unless DREDge is disabled). Set to 1 (rigid) or 5/15 (non-rigid) only when preprocess motion correction is OFF.",
         )
         self.th_learned_input = pn.widgets.FloatInput(
             name="Th_learned",

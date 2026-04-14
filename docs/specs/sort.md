@@ -78,7 +78,7 @@
 ### `_sort_probe_local(probe_id)`
 
 1. 检查 per-probe checkpoint；若已完成 → return
-2. **加载预处理录制**：从 `{output_dir}/preprocessed/{probe_id}/` 读取 Zarr recording（`si.load_extractor(zarr_path)`）
+2. **加载预处理录制**：从 `{output_dir}/preprocessed/{probe_id}/` 读取 Zarr recording（`si.load(zarr_path)`）
 3. **运行 sorter**：
    ```python
    sorting = si.run_sorter(
@@ -187,9 +187,9 @@ class SortStage(BaseStage):
 | `import_paths` | `config.sorting.import_cfg.paths` | `{}` | probe_id → 外部路径映射 |
 
 **KS4 参数设计约束（运动校正互斥）**：
-- 若 preprocess 阶段启用了外部运动校正（`motion_correction.method: "dredge"`）：
-  `sorter_params.nblocks` 必须为 `0`，`sorter_params.do_CAR` 建议为 `false`（因 preprocess 已做 CMR）
+- 默认配置：preprocess 启用 DREDge（`motion_correction.method="dredge"`）+ `sorter_params.nblocks=0`（避免重复漂移校正，精度优先）
 - 若 preprocess 未做运动校正：`sorter_params.nblocks` 可设为 `15`（KS4 内部漂移校正）
+- `sorter_params.do_CAR` 建议为 `false`（因 preprocess 已做 CMR）
 - SortStage 本身不验证此约束，由用户在配置文件中保证一致性；运行时日志中应记录当前 nblocks 值
 
 ---
@@ -255,7 +255,7 @@ class SortStage(BaseStage):
 | `pynpxpipe.stages.base.BaseStage` | 项目内部 | 基类 |
 | `pynpxpipe.core.errors.SortError` | 项目内部 | 排序失败时抛出 |
 | `spikeinterface.sorters` | 第三方 | `run_sorter` |
-| `spikeinterface.core` | 第三方 | `read_sorter_folder`、`read_phy`、`load_extractor` |
+| `spikeinterface.core` | 第三方 | `read_sorter_folder`、`read_phy`、`load`（SI ≥0.101） |
 | `gc` | 标准库 | 显式内存释放 |
 | `pathlib.Path` | 标准库 | 路径操作 |
 
