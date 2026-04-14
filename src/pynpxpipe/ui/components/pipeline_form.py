@@ -122,25 +122,41 @@ class PipelineForm:
         )
 
         # ── Curation ──
+        self.use_bombcell_checkbox = pn.widgets.Checkbox(
+            name="Use Bombcell four-class classification (SUA/MUA/NON-SOMA/NOISE)",
+            value=_DEFAULTS.curation.use_bombcell,
+        )
         self.isi_max_input = pn.widgets.FloatInput(
             name="ISI Violation Ratio Max",
             value=_DEFAULTS.curation.isi_violation_ratio_max,
-            description="Max ISI violation ratio (refractory period violations / total spikes). Higher = more permissive. Typical: 0.5.",
+            description="NOISE filter upper bound. Units with ISI violation ratio above this are discarded. Default 2.0 is permissive (bombcell handles SUA classification separately).",
         )
         self.amp_cutoff_input = pn.widgets.FloatInput(
             name="Amplitude Cutoff Max",
             value=_DEFAULTS.curation.amplitude_cutoff_max,
-            description="Max amplitude cutoff. Measures how much of the amplitude distribution is clipped. Typical: 0.1.",
+            description="NOISE filter upper bound for amplitude cutoff. Default 0.5 is permissive.",
         )
         self.presence_min_input = pn.widgets.FloatInput(
             name="Presence Ratio Min",
             value=_DEFAULTS.curation.presence_ratio_min,
-            description="Min fraction of recording where unit fires. 0.9 = unit must be present in 90% of time bins. Lower for short recordings.",
+            description="NOISE filter lower bound. Units present in < this fraction of recording are discarded. Default 0.5 keeps units appearing in >=50% of bins.",
         )
         self.snr_min_input = pn.widgets.FloatInput(
             name="SNR Min",
             value=_DEFAULTS.curation.snr_min,
-            description="Minimum signal-to-noise ratio. Units below this threshold are excluded. Typical: 5.0.",
+            description="NOISE filter lower bound for SNR. Default 0.3 is very permissive (bombcell handles SUA).",
+        )
+        self.good_isi_max_input = pn.widgets.FloatInput(
+            name="Good ISI Max (SUA threshold, manual mode)",
+            value=_DEFAULTS.curation.good_isi_max,
+            step=0.01,
+            description="ISI violation ratio upper bound for SUA classification (fallback when use_bombcell=False).",
+        )
+        self.good_snr_min_input = pn.widgets.FloatInput(
+            name="Good SNR Min (SUA threshold, manual mode)",
+            value=_DEFAULTS.curation.good_snr_min,
+            step=0.5,
+            description="SNR lower bound for SUA classification (fallback when use_bombcell=False).",
         )
 
         # ── Sync ──
@@ -222,10 +238,13 @@ class PipelineForm:
             self.cmr_operator_select,
             self.motion_enabled_checkbox,
             self.motion_preset_select,
+            self.use_bombcell_checkbox,
             self.isi_max_input,
             self.amp_cutoff_input,
             self.presence_min_input,
             self.snr_min_input,
+            self.good_isi_max_input,
+            self.good_snr_min_input,
             self.sync_bit_input,
             self.event_bits_input,
             self.stim_onset_code_input,
@@ -299,6 +318,9 @@ class PipelineForm:
                 amplitude_cutoff_max=self.amp_cutoff_input.value,
                 presence_ratio_min=self.presence_min_input.value,
                 snr_min=self.snr_min_input.value,
+                good_isi_max=self.good_isi_max_input.value,
+                good_snr_min=self.good_snr_min_input.value,
+                use_bombcell=self.use_bombcell_checkbox.value,
             ),
             sync=SyncConfig(
                 imec_sync_bit=self.sync_bit_input.value,
@@ -357,10 +379,13 @@ class PipelineForm:
                 collapsed=True,
             ),
             pn.Card(
+                self.use_bombcell_checkbox,
                 self.isi_max_input,
                 self.amp_cutoff_input,
                 self.presence_min_input,
                 self.snr_min_input,
+                self.good_isi_max_input,
+                self.good_snr_min_input,
                 title="Curation Thresholds",
                 collapsed=True,
             ),
