@@ -49,14 +49,14 @@ class TestBasics:
 
 
 class TestSectionStructure:
-    def test_has_three_sections(self):
-        """App should expose configure, execute, review sections."""
+    def test_has_four_sections(self):
+        """App should expose configure, execute, review, help sections."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
         assert hasattr(app, "_pynpx_sections")
         sections = app._pynpx_sections
-        assert set(sections.keys()) == {"configure", "execute", "review"}
+        assert set(sections.keys()) == {"configure", "execute", "review", "help"}
 
     def test_default_section_is_configure(self):
         """Configure should be visible, others hidden on startup."""
@@ -67,24 +67,27 @@ class TestSectionStructure:
         assert sections["configure"].visible is True
         assert sections["execute"].visible is False
         assert sections["review"].visible is False
+        assert sections["help"].visible is False
 
     def test_configure_has_five_forms(self):
-        """Configure section should contain 5 form components."""
+        """Configure section should contain 5 form components across both columns."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
         configure = app._pynpx_sections["configure"]
-        # Should have at least 5 child objects (the 5 forms)
-        assert len(configure.objects) >= 5
+        # Left col: session + subject + stages (3); Right col: pipeline + sorting (2)
+        left_count = len(configure.objects[0].objects)
+        right_count = len(configure.objects[1].objects)
+        assert left_count + right_count >= 5
 
-    def test_execute_has_three_components(self):
-        """Execute section should contain RunPanel + ProgressView + LogViewer."""
+    def test_execute_has_two_columns(self):
+        """Execute section should be a Row with left (RunPanel+ProgressView) and right (LogViewer)."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
         execute = app._pynpx_sections["execute"]
-        # Should have at least 3 child objects
-        assert len(execute.objects) >= 3
+        # Row with 2 Column children
+        assert len(execute.objects) == 2
 
     def test_review_has_two_components(self):
         """Review section should contain SessionLoader + StatusView."""
@@ -148,3 +151,51 @@ class TestErrorBanner:
         state.error_message = "Something went wrong"
         assert app._pynpx_error_banner.visible is True
         assert "Something went wrong" in app._pynpx_error_banner.object
+
+
+# ---------------------------------------------------------------------------
+# E. Configure two-column layout
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureLayout:
+    def test_configure_section_is_row(self):
+        """Configure section should be a pn.Row (two-column layout)."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        configure = app._pynpx_sections["configure"]
+        assert isinstance(configure, pn.Row)
+
+    def test_configure_has_two_columns(self):
+        """Configure row should contain exactly two Column children."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        configure = app._pynpx_sections["configure"]
+        assert len(configure.objects) == 2
+        assert all(isinstance(c, pn.Column) for c in configure.objects)
+
+    def test_left_column_has_session_subject_stages(self):
+        """Left column should contain at least 3 components (session, subject, stages)."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        left_col = app._pynpx_sections["configure"].objects[0]
+        assert len(left_col.objects) >= 3
+
+    def test_right_column_has_pipeline_sorting(self):
+        """Right column should contain at least 2 components (pipeline, sorting)."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        right_col = app._pynpx_sections["configure"].objects[1]
+        assert len(right_col.objects) >= 2
+
+    def test_configure_sizing_mode_stretch_width(self):
+        """Configure row should have sizing_mode='stretch_width'."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        configure = app._pynpx_sections["configure"]
+        assert configure.sizing_mode == "stretch_width"

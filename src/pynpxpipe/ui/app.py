@@ -19,6 +19,7 @@ from pathlib import Path
 
 import panel as pn
 
+from pynpxpipe.ui.components.chat_help import ChatHelp
 from pynpxpipe.ui.components.figs_viewer import FigsViewer
 from pynpxpipe.ui.components.log_viewer import LogViewer
 from pynpxpipe.ui.components.pipeline_form import PipelineForm
@@ -210,6 +211,7 @@ def create_app() -> pn.viewable.Viewable:
 
     status_view = StatusView(state)
     figs_viewer = FigsViewer(state)
+    chat_help = ChatHelp(state)
 
     def _on_session_loaded() -> None:
         status_view.load_status()
@@ -259,10 +261,17 @@ def create_app() -> pn.viewable.Viewable:
         visible=False,
     )
 
+    help_section = pn.Column(
+        chat_help.panel(),
+        sizing_mode="stretch_width",
+        visible=False,
+    )
+
     sections = {
         "configure": configure_section,
         "execute": execute_section,
         "review": review_section,
+        "help": help_section,
     }
 
     # ── Section switching ──
@@ -290,7 +299,7 @@ def create_app() -> pn.viewable.Viewable:
 
     # ── Sidebar navigation ──
     nav_buttons = {}
-    for label in ("Configure", "Execute", "Review"):
+    for label in ("Configure", "Execute", "Review", "Help"):
         btn = pn.widgets.Button(
             name=label,
             button_type="primary" if label == "Configure" else "default",
@@ -333,6 +342,7 @@ def create_app() -> pn.viewable.Viewable:
             configure_section,
             execute_section,
             review_section,
+            help_section,
         ],
     )
 

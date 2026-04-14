@@ -44,6 +44,9 @@ plots = [
 ui = [
     "panel>=1.0",              # Web UI (optional)
 ]
+chat = [
+    "openai>=1.0",             # Multi-provider LLM client for Help assistant (optional)
+]
 
 [dependency-groups]
 dev = [
