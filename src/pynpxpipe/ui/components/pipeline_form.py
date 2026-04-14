@@ -292,6 +292,12 @@ class PipelineForm:
             step=0.01,
             description="Response window after stimulus onset for SLAY score. Typical: 0.30s (300ms). Adjust to match your task timing.",
         )
+        self.pre_onset_ms_input = pn.widgets.FloatInput(
+            name="Pre-onset (ms)",
+            value=_post.pre_onset_ms,
+            step=5.0,
+            description="Dynamic SLAY window pre-stimulus margin (pre_s = pre_onset_ms / 1000).",
+        )
         self.eye_enabled_checkbox = pn.widgets.Checkbox(
             name="Eye Validation (fixation ratio from BHV2 analog eye channel)",
             value=_post.eye_validation.enabled,
@@ -301,6 +307,12 @@ class PipelineForm:
             value=_post.eye_validation.eye_threshold,
             step=0.001,
             description="Min fixation ratio to pass validation. 0.8 = eye must be within fixation window for 80% of trial duration.",
+        )
+
+        # ── Merge ──
+        self.merge_enabled_checkbox = pn.widgets.Checkbox(
+            name="Enable auto-merge stage (irreversible; review sorting quality first)",
+            value=_DEFAULTS.merge.enabled,
         )
 
         # Watch all widgets
@@ -344,8 +356,10 @@ class PipelineForm:
             self.generate_plots_checkbox,
             self.slay_pre_input,
             self.slay_post_input,
+            self.pre_onset_ms_input,
             self.eye_enabled_checkbox,
             self.eye_threshold_input,
+            self.merge_enabled_checkbox,
         ]
         for w in all_widgets:
             w.param.watch(self._rebuild_config, "value")
@@ -441,11 +455,13 @@ class PipelineForm:
             postprocess=PostprocessConfig(
                 slay_pre_s=self.slay_pre_input.value,
                 slay_post_s=self.slay_post_input.value,
+                pre_onset_ms=self.pre_onset_ms_input.value,
                 eye_validation=EyeValidationConfig(
                     enabled=self.eye_enabled_checkbox.value,
                     eye_threshold=self.eye_threshold_input.value,
                 ),
             ),
+            merge=MergeConfig(enabled=self.merge_enabled_checkbox.value),
         )
 
     # ── Layout ──
@@ -521,9 +537,15 @@ class PipelineForm:
             pn.Card(
                 self.slay_pre_input,
                 self.slay_post_input,
+                self.pre_onset_ms_input,
                 self.eye_enabled_checkbox,
                 self.eye_threshold_input,
                 title="Postprocessing",
+                collapsed=True,
+            ),
+            pn.Card(
+                self.merge_enabled_checkbox,
+                title="Auto-Merge (opt-in, irreversible)",
                 collapsed=True,
             ),
         )
