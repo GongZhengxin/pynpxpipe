@@ -36,6 +36,7 @@ logs/
 *.nwb
 *.zarr/
 *.mat
+diag/
 
 # Private / internal dirs (not distributed)
 legacy_reference/
