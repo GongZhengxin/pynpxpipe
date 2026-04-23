@@ -25,6 +25,56 @@ from pynpxpipe.pipelines.runner import STAGE_ORDER, PipelineRunner
 _PER_PROBE_STAGES = {"preprocess", "sort", "curate", "postprocess"}
 
 
+class _CliProgressBar:
+    """Tqdm-based progress sink for PipelineRunner.progress_callback.
+
+    Renders one bar per stage (stage boundary detected from the ``stage:msg``
+    prefix). Writes to stderr so stdout stays clean for scripting, and so
+    Phase 3's long append/verify messages appear inline with the structlog
+    stderr stream the UI log viewer also captures.
+    """
+
+    def __init__(self) -> None:
+        from tqdm import tqdm as _tqdm
+
+        self._tqdm = _tqdm
+        self._bar = None
+        self._current_stage: str | None = None
+
+    def __call__(self, message: str, fraction: float) -> None:
+        stage, _, human = message.partition(":")
+        if stage != self._current_stage:
+            self._close()
+            self._bar = self._tqdm(
+                total=100,
+                desc=f"[{stage}]",
+                leave=True,
+                dynamic_ncols=True,
+            )
+            self._current_stage = stage
+        pct = max(0, min(100, int(fraction * 100)))
+        # tqdm's update() is cumulative; set n directly and refresh.
+        assert self._bar is not None
+        self._bar.n = pct
+        postfix = human.strip()[:80] if human else ""
+        if postfix:
+            self._bar.set_postfix_str(postfix, refresh=False)
+        self._bar.refresh()
+
+    def _close(self) -> None:
+        if self._bar is not None:
+            try:
+                self._bar.n = self._bar.total
+                self._bar.refresh()
+            except Exception:  # noqa: BLE001
+                pass
+            self._bar.close()
+            self._bar = None
+
+    def close(self) -> None:
+        self._close()
+
+
 @click.group()
 @click.version_option()
 def cli() -> None:
@@ -94,9 +144,14 @@ def run(
         )
         pipeline_cfg = load_pipeline_config(pipeline_config)
         sorting_cfg = load_sorting_config(sorting_config)
-        runner = PipelineRunner(session, pipeline_cfg, sorting_cfg)
-        runner.run(stages=list(stages) if stages else None)
+        progress = _CliProgressBar()
+        try:
+            runner = PipelineRunner(session, pipeline_cfg, sorting_cfg, progress_callback=progress)
+            runner.run(stages=list(stages) if stages else None)
+        finally:
+            progress.close()
         click.echo(f"Pipeline complete. Output: {output_dir}")
+        click.echo("✅ Safe to exit — NWB file written and verified.")
     except PynpxpipeError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -162,6 +217,31 @@ def reset_stage(output_dir: Path, stage: str, yes: bool) -> None:
             probe_cp.unlink(missing_ok=True)
 
     click.echo("Reset complete.")
+
+
+@cli.command("verify-safe-to-delete")
+@click.argument("session_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def verify_safe_to_delete(session_dir: Path) -> None:
+    """Report whether the raw SpikeGLX bins for SESSION_DIR can be deleted.
+
+    Exit code 0 means the export checkpoint carries ``raw_data_verified_at``
+    AND the NWB opens cleanly — the raw .bin/.meta files are redundant. Any
+    other exit code indicates the check failed (see ``pipelines/verify.py``
+    for the full code table).
+
+    SESSION_DIR: Pipeline output directory with checkpoints/export.json.
+    """
+    from pynpxpipe.pipelines.verify import verify_safe_to_delete as _verify
+
+    result = _verify(session_dir)
+    if result.safe:
+        click.echo("Safe to delete:")
+        for path in result.deletable:
+            click.echo(f"  {path}")
+        sys.exit(result.exit_code)
+    else:
+        click.echo(f"ERROR: {result.reason}", err=True)
+        sys.exit(result.exit_code)
 
 
 # ---------------------------------------------------------------------------

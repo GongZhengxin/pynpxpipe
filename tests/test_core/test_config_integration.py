@@ -159,7 +159,10 @@ def test_real_sorting_yaml_sorter_fields():
 
     # sorting.yaml sorter.params
     assert config.sorter.params.nblocks == 0
-    assert config.sorter.params.Th_learned == 7.0
+    assert config.sorter.params.Th_learned == 8.0
+    assert config.sorter.params.Th_universal == 9.0
+    assert config.sorter.params.cluster_downsampling == 1
+    assert config.sorter.params.max_cluster_subset == 25000
     assert config.sorter.params.do_CAR is False
     assert config.sorter.params.batch_size == "auto"
     assert config.sorter.params.n_jobs == 1

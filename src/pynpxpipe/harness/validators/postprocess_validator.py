@@ -13,7 +13,7 @@ class PostprocessValidator:
         for probe_id in probe_ids:
             templates_path = (
                 output_dir
-                / "postprocessed"
+                / "06_postprocessed"
                 / probe_id
                 / "extensions"
                 / "waveforms"

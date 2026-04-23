@@ -15,6 +15,7 @@ import structlog
 import yaml
 
 from pynpxpipe.core.errors import ConfigError
+from pynpxpipe.core.session import SubjectConfig
 
 _log = structlog.get_logger(__name__)
 
@@ -124,6 +125,48 @@ class PreprocessConfig:
 
 
 @dataclass
+class BombcellConfig:
+    """Bombcell threshold overrides and flags for the curate stage.
+
+    Field values override the ``mua`` layer of
+    ``spikeinterface.curation.bombcell_get_default_thresholds()`` — the
+    layer that separates SUA from MUA. Defaults are aligned with MATLAB
+    ``bc_qualityParamValues`` (wider than SI built-ins, which were
+    empirically producing too few SUA).
+
+    Attributes:
+        amplitude_median_min: mua.amplitude_median.greater (µV). MATLAB 20 µV
+            (SI default 30).
+        num_spikes_min: mua.num_spikes.greater. MATLAB 50 (SI 300).
+        presence_ratio_min: mua.presence_ratio.greater. MATLAB 0.2 (SI 0.7).
+        snr_min: mua.snr.greater. MATLAB 3.0 (SI 5.0).
+        amplitude_cutoff_max: mua.amplitude_cutoff.less. Both MATLAB and SI
+            use 0.2.
+        rp_contamination_max: mua.rp_contamination.less. Both 0.1.
+        drift_ptp_max: mua.drift_ptp.less (µm). Both 100.
+        label_non_somatic: Passed to ``bombcell_label_units(label_non_somatic=...)``.
+            True enables the third classification pass (NON-SOMA).
+        split_non_somatic_good_mua: Passed to
+            ``bombcell_label_units(split_non_somatic_good_mua=...)``. True
+            subdivides NON-SOMA into NON-SOMA-GOOD / NON-SOMA-MUA.
+        extra_overrides: Nested dict deep-merged into the final thresholds
+            dict. Lets the user patch any ``noise`` / ``non-somatic`` layer
+            metric without exposing every field on this dataclass.
+    """
+
+    amplitude_median_min: float = 20.0
+    num_spikes_min: int = 50
+    presence_ratio_min: float = 0.2
+    snr_min: float = 3.0
+    amplitude_cutoff_max: float = 0.2
+    rp_contamination_max: float = 0.1
+    drift_ptp_max: float = 100.0
+    label_non_somatic: bool = True
+    split_non_somatic_good_mua: bool = False
+    extra_overrides: dict = field(default_factory=dict)
+
+
+@dataclass
 class CurationConfig:
     """Quality metric thresholds for the curate stage.
 
@@ -132,17 +175,20 @@ class CurationConfig:
     Only NOISE units are discarded; SUA, MUA, and NON-SOMA are kept.
 
     Attributes:
-        isi_violation_ratio_max: ISI violation ratio upper bound for NOISE filter.
-            Units above this are discarded. Default 2.0 keeps ~98% of units.
-        amplitude_cutoff_max: Amplitude cutoff upper bound for NOISE filter.
-        presence_ratio_min: Presence ratio lower bound for NOISE filter.
-        snr_min: Signal-to-noise ratio lower bound for NOISE filter.
+        isi_violation_ratio_max: ISI violation ratio upper bound for NOISE
+            filter (manual fallback only, ``use_bombcell=False``).
+        amplitude_cutoff_max: Amplitude cutoff upper bound for NOISE filter
+            (manual fallback only).
+        presence_ratio_min: Presence ratio lower bound for NOISE filter
+            (manual fallback only).
+        snr_min: SNR lower bound for NOISE filter (manual fallback only).
         good_isi_max: ISI violation ratio upper bound for SUA classification
             (manual fallback only).
         good_snr_min: SNR lower bound for SUA classification (manual fallback only).
         use_bombcell: If True, use SI ``bombcell_label_units()`` for four-class
             classification (SUA/MUA/NON-SOMA/NOISE). If False, use manual
             threshold-based classification.
+        bombcell: Threshold overrides + flags for the bombcell main path.
     """
 
     isi_violation_ratio_max: float = 2.0
@@ -152,6 +198,7 @@ class CurationConfig:
     good_isi_max: float = 0.1
     good_snr_min: float = 3.0
     use_bombcell: bool = True
+    bombcell: BombcellConfig = field(default_factory=BombcellConfig)
 
 
 @dataclass
@@ -183,8 +230,12 @@ class SyncConfig:
     generate_plots: bool = True
     gap_threshold_ms: float | None = 1200.0
     trial_start_bit: int | None = None
+    stim_onset_bit: int | None = None
+    stim_count_tolerance: int = 0
     pd_window_pre_ms: float = 10.0
     pd_window_post_ms: float = 100.0
+    pd_hignline_skip_ms: float = 50.0
+    pd_hignline_width_ms: float = 20.0
     pd_min_signal_variance: float = 1e-6
 
 
@@ -235,6 +286,42 @@ class PostprocessConfig:
 
 
 @dataclass
+class DerivativesConfig:
+    """ExportStage Phase 2.5 (session-level derivative files) parameters.
+
+    Attributes:
+        enabled: Phase 2.5 master switch. Disabling skips the entire
+            ``07_derivatives/`` write.
+        pre_onset_ms: Pre-stimulus raster window in milliseconds (relative
+            to ``trials.start_time``).
+        post_onset_ms: Post-stimulus raster window in milliseconds, or the
+            literal string ``"auto"`` to have ``resolve_post_onset_ms``
+            derive it from ``max(onset_time + offset_time)`` across BHV2
+            ``VariableChanges``.
+        bin_size_ms: Raster bin width in milliseconds.
+        n_jobs: joblib parallelism for ``spike_times_to_raster``.
+    """
+
+    enabled: bool = True
+    pre_onset_ms: float = 50.0
+    post_onset_ms: float | str = "auto"
+    bin_size_ms: float = 1.0
+    n_jobs: int = 1
+
+
+@dataclass
+class ExportConfig:
+    """ExportStage configuration.
+
+    Attributes:
+        derivatives: Phase 2.5 session-level derivative export settings
+            (see :class:`DerivativesConfig`).
+    """
+
+    derivatives: DerivativesConfig = field(default_factory=DerivativesConfig)
+
+
+@dataclass
 class PipelineConfig:
     """Full pipeline configuration loaded from config/pipeline.yaml.
 
@@ -246,6 +333,7 @@ class PipelineConfig:
         sync: Synchronization parameters.
         postprocess: Postprocess stage parameters.
         merge: Optional auto-merge stage parameters.
+        export: Export stage parameters (Phase 2.5 derivatives).
     """
 
     resources: ResourcesConfig = field(default_factory=ResourcesConfig)
@@ -255,6 +343,7 @@ class PipelineConfig:
     sync: SyncConfig = field(default_factory=SyncConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
     merge: MergeConfig = field(default_factory=MergeConfig)
+    export: ExportConfig = field(default_factory=ExportConfig)
 
 
 @dataclass
@@ -264,6 +353,9 @@ class SorterParams:
     Attributes:
         nblocks: Number of drift correction blocks (0 = disabled).
         Th_learned: Learning threshold.
+        Th_universal: Universal threshold (KS4 default 9.0).
+        cluster_downsampling: Cluster downsampling factor (KS4 default 20, pinned to 5).
+        max_cluster_subset: Max cluster subset size (KS4 default 25000).
         do_CAR: Whether KS applies CAR internally (disable if preprocessed).
         batch_size: Number of samples per batch.
             "auto" = ResourceDetector recommends based on free GPU VRAM.
@@ -273,7 +365,10 @@ class SorterParams:
     """
 
     nblocks: int = 0
-    Th_learned: float = 7.0
+    Th_learned: float = 8.0
+    Th_universal: float = 9.0
+    cluster_downsampling: int = 1
+    max_cluster_subset: int = 25000
     do_CAR: bool = False
     batch_size: int | str = "auto"
     n_jobs: int = 1
@@ -366,27 +461,6 @@ class SortingConfig:
     sorter: SorterConfig = field(default_factory=SorterConfig)
     import_cfg: ImportConfig = field(default_factory=ImportConfig)
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
-
-
-@dataclass
-class SubjectConfig:
-    """Subject (animal) information for DANDI archiving.
-
-    Attributes:
-        subject_id: Unique identifier for the subject (required by DANDI).
-        description: Free-text description of the subject.
-        species: Taxonomic species name (required by DANDI).
-        sex: Biological sex code: "M", "F", "U", or "O" (required by DANDI).
-        age: Age in ISO 8601 duration format, e.g. "P4Y" (required by DANDI).
-        weight: Body weight with unit, e.g. "12.8kg".
-    """
-
-    subject_id: str = ""
-    description: str = ""
-    species: str = ""
-    sex: str = ""
-    age: str = ""
-    weight: str = ""
 
 
 def _extract_known(raw: dict, dc_class: type) -> dict:
@@ -518,16 +592,32 @@ def _build_preprocess(raw: dict) -> PreprocessConfig:
     )
 
 
+def _build_bombcell(raw: dict) -> BombcellConfig:
+    """Build a BombcellConfig from a raw YAML dict.
+
+    ``extra_overrides`` (a nested dict for deep-merging into SI's thresholds)
+    is passed through unchanged; all other keys are filtered by the
+    dataclass field set.
+    """
+    return BombcellConfig(**_extract_known(raw, BombcellConfig))
+
+
 def _build_curation(raw: dict) -> CurationConfig:
-    """Build a CurationConfig from a raw YAML dict.
+    """Build a CurationConfig from a raw YAML dict, recursing into ``bombcell``.
 
     Args:
-        raw: Mapping of curation threshold keys. Unknown keys are ignored.
+        raw: Mapping of curation threshold keys. Unknown top-level keys are
+            ignored. The ``bombcell`` sub-dict (if present) is built into a
+            ``BombcellConfig`` dataclass.
 
     Returns:
-        CurationConfig with known keys applied and defaults for the rest.
+        CurationConfig with known keys applied and defaults for the rest,
+        including a fully-populated ``bombcell`` nested config.
     """
-    return CurationConfig(**_extract_known(raw, CurationConfig))
+    bombcell = _build_bombcell(raw.get("bombcell") or {})
+    handled = {"bombcell"}
+    top_known = _extract_known({k: v for k, v in raw.items() if k not in handled}, CurationConfig)
+    return CurationConfig(bombcell=bombcell, **top_known)
 
 
 def _build_eye_validation(raw: dict) -> EyeValidationConfig:
@@ -571,6 +661,22 @@ def _build_merge(raw: dict) -> MergeConfig:
         MergeConfig with known keys applied and defaults for the rest.
     """
     return MergeConfig(**_extract_known(raw, MergeConfig))
+
+
+def _build_derivatives(raw: dict) -> DerivativesConfig:
+    """Build a DerivativesConfig from a raw YAML dict.
+
+    Accepts ``post_onset_ms`` as either a number or the literal string
+    ``"auto"`` (passed straight through — resolved at runtime).
+    """
+    return DerivativesConfig(**_extract_known(raw, DerivativesConfig))
+
+
+def _build_export(raw: dict) -> ExportConfig:
+    """Build an ExportConfig (including nested derivatives) from raw YAML."""
+    return ExportConfig(
+        derivatives=_build_derivatives(raw.get("derivatives") or {}),
+    )
 
 
 def _build_sync(raw: dict) -> SyncConfig:
@@ -808,6 +914,12 @@ def _validate_pipeline_config(config: PipelineConfig) -> None:
     # sync.stim_onset_code
     if not (0 <= s.stim_onset_code <= 255):
         raise ConfigError("sync.stim_onset_code", s.stim_onset_code, "must satisfy 0 <= x <= 255")
+    # sync.stim_onset_bit
+    if s.stim_onset_bit is not None and not (0 <= s.stim_onset_bit <= 7):
+        raise ConfigError("sync.stim_onset_bit", s.stim_onset_bit, "must be None or in range 0-7")
+    # sync.stim_count_tolerance
+    if s.stim_count_tolerance < 0:
+        raise ConfigError("sync.stim_count_tolerance", s.stim_count_tolerance, "must be >= 0")
 
 
 def _validate_sorting_config(config: SortingConfig) -> None:
@@ -985,6 +1097,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         "sync",
         "postprocess",
         "merge",
+        "export",
     }
     for key in raw:
         if key not in known_top_keys:
@@ -998,6 +1111,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         sync=_build_sync(raw.get("sync") or {}),
         postprocess=_build_postprocess(raw.get("postprocess") or {}),
         merge=_build_merge(raw.get("merge") or {}),
+        export=_build_export(raw.get("export") or {}),
     )
 
     _validate_pipeline_config(config)
@@ -1070,6 +1184,15 @@ def load_subject_config(yaml_path: Path) -> SubjectConfig:
 
     _validate_subject(subject_raw)
 
+    raw_vault = subject_raw.get("image_vault_paths") or []
+    if not isinstance(raw_vault, list):
+        raise ConfigError(
+            "subject.image_vault_paths",
+            raw_vault,
+            "must be a list of path strings",
+        )
+    image_vault_paths = [Path(str(p)) for p in raw_vault]
+
     return SubjectConfig(
         subject_id=subject_raw["subject_id"],
         description=subject_raw["description"],
@@ -1077,6 +1200,7 @@ def load_subject_config(yaml_path: Path) -> SubjectConfig:
         sex=subject_raw["sex"],
         age=subject_raw["age"],
         weight=subject_raw.get("weight", ""),
+        image_vault_paths=image_vault_paths,
     )
 
 
@@ -1093,18 +1217,18 @@ def save_subject_config(cfg: SubjectConfig, yaml_path: Path) -> None:
     """
     yaml_path = Path(yaml_path)
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "Subject": {
-            "subject_id": cfg.subject_id,
-            "description": cfg.description,
-            "species": cfg.species,
-            "sex": cfg.sex,
-            "age": cfg.age,
-            "weight": cfg.weight,
-        }
+    subject_payload: dict[str, object] = {
+        "subject_id": cfg.subject_id,
+        "description": cfg.description,
+        "species": cfg.species,
+        "sex": cfg.sex,
+        "age": cfg.age,
+        "weight": cfg.weight,
     }
+    if cfg.image_vault_paths:
+        subject_payload["image_vault_paths"] = [str(p) for p in cfg.image_vault_paths]
     yaml_path.write_text(
-        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        yaml.safe_dump({"Subject": subject_payload}, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
 
@@ -1142,6 +1266,7 @@ def merge_with_overrides(
             curation=_build_curation(merged.get("curation") or {}),
             sync=_build_sync(merged.get("sync") or {}),
             postprocess=_build_postprocess(merged.get("postprocess") or {}),
+            export=_build_export(merged.get("export") or {}),
         )
         _validate_pipeline_config(new_config)
     elif isinstance(config, SortingConfig):

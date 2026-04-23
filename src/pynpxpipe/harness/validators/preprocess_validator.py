@@ -11,8 +11,8 @@ class PreprocessValidator:
     def validate(self, output_dir: Path, probe_ids: list[str]) -> list[ValidationItem]:
         items: list[ValidationItem] = []
         for probe_id in probe_ids:
-            zarr_path = output_dir / "preprocessed" / f"{probe_id}.zarr"
-            plain_path = output_dir / "preprocessed" / probe_id
+            zarr_path = output_dir / "01_preprocessed" / f"{probe_id}.zarr"
+            plain_path = output_dir / "01_preprocessed" / probe_id
             if (zarr_path.exists() and any(zarr_path.iterdir())) or (
                 plain_path.exists() and any(plain_path.iterdir())
             ):

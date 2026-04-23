@@ -10,6 +10,7 @@ from pynpxpipe.core.config import (
     AnalyzerConfig,
     BadChannelConfig,
     BandpassConfig,
+    BombcellConfig,
     CommonReferenceConfig,
     CurationConfig,
     EyeValidationConfig,
@@ -74,6 +75,38 @@ def test_curation_config_default_instantiation():
     assert cfg is not None
 
 
+def test_bombcell_config_default_instantiation():
+    cfg = BombcellConfig()
+    assert cfg is not None
+
+
+def test_curation_config_bombcell_is_bombcell_config():
+    cfg = CurationConfig()
+    assert isinstance(cfg.bombcell, BombcellConfig)
+
+
+def test_bombcell_config_matlab_defaults():
+    """Defaults align with MATLAB bc_qualityParamValues, wider than SI built-ins."""
+    cfg = BombcellConfig()
+    assert cfg.amplitude_median_min == 20.0
+    assert cfg.num_spikes_min == 50
+    assert cfg.presence_ratio_min == 0.2
+    assert cfg.snr_min == 3.0
+    assert cfg.amplitude_cutoff_max == 0.2
+    assert cfg.rp_contamination_max == 0.1
+    assert cfg.drift_ptp_max == 100.0
+    assert cfg.label_non_somatic is True
+    assert cfg.split_non_somatic_good_mua is False
+    assert cfg.extra_overrides == {}
+
+
+def test_bombcell_config_extra_overrides_is_independent_copy():
+    cfg1 = BombcellConfig()
+    cfg2 = BombcellConfig()
+    cfg1.extra_overrides["noise"] = {"foo": 1}
+    assert cfg2.extra_overrides == {}
+
+
 def test_sync_config_default_instantiation():
     cfg = SyncConfig()
     assert cfg is not None
@@ -129,9 +162,17 @@ def test_sorting_config_default_instantiation():
     assert cfg is not None
 
 
-def test_subject_config_default_instantiation():
-    cfg = SubjectConfig()
-    assert cfg is not None
+def test_subject_config_image_vault_paths_default_empty():
+    """SubjectConfig.image_vault_paths defaults to an empty list."""
+    cfg = SubjectConfig(
+        subject_id="x",
+        description="d",
+        species="s",
+        sex="M",
+        age="P1Y",
+        weight="1kg",
+    )
+    assert cfg.image_vault_paths == []
 
 
 # ---------------------------------------------------------------------------
@@ -314,18 +355,18 @@ def test_preprocess_config_has_exactly_4_fields():
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_config_has_exactly_7_fields():
+def test_pipeline_config_has_exactly_8_fields():
     import dataclasses
 
     fields = dataclasses.fields(PipelineConfig)
-    assert len(fields) == 7
+    assert len(fields) == 8
 
 
-def test_sync_config_has_exactly_14_fields():
+def test_sync_config_has_exactly_18_fields():
     import dataclasses
 
     fields = dataclasses.fields(SyncConfig)
-    assert len(fields) == 14
+    assert len(fields) == 18
 
 
 def test_postprocess_config_has_exactly_4_fields():
@@ -463,8 +504,12 @@ def test_sorting_config_mode_default():
     assert SortingConfig().mode == "local"
 
 
-def test_subject_config_subject_id_default():
-    assert SubjectConfig().subject_id == ""
+def test_subject_config_requires_dandi_fields():
+    """SubjectConfig requires all DANDI fields (no defaults)."""
+    import pytest
+
+    with pytest.raises(TypeError):
+        SubjectConfig()  # type: ignore[call-arg]
 
 
 def test_curation_config_isi_violation_ratio_max_default():

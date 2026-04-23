@@ -82,7 +82,7 @@ def test_sort_validator_zero_units_warn(tmp_path: Path) -> None:
 
 def test_curate_validator_pass(tmp_path: Path) -> None:
     out = _make_output_dir(tmp_path)
-    curate_dir = out / "curated" / "imec0"
+    curate_dir = out / "05_curated" / "imec0"
     curate_dir.mkdir(parents=True)
     (curate_dir / "quality_metrics.csv").write_text(
         "unit_id,isi_violations_ratio,presence_ratio,snr,amplitude_cutoff\n"
@@ -96,10 +96,10 @@ def test_curate_validator_pass(tmp_path: Path) -> None:
         "n_good": 1,
         "n_total": 1,
         "thresholds": {
-            "isi_violation_ratio_max": 0.1,
-            "amplitude_cutoff_max": 0.1,
-            "presence_ratio_min": 0.9,
-            "snr_min": 0.5,
+            "isi_violation_ratio_max": 2.0,
+            "amplitude_cutoff_max": 0.5,
+            "presence_ratio_min": 0.5,
+            "snr_min": 0.3,
         },
     }
     (out / "checkpoints" / "curate_imec0.json").write_text(json.dumps(cp), encoding="utf-8")
@@ -109,10 +109,10 @@ def test_curate_validator_pass(tmp_path: Path) -> None:
         output_dir=out,
         probe_ids=["imec0"],
         config_thresholds={
-            "isi_violation_ratio_max": 0.1,
-            "amplitude_cutoff_max": 0.1,
-            "presence_ratio_min": 0.9,
-            "snr_min": 0.5,
+            "isi_violation_ratio_max": 2.0,
+            "amplitude_cutoff_max": 0.5,
+            "presence_ratio_min": 0.5,
+            "snr_min": 0.3,
         },
     )
     statuses = {v.check: v.status for v in items}
@@ -123,7 +123,7 @@ def test_curate_validator_pass(tmp_path: Path) -> None:
 
 def test_curate_validator_zero_units_fail(tmp_path: Path) -> None:
     out = _make_output_dir(tmp_path)
-    curate_dir = out / "curated" / "imec0"
+    curate_dir = out / "05_curated" / "imec0"
     curate_dir.mkdir(parents=True)
     (curate_dir / "quality_metrics.csv").write_text(
         "unit_id,isi_violations_ratio,presence_ratio,snr,amplitude_cutoff\n",
@@ -136,10 +136,10 @@ def test_curate_validator_zero_units_fail(tmp_path: Path) -> None:
         "n_good": 0,
         "n_total": 47,
         "thresholds": {
-            "isi_violation_ratio_max": 0.1,
-            "amplitude_cutoff_max": 0.1,
-            "presence_ratio_min": 0.9,
-            "snr_min": 0.5,
+            "isi_violation_ratio_max": 2.0,
+            "amplitude_cutoff_max": 0.5,
+            "presence_ratio_min": 0.5,
+            "snr_min": 0.3,
         },
     }
     (out / "checkpoints" / "curate_imec0.json").write_text(json.dumps(cp), encoding="utf-8")
@@ -149,10 +149,10 @@ def test_curate_validator_zero_units_fail(tmp_path: Path) -> None:
         output_dir=out,
         probe_ids=["imec0"],
         config_thresholds={
-            "isi_violation_ratio_max": 0.1,
-            "amplitude_cutoff_max": 0.1,
-            "presence_ratio_min": 0.9,
-            "snr_min": 0.5,
+            "isi_violation_ratio_max": 2.0,
+            "amplitude_cutoff_max": 0.5,
+            "presence_ratio_min": 0.5,
+            "snr_min": 0.3,
         },
     )
     statuses = {v.check: v.status for v in items}

@@ -19,7 +19,7 @@ class CurateValidator:
         items: list[ValidationItem] = []
         for probe_id in probe_ids:
             cp_path = output_dir / "checkpoints" / f"curate_{probe_id}.json"
-            metrics_path = output_dir / "curated" / probe_id / "quality_metrics.csv"
+            metrics_path = output_dir / "05_curated" / probe_id / "quality_metrics.csv"
 
             if metrics_path.exists():
                 items.append(

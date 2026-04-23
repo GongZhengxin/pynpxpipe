@@ -54,6 +54,7 @@ def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
         n_channels=384,
         serial_number="SN_TEST",
         probe_type="NP1010",
+        target_area="V4" if probe_id == "imec0" else "IT",
     )
 
 
@@ -77,7 +78,15 @@ def session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path), _make_probe("imec1", tmp_path)]
     return s
 
@@ -105,14 +114,19 @@ def _write_checkpoint(
 # Patch helper — mocks all 7 stage classes
 # ---------------------------------------------------------------------------
 
+# Stage classes are imported lazily inside PipelineRunner._build_stage (see the
+# comment in runner.py: the UI layer only needs STAGE_ORDER and must not pull
+# in the full scientific stack). We therefore patch them at their real
+# definition sites rather than on the runner module.
 _ALL_STAGES = [
-    "pynpxpipe.pipelines.runner.DiscoverStage",
-    "pynpxpipe.pipelines.runner.PreprocessStage",
-    "pynpxpipe.pipelines.runner.SortStage",
-    "pynpxpipe.pipelines.runner.SynchronizeStage",
-    "pynpxpipe.pipelines.runner.CurateStage",
-    "pynpxpipe.pipelines.runner.PostprocessStage",
-    "pynpxpipe.pipelines.runner.ExportStage",
+    "pynpxpipe.stages.discover.DiscoverStage",
+    "pynpxpipe.stages.preprocess.PreprocessStage",
+    "pynpxpipe.stages.sort.SortStage",
+    "pynpxpipe.stages.merge.MergeStage",
+    "pynpxpipe.stages.synchronize.SynchronizeStage",
+    "pynpxpipe.stages.curate.CurateStage",
+    "pynpxpipe.stages.postprocess.PostprocessStage",
+    "pynpxpipe.stages.export.ExportStage",
 ]
 
 
@@ -136,7 +150,16 @@ class TestBasicExecution:
             mocks[stage_name] = m
             patches.append(patch(name, m))
 
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            patches[7],
+        ):
             runner.run()
 
         assert call_order == STAGE_ORDER
@@ -155,7 +178,16 @@ class TestBasicExecution:
             mocks[stage_name] = m
             patches.append(patch(name, m))
 
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            patches[7],
+        ):
             runner.run(stages=["sort", "curate"])
 
         assert set(called) == {"sort", "curate"}
@@ -175,7 +207,16 @@ class TestBasicExecution:
             mocks[stage_name] = m
             patches.append(patch(name, m))
 
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            patches[7],
+        ):
             runner.run(stages=["export", "discover"])
 
         assert called == ["discover", "export"]
@@ -185,7 +226,7 @@ class TestBasicExecution:
         runner = _make_runner(session)
         mock_sort = MagicMock()
 
-        with patch("pynpxpipe.pipelines.runner.SortStage", mock_sort):
+        with patch("pynpxpipe.stages.sort.SortStage", mock_sort):
             runner.run_stage("sort")
 
         mock_sort.assert_called_once()
@@ -209,7 +250,7 @@ class TestBasicExecution:
         runner = _make_runner(session)
         mock_discover = MagicMock()
 
-        with patch("pynpxpipe.pipelines.runner.DiscoverStage", mock_discover):
+        with patch("pynpxpipe.stages.discover.DiscoverStage", mock_discover):
             runner.run_stage("discover")
 
         mock_discover.return_value.run.assert_called_once()
@@ -284,13 +325,14 @@ class TestFailFast:
         mock_curate = MagicMock()
 
         with (
-            patch("pynpxpipe.pipelines.runner.DiscoverStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.PreprocessStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.SortStage", mock_sort),
-            patch("pynpxpipe.pipelines.runner.SynchronizeStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.CurateStage", mock_curate),
-            patch("pynpxpipe.pipelines.runner.PostprocessStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.ExportStage", MagicMock()),
+            patch("pynpxpipe.stages.discover.DiscoverStage", MagicMock()),
+            patch("pynpxpipe.stages.preprocess.PreprocessStage", MagicMock()),
+            patch("pynpxpipe.stages.sort.SortStage", mock_sort),
+            patch("pynpxpipe.stages.merge.MergeStage", MagicMock()),
+            patch("pynpxpipe.stages.synchronize.SynchronizeStage", MagicMock()),
+            patch("pynpxpipe.stages.curate.CurateStage", mock_curate),
+            patch("pynpxpipe.stages.postprocess.PostprocessStage", MagicMock()),
+            patch("pynpxpipe.stages.export.ExportStage", MagicMock()),
             pytest.raises(SortError),
         ):
             runner.run()
@@ -304,13 +346,14 @@ class TestFailFast:
         mock_sort.return_value.run.side_effect = RuntimeError("unexpected")
 
         with (
-            patch("pynpxpipe.pipelines.runner.DiscoverStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.PreprocessStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.SortStage", mock_sort),
-            patch("pynpxpipe.pipelines.runner.SynchronizeStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.CurateStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.PostprocessStage", MagicMock()),
-            patch("pynpxpipe.pipelines.runner.ExportStage", MagicMock()),
+            patch("pynpxpipe.stages.discover.DiscoverStage", MagicMock()),
+            patch("pynpxpipe.stages.preprocess.PreprocessStage", MagicMock()),
+            patch("pynpxpipe.stages.sort.SortStage", mock_sort),
+            patch("pynpxpipe.stages.merge.MergeStage", MagicMock()),
+            patch("pynpxpipe.stages.synchronize.SynchronizeStage", MagicMock()),
+            patch("pynpxpipe.stages.curate.CurateStage", MagicMock()),
+            patch("pynpxpipe.stages.postprocess.PostprocessStage", MagicMock()),
+            patch("pynpxpipe.stages.export.ExportStage", MagicMock()),
             pytest.raises(RuntimeError, match="unexpected"),
         ):
             runner.run()

@@ -46,6 +46,32 @@ class DiscoverError(PynpxpipeError):
     """
 
 
+class ProbeDeclarationMismatchError(DiscoverError):
+    """Raised when session.probe_plan does not match probes found on disk.
+
+    Attributes:
+        declared: Set of probe_ids declared by the user via probe_plan.
+        found: Set of probe_ids actually discovered in session_dir.
+        missing_on_disk: declared - found (user declared but disk lacks).
+        unexpected_on_disk: found - declared (disk has but user did not declare).
+    """
+
+    def __init__(self, declared: set[str], found: set[str]) -> None:
+        self.declared = declared
+        self.found = found
+        self.missing_on_disk = declared - found
+        self.unexpected_on_disk = found - declared
+        parts = []
+        if self.missing_on_disk:
+            parts.append(f"declared but not on disk: {sorted(self.missing_on_disk)}")
+        if self.unexpected_on_disk:
+            parts.append(f"on disk but not declared: {sorted(self.unexpected_on_disk)}")
+        super().__init__(
+            f"probe_plan mismatch — {'; '.join(parts)}. "
+            f"declared={sorted(declared)}, found={sorted(found)}"
+        )
+
+
 class PreprocessError(PynpxpipeError):
     """Raised when preprocessing fails for a probe.
 
@@ -90,4 +116,11 @@ class ExportError(PynpxpipeError):
 
     Examples: NWBWriter error, written file cannot be read back (HDF5 corrupt),
     behavior_events.parquet missing.
+    """
+
+
+class MergeError(PynpxpipeError):
+    """Raised when auto-merge fails for a probe.
+
+    Examples: sorted SortingAnalyzer cannot be loaded, auto_merge() raises.
     """

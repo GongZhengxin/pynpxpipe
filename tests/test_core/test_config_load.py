@@ -5,6 +5,8 @@ Covers all 13 behaviors specified in docs/specs/config.md §11.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from pynpxpipe.core.config import (
@@ -434,3 +436,82 @@ def test_save_subject_config_overwrites_existing_file(tmp_path):
     assert "old content" not in target.read_text(encoding="utf-8")
     loaded = load_subject_config(target)
     assert loaded.description == "fresh"
+
+
+# ===========================================================================
+# SubjectConfig.image_vault_paths round-trip
+# ===========================================================================
+
+
+def test_subject_config_image_vault_paths_round_trip(tmp_path):
+    """image_vault_paths survives save→load as Path objects."""
+    cfg = SubjectConfig(
+        subject_id="Vault",
+        description="",
+        species="Macaca mulatta",
+        sex="F",
+        age="P5Y",
+        weight="10kg",
+        image_vault_paths=[
+            Path("C:/#Datasets/TripleN10k"),
+            Path("D:/backup/stim"),
+        ],
+    )
+    target = tmp_path / "Vault.yaml"
+    save_subject_config(cfg, target)
+
+    text = target.read_text(encoding="utf-8")
+    assert "image_vault_paths" in text
+
+    loaded = load_subject_config(target)
+    assert loaded.image_vault_paths == cfg.image_vault_paths
+
+
+def test_subject_config_image_vault_paths_absent_defaults_empty(tmp_path):
+    """YAML without image_vault_paths key loads as empty list."""
+    target = tmp_path / "Legacy.yaml"
+    target.write_text(
+        "Subject:\n"
+        "  subject_id: Legacy\n"
+        "  description: ''\n"
+        "  species: Macaca mulatta\n"
+        "  sex: M\n"
+        "  age: P3Y\n"
+        "  weight: 6kg\n",
+        encoding="utf-8",
+    )
+    loaded = load_subject_config(target)
+    assert loaded.image_vault_paths == []
+
+
+def test_subject_config_image_vault_paths_invalid_type_raises(tmp_path):
+    """Non-list image_vault_paths raises ConfigError."""
+    target = tmp_path / "Bad.yaml"
+    target.write_text(
+        "Subject:\n"
+        "  subject_id: Bad\n"
+        "  description: ''\n"
+        "  species: Macaca mulatta\n"
+        "  sex: M\n"
+        "  age: P3Y\n"
+        "  weight: 6kg\n"
+        "  image_vault_paths: 'C:/only/one/path'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError):
+        load_subject_config(target)
+
+
+def test_subject_config_image_vault_paths_omitted_when_empty_on_save(tmp_path):
+    """save_subject_config omits image_vault_paths key when list is empty."""
+    cfg = SubjectConfig(
+        subject_id="NoVault",
+        description="",
+        species="Macaca mulatta",
+        sex="M",
+        age="P2Y",
+        weight="5kg",
+    )
+    target = tmp_path / "NoVault.yaml"
+    save_subject_config(cfg, target)
+    assert "image_vault_paths" not in target.read_text(encoding="utf-8")

@@ -258,7 +258,11 @@ def test_setup_logging_twice_no_duplicate_handlers(tmp_path: Path) -> None:
 
 
 def test_third_party_logger_suppressed(tmp_path: Path) -> None:
-    """spikeinterface DEBUG/INFO messages do not appear in the log file."""
+    """spikeinterface DEBUG messages do not appear; INFO and WARNING do.
+
+    spikeinterface is set to INFO level (not WARNING) so that progress
+    messages reach the UI log handler.  Only DEBUG is suppressed.
+    """
     log_path = tmp_path / "pipeline.log"
     setup_logging(log_path)
 
@@ -272,7 +276,8 @@ def test_third_party_logger_suppressed(tmp_path: Path) -> None:
     lines = _read_jsonlines(log_path)
     events = [ln.get("event", "") for ln in lines]
     assert "spikeinterface debug noise" not in events
-    assert "spikeinterface info noise" not in events
+    # INFO is now allowed through (level=INFO for UI progress messages)
+    assert "spikeinterface info noise" in events
     # Warning should be present
     assert any("spikeinterface warning message" in e for e in events)
 

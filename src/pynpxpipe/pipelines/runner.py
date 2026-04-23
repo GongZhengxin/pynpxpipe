@@ -7,36 +7,23 @@ No UI dependencies.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from pynpxpipe.core.checkpoint import CheckpointManager
 from pynpxpipe.core.resources import ResourceDetector
-from pynpxpipe.stages.curate import CurateStage
-from pynpxpipe.stages.discover import DiscoverStage
-from pynpxpipe.stages.export import ExportStage
-from pynpxpipe.stages.postprocess import PostprocessStage
-from pynpxpipe.stages.preprocess import PreprocessStage
-from pynpxpipe.stages.sort import SortStage
-from pynpxpipe.stages.synchronize import SynchronizeStage
+from pynpxpipe.pipelines.constants import PER_PROBE_STAGES, STAGE_ORDER
 
 if TYPE_CHECKING:
     from pynpxpipe.core.config import PipelineConfig, SortingConfig
     from pynpxpipe.core.session import Session
 
+# Re-export for backward compat (tests, CLI, etc.)
+__all__ = ["PipelineRunner", "STAGE_ORDER"]
 
-STAGE_ORDER = [
-    "discover",
-    "preprocess",
-    "sort",
-    "synchronize",
-    "curate",
-    "postprocess",
-    "export",
-]
-
-# Stages that produce per-probe checkpoints
-_PER_PROBE_STAGES = {"preprocess", "sort", "curate", "postprocess"}
+# Internal alias
+_PER_PROBE_STAGES = PER_PROBE_STAGES
 
 
 class PipelineRunner:
@@ -82,7 +69,7 @@ class PipelineRunner:
             or sorting_config.sorter.params.batch_size == "auto"
         )
         if needs_auto:
-            detector = ResourceDetector()
+            detector = ResourceDetector(self.session.session_dir, self.session.output_dir)
             profile = detector.detect()
             rec = detector.recommend(profile, session.probes or None)
             if pipeline_config.resources.n_jobs == "auto":
@@ -96,6 +83,15 @@ class PipelineRunner:
 
         # Inject resolved config into session for stages to read
         session.config = pipeline_config
+
+        _log = logging.getLogger(__name__)
+        _log.info(
+            "Resolved resources: n_jobs=%s, chunk_duration=%s, max_workers=%s, sorting_batch_size=%s",
+            pipeline_config.resources.n_jobs,
+            pipeline_config.resources.chunk_duration,
+            pipeline_config.parallel.max_workers,
+            sorting_config.sorter.params.batch_size,
+        )
 
     def run(self, stages: list[str] | None = None) -> None:
         """Run the pipeline, optionally restricted to a subset of stages.
@@ -161,6 +157,18 @@ class PipelineRunner:
 
     def _build_stage(self, stage_name: str):  # noqa: ANN202
         """Instantiate the correct stage class with appropriate args."""
+        # Lazy imports — keeps the module importable without pulling in the
+        # full scientific stack (spikeinterface, pynwb, …).  The UI layer
+        # only needs STAGE_ORDER from constants.py.
+        from pynpxpipe.stages.curate import CurateStage
+        from pynpxpipe.stages.discover import DiscoverStage
+        from pynpxpipe.stages.export import ExportStage
+        from pynpxpipe.stages.merge import MergeStage
+        from pynpxpipe.stages.postprocess import PostprocessStage
+        from pynpxpipe.stages.preprocess import PreprocessStage
+        from pynpxpipe.stages.sort import SortStage
+        from pynpxpipe.stages.synchronize import SynchronizeStage
+
         cb = self.progress_callback
         s = self.session
         if stage_name == "discover":
@@ -169,6 +177,8 @@ class PipelineRunner:
             return PreprocessStage(s, self.pipeline_config, cb)
         if stage_name == "sort":
             return SortStage(s, self.sorting_config, cb)
+        if stage_name == "merge":
+            return MergeStage(s, cb)
         if stage_name == "synchronize":
             return SynchronizeStage(s, cb)
         if stage_name == "curate":

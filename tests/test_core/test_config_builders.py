@@ -86,6 +86,46 @@ def test_build_curation_empty_returns_defaults():
     assert cfg.good_snr_min == 3.0
 
 
+def test_build_curation_nested_bombcell_section():
+    """bombcell: {...} sub-section parses into CurationConfig.bombcell."""
+    cfg = _build_curation(
+        {
+            "snr_min": 1.0,
+            "bombcell": {
+                "presence_ratio_min": 0.3,
+                "num_spikes_min": 100,
+                "label_non_somatic": False,
+            },
+        }
+    )
+    assert cfg.snr_min == 1.0  # fallback-layer key preserved
+    assert cfg.bombcell.presence_ratio_min == 0.3
+    assert cfg.bombcell.num_spikes_min == 100
+    assert cfg.bombcell.label_non_somatic is False
+    # Unset bombcell keys fall back to MATLAB defaults
+    assert cfg.bombcell.snr_min == 3.0
+    assert cfg.bombcell.amplitude_median_min == 20.0
+
+
+def test_build_curation_bombcell_missing_returns_defaults():
+    """When no bombcell: key present, bombcell is populated with MATLAB defaults."""
+    cfg = _build_curation({"snr_min": 1.0})
+    assert cfg.bombcell.presence_ratio_min == 0.2
+    assert cfg.bombcell.num_spikes_min == 50
+
+
+def test_build_curation_bombcell_extra_overrides_passthrough():
+    """extra_overrides dict is stored as-is for later deep-merge."""
+    overrides = {"noise": {"waveform_baseline_flatness": {"less": 0.9}}}
+    cfg = _build_curation({"bombcell": {"extra_overrides": overrides}})
+    assert cfg.bombcell.extra_overrides == overrides
+
+
+def test_build_curation_bombcell_unknown_key_ignored():
+    cfg = _build_curation({"bombcell": {"snr_min": 2.5, "mystery": 99}})
+    assert cfg.bombcell.snr_min == 2.5
+
+
 def test_build_sync_empty_returns_defaults():
     cfg = _build_sync({})
     assert cfg.imec_sync_bit == 6

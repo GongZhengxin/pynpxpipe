@@ -93,8 +93,9 @@ def setup_logging(log_path: Path, level: int = logging.INFO) -> None:
         cache_logger_on_first_use=False,  # False keeps test isolation clean
     )
 
-    # Suppress verbose third-party library logging
-    logging.getLogger("spikeinterface").setLevel(logging.WARNING)
+    # Suppress verbose third-party library logging (allow INFO for spikeinterface
+    # so progress messages reach the UI log handler)
+    logging.getLogger("spikeinterface").setLevel(logging.INFO)
     logging.getLogger("probeinterface").setLevel(logging.WARNING)
 
 

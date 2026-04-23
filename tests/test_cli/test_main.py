@@ -1,15 +1,18 @@
 """Tests for cli/main.py — pynpxpipe CLI.
 
 Groups:
-  A. run command       — success, error handling, stages option, required options
-  B. status command    — output format for completed/pending/failed stages
-  C. reset-stage cmd   — checkpoint deletion, --yes flag, confirmation prompt
-  D. Architecture      — click not imported in business layer, no sys.exit in business layer
+  A. run command                — success, error handling, stages option, required options
+  B. status command             — output format for completed/pending/failed stages
+  C. reset-stage cmd            — checkpoint deletion, --yes flag, confirmation prompt
+  D. Architecture               — click not imported in business layer, no sys.exit in business layer
+  E. verify-safe-to-delete cmd  — E2.3 exit codes + path listing
 """
 
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -534,3 +537,169 @@ class TestArchitectureConstraints:
                     violations.append(str(py_file))
 
         assert violations == [], f"sys.exit() found in business layer: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# Group E — verify-safe-to-delete command (E2.3)
+# ---------------------------------------------------------------------------
+
+
+def _write_minimal_nwb(nwb_path: Path) -> None:
+    """Create a tiny readable NWB file for verify-safe-to-delete tests."""
+    import pynwb
+
+    nwb_path.parent.mkdir(parents=True, exist_ok=True)
+    nwbfile = pynwb.NWBFile(
+        session_description="verify-safe test",
+        identifier=str(uuid.uuid4()),
+        session_start_time=datetime(2026, 4, 17, 10, 0, 0, tzinfo=UTC),
+    )
+    with pynwb.NWBHDF5IO(str(nwb_path), "w") as io:
+        io.write(nwbfile)
+
+
+def _make_verify_fixture(
+    tmp_path: Path,
+    *,
+    with_verified_at: bool = True,
+    with_nwb: bool = True,
+) -> tuple[Path, Path]:
+    """Build a session_dir with the files verify-safe-to-delete consumes.
+
+    Returns (output_dir, nwb_path).
+    """
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    (output_dir / "checkpoints").mkdir()
+
+    # Stand up a SpikeGLX-shaped raw-source dir so _collect_raw_files has
+    # something to enumerate. Only the session.json structure matters here.
+    raw_dir = tmp_path / "raw_g0"
+    raw_dir.mkdir()
+    ap_bin = raw_dir / "imec0" / "imec0.ap.bin"
+    ap_meta = raw_dir / "imec0" / "imec0.ap.meta"
+    ap_bin.parent.mkdir()
+    ap_bin.write_bytes(b"\x00" * 16)
+    ap_meta.write_text("typeThis=imec\n", encoding="utf-8")
+    nidq_bin = raw_dir / "run.nidq.bin"
+    nidq_meta = raw_dir / "run.nidq.meta"
+    nidq_bin.write_bytes(b"\x00" * 16)
+    nidq_meta.write_text("typeThis=nidq\n", encoding="utf-8")
+
+    session_json = {
+        "session_dir": str(raw_dir),
+        "output_dir": str(output_dir),
+        "bhv_file": str(tmp_path / "task.bhv2"),
+        "subject": {
+            "subject_id": "TestMon",
+            "description": "verify-safe test",
+            "species": "Macaca mulatta",
+            "sex": "M",
+            "age": "P3Y",
+            "weight": "10kg",
+        },
+        "session_id": {
+            "date": "260417",
+            "subject": "TestMon",
+            "experiment": "nsd1w",
+            "region": "V4",
+        },
+        "probe_plan": {"imec0": "V4"},
+        "probes": [
+            {
+                "probe_id": "imec0",
+                "ap_bin": str(ap_bin),
+                "ap_meta": str(ap_meta),
+                "lf_bin": None,
+                "lf_meta": None,
+                "sample_rate": 30000.0,
+                "n_channels": 384,
+                "probe_type": "NP1010",
+                "serial_number": "SN0",
+                "target_area": "V4",
+            }
+        ],
+        "checkpoint": {},
+    }
+    (output_dir / "session.json").write_text(json.dumps(session_json), encoding="utf-8")
+
+    nwb_path = output_dir / "260417_TestMon_nsd1w_V4.nwb"
+    if with_nwb:
+        _write_minimal_nwb(nwb_path)
+
+    cp = {
+        "stage": "export",
+        "status": "completed",
+        "nwb_path": str(nwb_path),
+    }
+    if with_verified_at:
+        cp["raw_data_verified_at"] = "2026-04-17T10:00:00+00:00"
+        cp["verify_policy"] = "full"
+    (output_dir / "checkpoints" / "export.json").write_text(
+        json.dumps(cp), encoding="utf-8"
+    )
+
+    return output_dir, nwb_path
+
+
+class TestVerifySafeToDeleteCommand:
+    """E2.3: verify-safe-to-delete CLI — exit codes + printed bin paths."""
+
+    def test_verify_safe_exits_zero_when_safe(self, tmp_path: Path) -> None:
+        """All prerequisites present → exit 0."""
+        output_dir, _ = _make_verify_fixture(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["verify-safe-to-delete", str(output_dir)])
+
+        assert result.exit_code == 0, result.output
+
+    def test_verify_safe_exits_nonzero_missing_verified_at(self, tmp_path: Path) -> None:
+        """export.json lacks raw_data_verified_at → exit != 0 + reason mentions 'verified'."""
+        output_dir, _ = _make_verify_fixture(tmp_path, with_verified_at=False)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["verify-safe-to-delete", str(output_dir)])
+
+        assert result.exit_code != 0
+        # click.echo to err=True lands in result.output under mix_stderr=True (default).
+        assert "verified" in result.output.lower()
+
+    def test_verify_safe_exits_nonzero_missing_nwb(self, tmp_path: Path) -> None:
+        """export.json valid but NWB absent → exit != 0 + message mentions NWB."""
+        output_dir, nwb_path = _make_verify_fixture(tmp_path, with_nwb=False)
+        # Ensure the NWB really isn't there.
+        assert not nwb_path.exists()
+        runner = CliRunner()
+        result = runner.invoke(cli, ["verify-safe-to-delete", str(output_dir)])
+
+        assert result.exit_code != 0
+        assert "NWB" in result.output or "nwb" in result.output
+
+    def test_verify_safe_prints_bin_paths_on_success(self, tmp_path: Path) -> None:
+        """Happy path → stdout lists at least one .bin path."""
+        output_dir, _ = _make_verify_fixture(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["verify-safe-to-delete", str(output_dir)])
+
+        assert result.exit_code == 0, result.output
+        assert ".bin" in result.output
+        assert "Safe to delete" in result.output
+
+    def test_verify_safe_refuses_empty_raw_file_list(self, tmp_path: Path) -> None:
+        """NWB verified but no raw bins locatable → exit != 0, refuse empty list.
+
+        This guards the "I can't tell you what's safe" case: checkpoint says
+        verified and NWB opens cleanly, but session.json is unreadable (or
+        the bins have already been removed), so we cannot name a single file
+        to reclaim. The honest answer is to fail, not print an empty list.
+        """
+        from pynpxpipe.pipelines.verify import EXIT_NO_RAW_FILES_FOUND
+
+        output_dir, _ = _make_verify_fixture(tmp_path)
+        # Corrupt session.json so SessionManager.load fails → empty file list.
+        (output_dir / "session.json").write_text("not valid json", encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["verify-safe-to-delete", str(output_dir)])
+
+        assert result.exit_code == EXIT_NO_RAW_FILES_FOUND
+        assert "no raw" in result.output.lower() or "empty" in result.output.lower()

@@ -13,7 +13,7 @@ class SortValidator:
         items: list[ValidationItem] = []
         for probe_id in probe_ids:
             cp_path = output_dir / "checkpoints" / f"sort_{probe_id}.json"
-            sorting_dir = output_dir / "sorted" / probe_id
+            sorting_dir = output_dir / "02_sorted" / probe_id
             # Also check legacy path "sorting/"
             legacy_dir = output_dir / "sorting" / probe_id
 
