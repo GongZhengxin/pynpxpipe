@@ -1,0 +1,58 @@
+# ============================================================
+# Round VIII ablation E2 — motion_correction.method=null
+# (DREDge disabled; KS4 will do drift via nblocks=5 in sorting_E2.yaml)
+# Everything else identical to config/pipeline.yaml
+# ============================================================
+export:
+  derivatives:
+    enabled: true
+    pre_onset_ms: 50
+    post_onset_ms: auto
+    bin_size_ms: 1
+    n_jobs: 1
+curation:
+  amplitude_cutoff_max: 0.5
+  isi_violation_ratio_max: 2.0
+  presence_ratio_min: 0.5
+  snr_min: 0.3
+  good_isi_max: 0.1
+  good_snr_min: 3.0
+parallel:
+  enabled: false
+  max_workers: auto
+preprocess:
+  bad_channel_detection:
+    dead_channel_threshold: 0.5
+    method: coherence+psd
+  bandpass:
+    freq_max: 6000
+    freq_min: 300
+  common_reference:
+    operator: median
+    reference: global
+  motion_correction:
+    method: null               # ← ablation: dredge → null (KS4 nblocks=5 takes over)
+    preset: dredge
+resources:
+  chunk_duration: auto
+  max_memory: auto
+  n_jobs: auto
+sync:
+  event_bits:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  generate_plots: true
+  max_time_error_ms: 17.0
+  monitor_delay_ms: -5.0
+  photodiode_channel_index: 0
+  stim_onset_code: 64
+  stim_onset_bit: null
+  nidq_sync_bit: 0
+  imec_sync_bit: 6
+  trial_count_tolerance: 2
+  stim_count_tolerance: 0

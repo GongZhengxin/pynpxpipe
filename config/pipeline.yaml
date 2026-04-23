@@ -1,10 +1,36 @@
+export:
+  derivatives:
+    enabled: true
+    pre_onset_ms: 50
+    post_onset_ms: auto   # number in ms, or "auto" (→ max(VC.onset_time+offset_time))
+    bin_size_ms: 1
+    n_jobs: 1
 curation:
+  # Fallback path (use_bombcell=False) thresholds. Ignored when
+  # use_bombcell=True — see curation.bombcell below.
+  use_bombcell: true
   amplitude_cutoff_max: 0.5
   isi_violation_ratio_max: 2.0
   presence_ratio_min: 0.5
   snr_min: 0.3
   good_isi_max: 0.1
   good_snr_min: 3.0
+  # Bombcell main-path thresholds (use_bombcell=true). Values below override
+  # the mua layer of SI's bombcell_get_default_thresholds() and align with
+  # MATLAB bc_qualityParamValues — wider than SI built-ins, which
+  # empirically produced too few SUA. Set extra_overrides to reach noise /
+  # non-somatic layers without editing this file's schema.
+  bombcell:
+    amplitude_median_min: 20.0      # µV; SI default 30
+    num_spikes_min: 50              # SI default 300
+    presence_ratio_min: 0.2         # SI default 0.7
+    snr_min: 3.0                    # SI default 5
+    amplitude_cutoff_max: 0.2
+    rp_contamination_max: 0.1
+    drift_ptp_max: 100.0            # µm
+    label_non_somatic: true
+    split_non_somatic_good_mua: false
+    extra_overrides: {}
 parallel:
   enabled: false
   max_workers: auto
@@ -39,6 +65,8 @@ sync:
   monitor_delay_ms: -5.0
   photodiode_channel_index: 0
   stim_onset_code: 64
+  stim_onset_bit: null  # null = auto-detect (decoded-domain bit, NOT raw ML bit)
   nidq_sync_bit: 0
   imec_sync_bit: 6
   trial_count_tolerance: 2
+  stim_count_tolerance: 0

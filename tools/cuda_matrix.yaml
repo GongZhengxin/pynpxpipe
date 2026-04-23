@@ -1,0 +1,66 @@
+# tools/cuda_matrix.yaml
+# Maps NVIDIA hardware + driver to the recommended PyTorch wheel tag.
+#
+# Read by tools/install_sort_stack.py and src/pynpxpipe/core/torch_env.py.
+# Update when NVIDIA ships a new driver branch or PyTorch publishes a new
+# wheel channel. No code changes required.
+#
+# References:
+#   https://pytorch.org/get-started/locally/
+#   https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/
+#   https://developer.nvidia.com/cuda-gpus  (compute capabilities)
+
+# ---------------------------------------------------------------------------
+# Available PyTorch wheel channels on https://download.pytorch.org/whl/
+# Listed from newest → oldest. The installer picks the highest entry whose
+# `min_driver` is satisfied by the user's NVIDIA driver AND whose tag is
+# compatible with the GPU's compute capability (see compute_cap_floor below).
+# ---------------------------------------------------------------------------
+available_wheels:
+  - tag: cu128
+    cuda_runtime: "12.8"
+    min_driver: 570     # Blackwell support (RTX 50xx)
+  - tag: cu126
+    cuda_runtime: "12.6"
+    min_driver: 560
+  - tag: cu124
+    cuda_runtime: "12.4"
+    min_driver: 550
+  - tag: cu121
+    cuda_runtime: "12.1"
+    min_driver: 525
+  - tag: cpu
+    cuda_runtime: null
+    min_driver: 0       # always compatible
+
+# ---------------------------------------------------------------------------
+# Compute-capability floor: earliest wheel that includes kernels for each
+# architecture. If the GPU's compute_cap is listed here, the installer will
+# refuse anything older than the mapped tag regardless of driver version.
+#
+# Keys are strings ("12.0", not 12.0) so "10.0" sorts after "9.0".
+# ---------------------------------------------------------------------------
+compute_cap_floor:
+  "12.0": cu128   # Blackwell consumer (RTX 50xx)
+  "10.0": cu128   # Blackwell datacenter (B100/B200)
+  "9.0":  cu124   # Hopper (H100)
+  "8.9":  cu121   # Ada (RTX 40xx, L40)
+  "8.6":  cu121   # Ampere consumer (RTX 30xx)
+  "8.0":  cu121   # Ampere datacenter (A100)
+  "7.5":  cu121   # Turing (RTX 20xx, T4)
+  "7.0":  cu121   # Volta (V100)
+
+# ---------------------------------------------------------------------------
+# Extra packages to install alongside torch. Kept here (not hard-coded) so
+# that pinning kilosort to a specific version stays config-driven.
+#
+# `no_deps: false` is important. Kilosort's own runtime deps include faiss-cpu,
+# hdbscan, scikit-learn etc. — we must let them install. The concern with
+# deps was that `pip install kilosort` might reinstall torch back to the
+# pypi CPU wheel. In practice, `uv pip install` (additive mode) respects
+# an already-installed torch and does NOT upgrade it when the existing
+# version satisfies kilosort's (unpinned) `torch` requirement.
+# ---------------------------------------------------------------------------
+companion_packages:
+  - name: "kilosort>=4.0"
+    no_deps: false

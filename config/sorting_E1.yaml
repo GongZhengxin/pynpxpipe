@@ -1,0 +1,36 @@
+# ============================================================
+# Round VIII ablation E1 — Th_learned 8 → 7
+# Everything else identical to config/sorting.yaml
+# ============================================================
+
+mode: "local"
+
+sorter:
+  name: "kilosort4"
+  params:
+    nblocks: 0
+    Th_learned: 7.0              # ← ablation: 8.0 → 7.0 (match REF)
+    Th_universal: 9.0
+    cluster_downsampling: 1
+    max_cluster_subset: 25000
+    do_CAR: false
+    batch_size: auto
+    n_jobs: 1
+    torch_device: auto
+
+import:
+  format: "kilosort4"
+
+analyzer:
+  random_spikes:
+    max_spikes_per_unit: 500
+    method: "uniform"
+  waveforms:
+    ms_before: 1.0
+    ms_after: 2.0
+  templates:
+    operators: ["average", "std"]
+  unit_locations:
+    method: "monopolar_triangulation"
+  template_similarity:
+    method: "cosine_similarity"

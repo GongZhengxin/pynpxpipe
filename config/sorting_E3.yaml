@@ -1,0 +1,39 @@
+# ============================================================
+# Round VIII ablation E3 — E1 + E2 合并
+#   motion_correction.method=null (E2)   ← 配合 config/pipeline_E2.yaml
+#   KS4 nblocks=5                   (E2)
+#   KS4 Th_learned=7.0              (E1)
+# 其余参数与 baseline 一致。
+# ============================================================
+
+mode: "local"
+
+sorter:
+  name: "kilosort4"
+  params:
+    nblocks: 5                   # ← E2
+    Th_learned: 7.0              # ← E1
+    Th_universal: 9.0
+    cluster_downsampling: 1
+    max_cluster_subset: 25000
+    do_CAR: false
+    batch_size: auto
+    n_jobs: 1
+    torch_device: auto
+
+import:
+  format: "kilosort4"
+
+analyzer:
+  random_spikes:
+    max_spikes_per_unit: 500
+    method: "uniform"
+  waveforms:
+    ms_before: 1.0
+    ms_after: 2.0
+  templates:
+    operators: ["average", "std"]
+  unit_locations:
+    method: "monopolar_triangulation"
+  template_similarity:
+    method: "cosine_similarity"

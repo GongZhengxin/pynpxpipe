@@ -10,7 +10,12 @@ sorter:
   name: "kilosort4"
   params:
     nblocks: 0                   # Drift correction blocks (0 = no drift correction)
-    Th_learned: 7.0              # Learning threshold
+    # Four KS4 params below are explicitly pinned to prevent library-default regression
+    # (KS4 >=4.1.3 silently changed cluster_downsampling 1->20). See docs/todo.md §IV.8.
+    Th_learned: 8.0              # KS4 default; matches reference pipeline
+    Th_universal: 9.0            # KS4 default; explicit pin
+    cluster_downsampling: 1      # Match reference pipeline (KS4 4.1.0-4.1.2 default; OOM risk on large sessions)
+    max_cluster_subset: 25000    # Explicit pin guards against future default changes
     do_CAR: false                # KS internal CAR (disable: preprocessing already did CMR)
     batch_size: auto             # "auto" or integer; auto = ResourceDetector recommends based on free VRAM
     n_jobs: 1                    # KS internal parallelism (typically 1 for GPU)

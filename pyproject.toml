@@ -52,6 +52,10 @@ dependencies = [
     "click>=8.1.0",
     # Resource detection
     "psutil>=5.9.0",            # CPU / RAM / Disk detection (required)
+    # HDF5 compression filters (Blosc/zstd for raw data export)
+    "hdf5plugin>=4.0.0",
+    # CLI progress bars for long-running Phase 3 write + verify
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
@@ -63,12 +67,24 @@ matlab = [
 ]
 plots = [
     "matplotlib>=3.7",         # Sync diagnostic plots (optional)
+    "upsetplot>=0.9",          # UpSet plot for bombcell label overlap (optional)
 ]
 ui = [
     "panel>=1.0",              # Web UI (optional)
 ]
 chat = [
     "openai>=1.0",             # Multi-provider LLM client for Help assistant (optional)
+]
+sort = [
+    # torch + kilosort are intentionally NOT listed here. They are installed
+    # out-of-band by `tools/install_sort_stack.py` so that `uv sync` cannot
+    # revert a CUDA build back to the pypi CPU wheel. Each user picks the
+    # CUDA wheel matching their own GPU/driver and it stays put across
+    # updates. See getting_started.md for the one-line install command.
+    #
+    # This extra is kept as a documentation marker: `uv sync --extra sort`
+    # is still a valid (if no-op) command, and preserves the historical
+    # shape of the optional-dependencies table.
 ]
 
 [dependency-groups]

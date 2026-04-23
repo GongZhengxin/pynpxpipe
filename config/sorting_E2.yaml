@@ -1,0 +1,36 @@
+# ============================================================
+# Round VIII ablation E2 — DREDge off + KS4 nblocks=5
+# Used together with config/pipeline_E2.yaml (motion_correction.method=null)
+# ============================================================
+
+mode: "local"
+
+sorter:
+  name: "kilosort4"
+  params:
+    nblocks: 5                   # ← ablation: 0 → 5 (match REF; DREDge disabled in pipeline_E2.yaml)
+    Th_learned: 8.0              # keep baseline; only E3 combines with E1
+    Th_universal: 9.0
+    cluster_downsampling: 1
+    max_cluster_subset: 25000
+    do_CAR: false
+    batch_size: auto
+    n_jobs: 1
+    torch_device: auto
+
+import:
+  format: "kilosort4"
+
+analyzer:
+  random_spikes:
+    max_spikes_per_unit: 500
+    method: "uniform"
+  waveforms:
+    ms_before: 1.0
+    ms_after: 2.0
+  templates:
+    operators: ["average", "std"]
+  unit_locations:
+    method: "monopolar_triangulation"
+  template_similarity:
+    method: "cosine_similarity"
