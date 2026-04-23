@@ -15,6 +15,7 @@ from pathlib import Path
 
 import panel as pn
 
+from pynpxpipe.ui.components.browsable_input import BrowsableInput
 from pynpxpipe.ui.state import AppState
 
 
@@ -40,10 +41,11 @@ class SessionLoader:
         self._on_session_loaded = on_session_loaded
 
         # ── Widgets ──
-        self.dir_input = pn.widgets.TextInput(
+        self.dir_input = BrowsableInput(
             name="Output Directory",
             placeholder="Path to existing pipeline output directory",
-            width=500,
+            file_pattern="*",
+            only_files=False,
         )
         self.load_btn = pn.widgets.Button(name="Load Session", button_type="success")
         self.load_btn.on_click(self._on_load_click)
@@ -58,7 +60,8 @@ class SessionLoader:
         """Return the Panel layout for this component."""
         return pn.Column(
             pn.pane.Markdown("## Resume Session"),
-            pn.Row(self.dir_input, self.load_btn),
+            self.dir_input.panel(),
+            self.load_btn,
             self.message_pane,
         )
 
@@ -88,7 +91,25 @@ class SessionLoader:
         if "subject" in session_data:
             self._state.subject_config = session_data["subject"]
 
-        self.message_pane.object = "Session loaded successfully."
+        # SID S3: restore NWB filename fields (session_id + probe_plan).
+        session_id = session_data.get("session_id")
+        missing_nwb_fields = session_id is None or "probe_plan" not in session_data
+        if isinstance(session_id, dict):
+            if "experiment" in session_id:
+                self._state.experiment = session_id["experiment"] or ""
+            if "date" in session_id:
+                self._state.recording_date = session_id["date"] or ""
+        probe_plan = session_data.get("probe_plan")
+        if isinstance(probe_plan, dict):
+            self._state.probe_plan = dict(probe_plan)
+
+        if missing_nwb_fields:
+            self.message_pane.object = (
+                "Session loaded. Note: session.json lacks NWB filename metadata; "
+                "please fill experiment / recording date / probe regions before running."
+            )
+        else:
+            self.message_pane.object = "Session loaded successfully."
 
         if self._on_session_loaded:
             self._on_session_loaded()

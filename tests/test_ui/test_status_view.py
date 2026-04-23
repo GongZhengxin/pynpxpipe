@@ -26,6 +26,7 @@ def mock_status():
         "discover": "completed",
         "preprocess": "completed",
         "sort": "completed",
+        "merge": "pending",
         "synchronize": "pending",
         "curate": "pending",
         "postprocess": "pending",
@@ -63,15 +64,15 @@ class TestStatusViewConstruction:
 
 class TestStatusRendering:
     def test_load_status_shows_all_stages(self, state, mock_status, tmp_path):
-        """After loading status, all 7 stages should be displayed."""
+        """After loading status, all 8 stages should be displayed."""
         from pynpxpipe.ui.components.status_view import StatusView
 
         state.output_dir = str(tmp_path)
         view = StatusView(state, get_status_fn=lambda output_dir: mock_status)
         view.load_status()
 
-        # Should have 7 stage rows
-        assert len(view.stage_rows) == 7
+        # Should have 8 stage rows (merge added)
+        assert len(view.stage_rows) == 8
 
     def test_stage_status_text_shows_correctly(self, state, mock_status, tmp_path):
         """Each stage row should display the stage name and its status."""
@@ -231,7 +232,7 @@ class TestOutputDirChange:
         view = StatusView(state, get_status_fn=lambda output_dir: mock_status)
         view._on_load_click(None)
 
-        assert len(view.stage_rows) == 7
+        assert len(view.stage_rows) == 8
 
     def test_load_with_no_output_dir_shows_message(self, state):
         """Loading when output_dir is empty should show an error message."""

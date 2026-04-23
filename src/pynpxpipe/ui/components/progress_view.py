@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import panel as pn
 
-from pynpxpipe.pipelines.runner import STAGE_ORDER
+from pynpxpipe.pipelines.constants import STAGE_ORDER
 from pynpxpipe.ui.state import AppState
 
 _STATUS_ICONS = {

@@ -370,6 +370,73 @@ def test_subject_form_load_from_yaml(tmp_path: Path):
     assert form.age_input.value == "P5Y"
 
 
+def test_subject_form_image_vault_paths_split_on_newlines():
+    """image_vault_paths input parses one path per non-empty line."""
+    from pathlib import Path as _Path
+
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state)
+    form.subject_id_input.value = "MaoDan"
+    form.species_input.value = "Macaca mulatta"
+    form.age_input.value = "P3Y"
+    form.weight_input.value = "10kg"
+    form.image_vault_paths_input.value = "/data/stimuli\n\n/mnt/shared/stim_library\n"
+
+    assert state.subject_config is not None
+    assert state.subject_config.image_vault_paths == [
+        _Path("/data/stimuli"),
+        _Path("/mnt/shared/stim_library"),
+    ]
+
+
+def test_subject_form_image_vault_paths_empty_stays_empty():
+    """Empty or whitespace-only vault input yields an empty list."""
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state)
+    form.subject_id_input.value = "MaoDan"
+    form.species_input.value = "Macaca mulatta"
+    form.age_input.value = "P3Y"
+    form.weight_input.value = "10kg"
+    form.image_vault_paths_input.value = "   \n\n"
+
+    assert state.subject_config is not None
+    assert state.subject_config.image_vault_paths == []
+
+
+def test_subject_form_image_vault_paths_save_round_trip(tmp_path: Path):
+    """Vault paths survive a save → load round trip through YAML."""
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state, project_root=tmp_path)
+    form.subject_id_input.value = "VaultMonkey"
+    form.description_input.value = "round trip"
+    form.species_input.value = "Macaca mulatta"
+    form.sex_select.value = "M"
+    form.age_input.value = "P4Y"
+    form.weight_input.value = "9kg"
+    form.image_vault_paths_input.value = "/srv/stim_a\n/srv/stim_b"
+
+    form._on_save_click(None)
+    saved = tmp_path / "monkeys" / "VaultMonkey.yaml"
+    assert saved.exists()
+
+    state2 = AppState()
+    form2 = SubjectForm(state2, project_root=tmp_path)
+    form2.load_from_yaml(saved)
+    lines = form2.image_vault_paths_input.value.splitlines()
+    assert lines == [str(Path("/srv/stim_a")), str(Path("/srv/stim_b"))]
+    assert state2.subject_config is not None
+    assert state2.subject_config.image_vault_paths == [
+        Path("/srv/stim_a"),
+        Path("/srv/stim_b"),
+    ]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # C. PipelineForm
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1025,14 +1092,48 @@ def test_stage_selector_has_all_seven_stages():
     assert list(sel.stage_checkboxes.keys()) == STAGE_ORDER
 
 
-def test_stage_selector_default_all_stages_selected():
-    """All 7 stages are checked by default; state.selected_stages == STAGE_ORDER."""
+def test_stage_selector_default_excludes_opt_in_stages():
+    """All stages except opt-in ones (merge) are checked by default.
+
+    'merge' is irreversible and gated by MergeConfig.enabled (default False),
+    so its checkbox starts unchecked to keep the two switches aligned.
+    """
     from pynpxpipe.pipelines.runner import STAGE_ORDER
     from pynpxpipe.ui.components.stage_selector import StageSelector
 
     state = AppState()
     StageSelector(state)
-    assert state.selected_stages == STAGE_ORDER
+    expected = [s for s in STAGE_ORDER if s != "merge"]
+    assert state.selected_stages == expected
+    assert "merge" not in state.selected_stages
+
+
+def test_stage_selector_warns_when_merge_selected_but_param_disabled():
+    """Checking the merge stage while MergeConfig.enabled=False triggers a warning."""
+    from types import SimpleNamespace
+
+    from pynpxpipe.ui.components.stage_selector import StageSelector
+
+    state = AppState()
+    state.pipeline_config = SimpleNamespace(merge=SimpleNamespace(enabled=False))
+    sel = StageSelector(state)
+    sel.stage_checkboxes["merge"].value = True
+    assert "merge" in state.selected_stages
+    assert "Auto-Merge is disabled" in sel.dependency_warning
+
+
+def test_stage_selector_no_merge_warning_when_param_enabled():
+    """If MergeConfig.enabled=True, checking merge does NOT trigger the mismatch warning."""
+    from types import SimpleNamespace
+
+    from pynpxpipe.ui.components.stage_selector import StageSelector
+
+    state = AppState()
+    state.pipeline_config = SimpleNamespace(merge=SimpleNamespace(enabled=True))
+    sel = StageSelector(state)
+    sel.stage_checkboxes["merge"].value = True
+    assert "merge" in state.selected_stages
+    assert "Auto-Merge is disabled" not in sel.dependency_warning
 
 
 def test_stage_selector_deselect_all_clears_selection():
@@ -1309,8 +1410,17 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     "sync.generate_plots": "generate_plots_checkbox",
     "sync.gap_threshold_ms": "gap_threshold_input",
     "sync.trial_start_bit": "trial_start_bit_input",
+    "sync.stim_onset_bit": "stim_onset_bit_input",
+    "sync.stim_count_tolerance": "stim_count_tolerance_input",
+    "export.derivatives.enabled": "derivatives_enabled_checkbox",
+    "export.derivatives.pre_onset_ms": "derivatives_pre_onset_ms_input",
+    "export.derivatives.post_onset_ms": "derivatives_post_onset_ms_input",
+    "export.derivatives.bin_size_ms": "derivatives_bin_size_ms_input",
+    "export.derivatives.n_jobs": "derivatives_n_jobs_input",
     "sync.pd_window_pre_ms": "pd_window_pre_input",
     "sync.pd_window_post_ms": "pd_window_post_input",
+    "sync.pd_hignline_skip_ms": "pd_hignline_skip_input",
+    "sync.pd_hignline_width_ms": "pd_hignline_width_input",
     "sync.pd_min_signal_variance": "pd_min_variance_input",
     "postprocess.slay_pre_s": "slay_pre_input",
     "postprocess.slay_post_s": "slay_post_input",
@@ -1318,6 +1428,16 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     "postprocess.eye_validation.enabled": "eye_enabled_checkbox",
     "postprocess.eye_validation.eye_threshold": "eye_threshold_input",
     "merge.enabled": "merge_enabled_checkbox",
+    "curation.bombcell.amplitude_median_min": "bombcell_amplitude_median_min_input",
+    "curation.bombcell.num_spikes_min": "bombcell_num_spikes_min_input",
+    "curation.bombcell.presence_ratio_min": "bombcell_presence_ratio_min_input",
+    "curation.bombcell.snr_min": "bombcell_snr_min_input",
+    "curation.bombcell.amplitude_cutoff_max": "bombcell_amplitude_cutoff_max_input",
+    "curation.bombcell.rp_contamination_max": "bombcell_rp_contamination_max_input",
+    "curation.bombcell.drift_ptp_max": "bombcell_drift_ptp_max_input",
+    "curation.bombcell.label_non_somatic": "bombcell_label_non_somatic_checkbox",
+    "curation.bombcell.split_non_somatic_good_mua": "bombcell_split_non_somatic_good_mua_checkbox",
+    "curation.bombcell.extra_overrides": None,  # advanced; edit YAML directly
 }
 
 
@@ -1326,6 +1446,9 @@ SORTING_FORM_FIELD_TO_WIDGET = {
     "sorter.name": "sorter_select",
     "sorter.params.nblocks": "nblocks_input",
     "sorter.params.Th_learned": "th_learned_input",
+    "sorter.params.Th_universal": None,  # pinned; not exposed in UI (§IV.8)
+    "sorter.params.cluster_downsampling": None,  # pinned; not exposed in UI (§IV.8)
+    "sorter.params.max_cluster_subset": None,  # pinned; not exposed in UI (§IV.8)
     "sorter.params.do_CAR": "do_car_checkbox",
     "sorter.params.batch_size": "batch_size_input",
     "sorter.params.n_jobs": "n_jobs_input",
@@ -1389,7 +1512,9 @@ def test_pipeline_form_covers_all_pipeline_config_fields():
         f"{extra_in_map}"
     )
     missing_widgets = [
-        (f, w) for f, w in PIPELINE_FORM_FIELD_TO_WIDGET.items() if not hasattr(form, w)
+        (f, w)
+        for f, w in PIPELINE_FORM_FIELD_TO_WIDGET.items()
+        if w is not None and not hasattr(form, w)
     ]
     assert not missing_widgets, (
         f"PipelineForm is missing widget attributes for fields: {missing_widgets}"
@@ -1415,7 +1540,9 @@ def test_sorting_form_covers_all_sorting_config_fields():
         f"SORTING_FORM_FIELD_TO_WIDGET references non-existent SortingConfig fields: {extra_in_map}"
     )
     missing_widgets = [
-        (f, w) for f, w in SORTING_FORM_FIELD_TO_WIDGET.items() if not hasattr(form, w)
+        (f, w)
+        for f, w in SORTING_FORM_FIELD_TO_WIDGET.items()
+        if w is not None and not hasattr(form, w)
     ]
     assert not missing_widgets, (
         f"SortingForm is missing widget attributes for fields: {missing_widgets}"

@@ -9,8 +9,11 @@ import panel as pn
 from pynpxpipe.core.config import (
     BadChannelConfig,
     BandpassConfig,
+    BombcellConfig,
     CommonReferenceConfig,
     CurationConfig,
+    DerivativesConfig,
+    ExportConfig,
     EyeValidationConfig,
     MergeConfig,
     MotionCorrectionConfig,
@@ -24,6 +27,21 @@ from pynpxpipe.core.config import (
 from pynpxpipe.ui.state import AppState
 
 _DEFAULTS = PipelineConfig()
+
+
+def _parse_post_onset_ms(raw: str) -> float | str:
+    """Parse the Phase 2.5 post-onset TextInput value.
+
+    Accepts the literal ``"auto"`` (case-insensitive) or a numeric string.
+    Unparseable input falls back to ``"auto"``.
+    """
+    s = (raw or "").strip()
+    if not s or s.lower() == "auto":
+        return "auto"
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return "auto"
 
 
 class PipelineForm:
@@ -159,6 +177,58 @@ class PipelineForm:
             description="SNR lower bound for SUA classification (fallback when use_bombcell=False).",
         )
 
+        # ── Bombcell thresholds (active when use_bombcell=True) ──
+        self.bombcell_amplitude_median_min_input = pn.widgets.FloatInput(
+            name="Amplitude Median Min (µV)",
+            value=_DEFAULTS.curation.bombcell.amplitude_median_min,
+            step=1.0,
+            description="Bombcell MUA lower bound on amplitude_median. SI default 30, MATLAB bc default 20.",
+        )
+        self.bombcell_num_spikes_min_input = pn.widgets.IntInput(
+            name="Num Spikes Min",
+            value=_DEFAULTS.curation.bombcell.num_spikes_min,
+            step=10,
+            description="Bombcell MUA lower bound on total spike count. SI default 300, MATLAB bc default 50.",
+        )
+        self.bombcell_presence_ratio_min_input = pn.widgets.FloatInput(
+            name="Bombcell Presence Ratio Min",
+            value=_DEFAULTS.curation.bombcell.presence_ratio_min,
+            step=0.05,
+            description="Bombcell MUA lower bound on presence ratio. SI default 0.7, MATLAB bc default 0.2.",
+        )
+        self.bombcell_snr_min_input = pn.widgets.FloatInput(
+            name="Bombcell SNR Min",
+            value=_DEFAULTS.curation.bombcell.snr_min,
+            step=0.5,
+            description="Bombcell MUA lower bound on SNR. SI default 5, MATLAB bc default 3.",
+        )
+        self.bombcell_amplitude_cutoff_max_input = pn.widgets.FloatInput(
+            name="Bombcell Amplitude Cutoff Max",
+            value=_DEFAULTS.curation.bombcell.amplitude_cutoff_max,
+            step=0.05,
+            description="Bombcell MUA upper bound on amplitude cutoff (fraction of missed spikes).",
+        )
+        self.bombcell_rp_contamination_max_input = pn.widgets.FloatInput(
+            name="Refractory Period Contamination Max",
+            value=_DEFAULTS.curation.bombcell.rp_contamination_max,
+            step=0.05,
+            description="Bombcell MUA upper bound on refractory period contamination.",
+        )
+        self.bombcell_drift_ptp_max_input = pn.widgets.FloatInput(
+            name="Drift PtP Max (µm)",
+            value=_DEFAULTS.curation.bombcell.drift_ptp_max,
+            step=10.0,
+            description="Bombcell MUA upper bound on drift peak-to-peak (µm).",
+        )
+        self.bombcell_label_non_somatic_checkbox = pn.widgets.Checkbox(
+            name="Label non-somatic units (Bombcell)",
+            value=_DEFAULTS.curation.bombcell.label_non_somatic,
+        )
+        self.bombcell_split_non_somatic_good_mua_checkbox = pn.widgets.Checkbox(
+            name="Split non-somatic MUA from good MUA (Bombcell)",
+            value=_DEFAULTS.curation.bombcell.split_non_somatic_good_mua,
+        )
+
         # ── Sync ──
         _sync = _DEFAULTS.sync
         self.sync_bit_input = pn.widgets.IntInput(
@@ -224,6 +294,31 @@ class PipelineForm:
             disabled=_sync.trial_start_bit is None,
             description="Optional NIDQ bit marking trial start (leave disabled to infer from event codes).",
         )
+        self.stim_onset_bit_enable_checkbox = pn.widgets.Checkbox(
+            name="Enable Explicit Stim Onset Bit",
+            value=_sync.stim_onset_bit is not None,
+        )
+        self.stim_onset_bit_input = pn.widgets.IntInput(
+            name="Stim Onset Bit",
+            value=_sync.stim_onset_bit if _sync.stim_onset_bit is not None else 5,
+            start=0,
+            end=7,
+            disabled=_sync.stim_onset_bit is None,
+            description=(
+                "Optional decoded-domain NIDQ bit (0-7) marking stim onset rising edge. "
+                "Leave disabled to auto-detect by matching BHV stim count. "
+                "NOTE: decoded bit, not raw ML bit — e.g. ML code 64 → decoded bit 5."
+            ),
+        )
+        self.stim_count_tolerance_input = pn.widgets.IntInput(
+            name="Stim Count Tolerance (per-trial)",
+            value=_sync.stim_count_tolerance,
+            start=0,
+            description=(
+                "Per-trial tolerance for BHV2 vs NIDQ stim count mismatch. "
+                "0 = strict (mismatched trials get NaN). Above this, all stims in that trial → NaN."
+            ),
+        )
         self.photodiode_channel_input = pn.widgets.IntInput(
             name="Photodiode Channel Index",
             value=_sync.photodiode_channel_index,
@@ -257,6 +352,26 @@ class PipelineForm:
             step=1e-6,
             description="Below this variance the photodiode channel is treated as absent (skip calibration).",
         )
+        self.pd_hignline_skip_input = pn.widgets.FloatInput(
+            name="PD Hignline Skip (ms)",
+            value=_sync.pd_hignline_skip_ms,
+            start=0.0,
+            step=5.0,
+            description=(
+                "Skip this many ms after trigger before sampling the hignline (steady-state) "
+                "window used to compute the detection threshold. Matches MATLAB after_onset_measure=50."
+            ),
+        )
+        self.pd_hignline_width_input = pn.widgets.FloatInput(
+            name="PD Hignline Width (ms)",
+            value=_sync.pd_hignline_width_ms,
+            start=1.0,
+            step=5.0,
+            description=(
+                "Width of the hignline window used for threshold computation. "
+                "Matches MATLAB [1:20] = 20 ms."
+            ),
+        )
         self.generate_plots_checkbox = pn.widgets.Checkbox(
             name="Generate Sync Diagnostic Plots (requires matplotlib)",
             value=_sync.generate_plots,
@@ -268,6 +383,10 @@ class PipelineForm:
         )
         self.trial_start_bit_enable_checkbox.param.watch(
             lambda e: setattr(self.trial_start_bit_input, "disabled", not e.new),
+            "value",
+        )
+        self.stim_onset_bit_enable_checkbox.param.watch(
+            lambda e: setattr(self.stim_onset_bit_input, "disabled", not e.new),
             "value",
         )
 
@@ -308,6 +427,39 @@ class PipelineForm:
             value=_DEFAULTS.merge.enabled,
         )
 
+        # ── Export (Phase 2.5 derivatives) ──
+        _deriv = _DEFAULTS.export.derivatives
+        self.derivatives_enabled_checkbox = pn.widgets.Checkbox(
+            name="Enable Phase 2.5 derivatives (TrialRaster/UnitProp/TrialRecord)",
+            value=_deriv.enabled,
+        )
+        self.derivatives_pre_onset_ms_input = pn.widgets.FloatInput(
+            name="Pre-onset window (ms)",
+            value=float(_deriv.pre_onset_ms),
+            start=0.0,
+            step=1.0,
+            description="Pre-stimulus raster window, relative to trials.start_time.",
+        )
+        # post_onset_ms is "auto" OR numeric — use a TextInput so "auto"
+        # stays representable; parsed at _rebuild_config time.
+        self.derivatives_post_onset_ms_input = pn.widgets.TextInput(
+            name="Post-onset window (ms or 'auto')",
+            value=str(_deriv.post_onset_ms),
+            description='"auto" reads max(onset_time + offset_time) from BHV2 VariableChanges.',
+        )
+        self.derivatives_bin_size_ms_input = pn.widgets.FloatInput(
+            name="Bin size (ms)",
+            value=float(_deriv.bin_size_ms),
+            start=0.1,
+            step=0.1,
+        )
+        self.derivatives_n_jobs_input = pn.widgets.IntInput(
+            name="Raster parallelism (n_jobs)",
+            value=int(_deriv.n_jobs),
+            start=1,
+            step=1,
+        )
+
         # Watch all widgets
         all_widgets = [
             self.n_jobs_input,
@@ -340,10 +492,15 @@ class PipelineForm:
             self.gap_threshold_input,
             self.trial_start_bit_enable_checkbox,
             self.trial_start_bit_input,
+            self.stim_onset_bit_enable_checkbox,
+            self.stim_onset_bit_input,
+            self.stim_count_tolerance_input,
             self.photodiode_channel_input,
             self.monitor_delay_input,
             self.pd_window_pre_input,
             self.pd_window_post_input,
+            self.pd_hignline_skip_input,
+            self.pd_hignline_width_input,
             self.pd_min_variance_input,
             self.generate_plots_checkbox,
             self.slay_pre_input,
@@ -352,6 +509,11 @@ class PipelineForm:
             self.eye_enabled_checkbox,
             self.eye_threshold_input,
             self.merge_enabled_checkbox,
+            self.derivatives_enabled_checkbox,
+            self.derivatives_pre_onset_ms_input,
+            self.derivatives_post_onset_ms_input,
+            self.derivatives_bin_size_ms_input,
+            self.derivatives_n_jobs_input,
         ]
         for w in all_widgets:
             w.param.watch(self._rebuild_config, "value")
@@ -418,6 +580,17 @@ class PipelineForm:
                 good_isi_max=self.good_isi_max_input.value,
                 good_snr_min=self.good_snr_min_input.value,
                 use_bombcell=self.use_bombcell_checkbox.value,
+                bombcell=BombcellConfig(
+                    amplitude_median_min=self.bombcell_amplitude_median_min_input.value,
+                    num_spikes_min=self.bombcell_num_spikes_min_input.value,
+                    presence_ratio_min=self.bombcell_presence_ratio_min_input.value,
+                    snr_min=self.bombcell_snr_min_input.value,
+                    amplitude_cutoff_max=self.bombcell_amplitude_cutoff_max_input.value,
+                    rp_contamination_max=self.bombcell_rp_contamination_max_input.value,
+                    drift_ptp_max=self.bombcell_drift_ptp_max_input.value,
+                    label_non_somatic=self.bombcell_label_non_somatic_checkbox.value,
+                    split_non_somatic_good_mua=self.bombcell_split_non_somatic_good_mua_checkbox.value,
+                ),
             ),
             sync=SyncConfig(
                 imec_sync_bit=self.sync_bit_input.value,
@@ -439,8 +612,16 @@ class PipelineForm:
                     if self.trial_start_bit_enable_checkbox.value
                     else None
                 ),
+                stim_onset_bit=(
+                    self.stim_onset_bit_input.value
+                    if self.stim_onset_bit_enable_checkbox.value
+                    else None
+                ),
+                stim_count_tolerance=self.stim_count_tolerance_input.value,
                 pd_window_pre_ms=self.pd_window_pre_input.value,
                 pd_window_post_ms=self.pd_window_post_input.value,
+                pd_hignline_skip_ms=self.pd_hignline_skip_input.value,
+                pd_hignline_width_ms=self.pd_hignline_width_input.value,
                 pd_min_signal_variance=self.pd_min_variance_input.value,
             ),
             postprocess=PostprocessConfig(
@@ -453,6 +634,15 @@ class PipelineForm:
                 ),
             ),
             merge=MergeConfig(enabled=self.merge_enabled_checkbox.value),
+            export=ExportConfig(
+                derivatives=DerivativesConfig(
+                    enabled=self.derivatives_enabled_checkbox.value,
+                    pre_onset_ms=float(self.derivatives_pre_onset_ms_input.value),
+                    post_onset_ms=_parse_post_onset_ms(self.derivatives_post_onset_ms_input.value),
+                    bin_size_ms=float(self.derivatives_bin_size_ms_input.value),
+                    n_jobs=int(self.derivatives_n_jobs_input.value),
+                ),
+            ),
         )
 
     # ── Layout ──
@@ -501,6 +691,16 @@ class PipelineForm:
                 self.snr_min_input,
                 self.good_isi_max_input,
                 self.good_snr_min_input,
+                pn.pane.Markdown("**Bombcell thresholds (used when use_bombcell=True)**"),
+                self.bombcell_amplitude_median_min_input,
+                self.bombcell_num_spikes_min_input,
+                self.bombcell_presence_ratio_min_input,
+                self.bombcell_snr_min_input,
+                self.bombcell_amplitude_cutoff_max_input,
+                self.bombcell_rp_contamination_max_input,
+                self.bombcell_drift_ptp_max_input,
+                self.bombcell_label_non_somatic_checkbox,
+                self.bombcell_split_non_somatic_good_mua_checkbox,
                 title="Curation Thresholds",
                 collapsed=True,
             ),
@@ -515,6 +715,9 @@ class PipelineForm:
                 self.trial_count_tolerance_input,
                 self.trial_start_bit_enable_checkbox,
                 self.trial_start_bit_input,
+                self.stim_onset_bit_enable_checkbox,
+                self.stim_onset_bit_input,
+                self.stim_count_tolerance_input,
                 self.photodiode_channel_input,
                 self.monitor_delay_input,
                 self.pd_window_pre_input,
@@ -536,6 +739,15 @@ class PipelineForm:
             pn.Card(
                 self.merge_enabled_checkbox,
                 title="Auto-Merge (opt-in, irreversible)",
+                collapsed=True,
+            ),
+            pn.Card(
+                self.derivatives_enabled_checkbox,
+                self.derivatives_pre_onset_ms_input,
+                self.derivatives_post_onset_ms_input,
+                self.derivatives_bin_size_ms_input,
+                self.derivatives_n_jobs_input,
+                title="Export — Derivatives (Phase 2.5)",
                 collapsed=True,
             ),
         )

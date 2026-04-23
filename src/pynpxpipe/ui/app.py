@@ -23,6 +23,7 @@ from pynpxpipe.ui.components.chat_help import ChatHelp
 from pynpxpipe.ui.components.figs_viewer import FigsViewer
 from pynpxpipe.ui.components.log_viewer import LogViewer
 from pynpxpipe.ui.components.pipeline_form import PipelineForm
+from pynpxpipe.ui.components.probe_region_editor import ProbeRegionEditor
 from pynpxpipe.ui.components.progress_view import ProgressView
 from pynpxpipe.ui.components.run_panel import RunPanel
 from pynpxpipe.ui.components.session_form import SessionForm
@@ -137,6 +138,7 @@ def create_app() -> pn.viewable.Viewable:
     # ── Components ──
     session_form = SessionForm(state)
     subject_form = SubjectForm(state)
+    probe_region_editor = ProbeRegionEditor(state)
     pipeline_form = PipelineForm(state)
     sorting_form = SortingForm(state)
     stage_selector = StageSelector(state)
@@ -184,6 +186,9 @@ def create_app() -> pn.viewable.Viewable:
                 else Path(str(st.session_dir)) / "dummy.bhv2",
                 subject=st.subject_config,
                 output_dir=output_path,
+                experiment=st.experiment,
+                probe_plan=dict(st.probe_plan),
+                date=st.recording_date,
             )
 
         setup_logging(session.log_path)
@@ -223,6 +228,7 @@ def create_app() -> pn.viewable.Viewable:
     configure_left = pn.Column(
         session_form.panel(),
         subject_form.panel(),
+        probe_region_editor.panel(),
         stage_selector.panel(),
         sizing_mode="stretch_width",
     )
@@ -297,6 +303,21 @@ def create_app() -> pn.viewable.Viewable:
 
     state.param.watch(_on_error_change, ["error_message"])
 
+    # ── Safe-to-exit banner ──
+    # Driven by AppState.safe_to_exit, which RunPanel flips to True after a
+    # successful pipeline (including Phase 3 raw export + bit-exact verify).
+    safe_banner = pn.pane.Alert(
+        "✅ 处理完成，可安全关闭窗口。",
+        alert_type="success",
+        visible=False,
+        sizing_mode="stretch_width",
+    )
+
+    def _on_safe_to_exit_change(event) -> None:
+        safe_banner.visible = bool(event.new)
+
+    state.param.watch(_on_safe_to_exit_change, ["safe_to_exit"])
+
     # ── Sidebar navigation ──
     nav_buttons = {}
     for label in ("Configure", "Execute", "Review", "Help"):
@@ -339,6 +360,7 @@ def create_app() -> pn.viewable.Viewable:
         ],
         main=[
             error_banner,
+            safe_banner,
             configure_section,
             execute_section,
             review_section,
@@ -350,6 +372,7 @@ def create_app() -> pn.viewable.Viewable:
     template._pynpx_sections = sections
     template._pynpx_switch = switch_section
     template._pynpx_error_banner = error_banner
+    template._pynpx_safe_banner = safe_banner
     template._pynpx_state = state
 
     return template

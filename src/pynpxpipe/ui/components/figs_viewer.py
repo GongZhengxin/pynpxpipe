@@ -56,11 +56,15 @@ class FigsViewer:
         )
         self.filter_input.param.watch(lambda _e: self._apply_filter(), "value")
 
-        self.gallery_container = pn.FlexBox(
+        # Gallery is a Column of per-stage Cards; each Card holds a FlexBox of
+        # thumbnail widgets. Grouping preserves filter ergonomics for pipelines
+        # that emit dozens of figures across sync / curated / postprocessed.
+        self.gallery_container = pn.Column(
             sizing_mode="stretch_width",
-            align_items="flex-start",
-            flex_wrap="wrap",
         )
+        # Flat registry of thumbnail widgets across all groups, used by
+        # ``_apply_filter`` and unit tests to iterate regardless of grouping.
+        self._thumbnails: list[pn.viewable.Viewable] = []
 
         # Modal preview (hidden until a thumbnail is clicked)
         self.preview_pane = pn.pane.PNG(
@@ -130,11 +134,63 @@ class FigsViewer:
     # ------------------------------------------------------------------
 
     def _build_gallery(self) -> None:
-        """Create a thumbnail card per figure path."""
+        """Group thumbnails by stage (top-level output dir) into collapsible Cards."""
         self.gallery_container.clear()
+        self._thumbnails = []
+
+        output_root = Path(self._state.output_dir) if self._state.output_dir else None
+
+        # Group paths by stage — the first path component under output_dir.
+        groups: dict[str, list[Path]] = {}
         for path in self.figure_paths:
-            self.gallery_container.append(self._make_thumbnail(path))
+            group_key = self._group_key(path, output_root)
+            groups.setdefault(group_key, []).append(path)
+
+        for group_key in sorted(groups):
+            group_paths = groups[group_key]
+            group_flex = pn.FlexBox(
+                sizing_mode="stretch_width",
+                align_items="flex-start",
+                flex_wrap="wrap",
+            )
+            for path in group_paths:
+                thumb = self._make_thumbnail(path)
+                self._thumbnails.append(thumb)
+                group_flex.append(thumb)
+
+            card = pn.Card(
+                group_flex,
+                title=f"{group_key} ({len(group_paths)} figures)",
+                collapsible=True,
+                collapsed=False,
+                sizing_mode="stretch_width",
+                margin=(4, 0),
+            )
+            # Tag the card so tests can introspect grouping without drilling
+            # into Panel's Card internals.
+            card._pynpx_group_key = group_key
+            card._pynpx_flex = group_flex
+            self.gallery_container.append(card)
+
         self._apply_filter()
+
+    @staticmethod
+    def _group_key(path: Path, output_root: Path | None) -> str:
+        """Return the stage group name for a figure path.
+
+        Uses the first component of the relative path under ``output_root``
+        (e.g. ``04_sync``, ``05_curated``, ``06_postprocessed``,
+        ``01_preprocessed``). Falls back to the immediate parent directory
+        name when the path is not rooted under ``output_root``.
+        """
+        if output_root is not None:
+            try:
+                relative = path.relative_to(output_root)
+                if relative.parts:
+                    return relative.parts[0]
+            except ValueError:
+                pass
+        return path.parent.name or "figures"
 
     def _make_thumbnail(self, path: Path) -> pn.viewable.Viewable:
         """Build a single thumbnail card (label + image + open button)."""
@@ -166,14 +222,29 @@ class FigsViewer:
         return card
 
     def _apply_filter(self) -> None:
-        """Hide gallery entries whose filename does not match the filter."""
+        """Hide gallery entries whose filename does not match the filter.
+
+        Works across grouped thumbnails (Cards containing FlexBoxes). A Card
+        with zero visible thumbnails is itself hidden to avoid empty cards
+        cluttering the layout.
+        """
         needle = (self.filter_input.value or "").strip().lower()
-        for item in self.gallery_container:
-            name = getattr(item, "_pynpx_fig_name", "")
+
+        # Update every thumbnail's visibility.
+        for thumb in self._thumbnails:
+            name = getattr(thumb, "_pynpx_fig_name", "")
             if needle and needle not in name.lower():
-                item.visible = False
+                thumb.visible = False
             else:
-                item.visible = True
+                thumb.visible = True
+
+        # Hide cards whose entire thumbnail set is filtered out.
+        for card in self.gallery_container:
+            flex = getattr(card, "_pynpx_flex", None)
+            if flex is None:
+                continue
+            any_visible = any(getattr(thumb, "visible", True) for thumb in flex)
+            card.visible = any_visible
 
     # ------------------------------------------------------------------
     # Event handlers

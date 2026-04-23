@@ -199,3 +199,28 @@ class TestConfigureLayout:
         app = create_app()
         configure = app._pynpx_sections["configure"]
         assert configure.sizing_mode == "stretch_width"
+
+
+# ---------------------------------------------------------------------------
+# F. SID S3 — ProbeRegionEditor mounted in the left column
+# ---------------------------------------------------------------------------
+
+
+class TestProbeRegionEditorMount:
+    def test_left_column_includes_probe_region_editor(self):
+        """Left column should contain 'Probe Regions' heading somewhere under configure."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        left_col = app._pynpx_sections["configure"].objects[0]
+        # Flatten the column and look for the Probe Regions markdown heading.
+        haystack: list = []
+
+        def _walk(obj):
+            haystack.append(obj)
+            for child in getattr(obj, "objects", []) or []:
+                _walk(child)
+
+        _walk(left_col)
+        texts = [getattr(o, "object", "") for o in haystack if hasattr(o, "object")]
+        assert any("Probe Regions" in str(t) for t in texts)

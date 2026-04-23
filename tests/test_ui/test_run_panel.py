@@ -120,11 +120,11 @@ class TestRunPanel:
         rp = RunPanel(state)
         assert "idle" in rp.status_text.object.lower() or "ready" in rp.status_text.object.lower()
 
-    def test_run_sets_status_running(self):
+    def test_run_sets_status_running(self, tmp_path):
         """Clicking Run with a mock pipeline_fn sets run_status to 'running'."""
         from pynpxpipe.ui.components.run_panel import RunPanel
 
-        state = AppState()
+        state = _fully_populated_state(tmp_path)
         started = threading.Event()
         proceed = threading.Event()
 
@@ -143,11 +143,11 @@ class TestRunPanel:
         if rp._thread is not None:
             rp._thread.join(timeout=3)
 
-    def test_run_completes_sets_status_completed(self):
+    def test_run_completes_sets_status_completed(self, tmp_path):
         """When pipeline_fn completes without error, status becomes 'completed'."""
         from pynpxpipe.ui.components.run_panel import RunPanel
 
-        state = AppState()
+        state = _fully_populated_state(tmp_path)
 
         def mock_fn(st, bridge):
             pass  # instant completion
@@ -160,11 +160,43 @@ class TestRunPanel:
             rp._thread.join(timeout=3)
         assert state.run_status == "completed"
 
-    def test_run_error_sets_status_failed(self):
+    def test_run_completes_sets_safe_to_exit_true(self, tmp_path):
+        """On success, safe_to_exit flips to True for the 'safe to close' banner."""
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        assert state.safe_to_exit is False
+
+        rp = RunPanel(state, pipeline_fn=lambda st, br: None)
+        rp._on_run_click(None)
+        if rp._thread is not None:
+            rp._thread.join(timeout=3)
+
+        assert state.run_status == "completed"
+        assert state.safe_to_exit is True
+
+    def test_run_failure_keeps_safe_to_exit_false(self, tmp_path):
+        """On pipeline failure, safe_to_exit remains False."""
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+
+        def failing_fn(st, bridge):
+            raise RuntimeError("boom")
+
+        rp = RunPanel(state, pipeline_fn=failing_fn)
+        rp._on_run_click(None)
+        if rp._thread is not None:
+            rp._thread.join(timeout=3)
+
+        assert state.run_status == "failed"
+        assert state.safe_to_exit is False
+
+    def test_run_error_sets_status_failed(self, tmp_path):
         """When pipeline_fn raises, status becomes 'failed' with error_message."""
         from pynpxpipe.ui.components.run_panel import RunPanel
 
-        state = AppState()
+        state = _fully_populated_state(tmp_path)
 
         def failing_fn(st, bridge):
             raise RuntimeError("test explosion")
@@ -176,11 +208,11 @@ class TestRunPanel:
         assert state.run_status == "failed"
         assert "test explosion" in state.error_message
 
-    def test_run_button_disabled_during_running(self):
+    def test_run_button_disabled_during_running(self, tmp_path):
         """Run button is disabled while pipeline is running."""
         from pynpxpipe.ui.components.run_panel import RunPanel
 
-        state = AppState()
+        state = _fully_populated_state(tmp_path)
 
         started = threading.Event()
         proceed = threading.Event()
@@ -198,11 +230,11 @@ class TestRunPanel:
         if rp._thread is not None:
             rp._thread.join(timeout=3)
 
-    def test_stop_sets_interrupt_flag(self):
+    def test_stop_sets_interrupt_flag(self, tmp_path):
         """Clicking Stop sets the interrupt event."""
         from pynpxpipe.ui.components.run_panel import RunPanel
 
-        state = AppState()
+        state = _fully_populated_state(tmp_path)
 
         started = threading.Event()
 
@@ -220,11 +252,11 @@ class TestRunPanel:
         if rp._thread is not None:
             rp._thread.join(timeout=3)
 
-    def test_double_run_ignored(self):
+    def test_double_run_ignored(self, tmp_path):
         """Clicking Run while already running does nothing (no second thread)."""
         from pynpxpipe.ui.components.run_panel import RunPanel
 
-        state = AppState()
+        state = _fully_populated_state(tmp_path)
 
         started = threading.Event()
         proceed = threading.Event()
@@ -243,6 +275,98 @@ class TestRunPanel:
         proceed.set()
         if rp._thread is not None:
             rp._thread.join(timeout=3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B'. RunPanel — SID S3 pre-execution validation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _fully_populated_state(tmp_path) -> AppState:
+    """Return an AppState that passes all pre-exec null-checks."""
+    from pynpxpipe.core.session import SubjectConfig
+
+    state = AppState()
+    session_dir = tmp_path / "run_g0"
+    session_dir.mkdir()
+    state.session_dir = session_dir
+    state.output_dir = tmp_path / "out"
+    state.subject_config = SubjectConfig(
+        subject_id="MaoDan",
+        description="",
+        species="Macaca mulatta",
+        sex="M",
+        age="P4Y",
+        weight="12kg",
+    )
+    state.experiment = "nsd1w"
+    state.recording_date = "251024"
+    state.probe_plan = {"imec0": "V4"}
+    return state
+
+
+class TestRunPanelPreExecValidation:
+    """Null-check gate: the run thread must not start when any NWB field is blank."""
+
+    def test_blocks_when_experiment_blank(self, tmp_path):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        state.experiment = ""
+        called = []
+        rp = RunPanel(state, pipeline_fn=lambda st, br: called.append(True))
+        rp._on_run_click(None)
+        assert rp._thread is None
+        assert rp.validation_alert.visible is True
+        assert "Experiment" in rp.validation_alert.object
+        assert state.run_status == "idle"
+        assert called == []
+
+    def test_blocks_when_recording_date_blank(self, tmp_path):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        state.recording_date = ""
+        rp = RunPanel(state, pipeline_fn=lambda st, br: None)
+        rp._on_run_click(None)
+        assert rp._thread is None
+        assert "Recording date" in rp.validation_alert.object
+
+    def test_blocks_when_probe_plan_empty_area(self, tmp_path):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        state.probe_plan = {"imec0": ""}
+        rp = RunPanel(state, pipeline_fn=lambda st, br: None)
+        rp._on_run_click(None)
+        assert rp._thread is None
+        assert "probe" in rp.validation_alert.object.lower()
+
+    def test_blocks_when_subject_missing(self, tmp_path):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        state.subject_config = None
+        rp = RunPanel(state, pipeline_fn=lambda st, br: None)
+        rp._on_run_click(None)
+        assert rp._thread is None
+        assert "Subject" in rp.validation_alert.object
+
+    def test_passes_when_all_fields_populated(self, tmp_path):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        ran = threading.Event()
+
+        def fn(st, br):
+            ran.set()
+
+        rp = RunPanel(state, pipeline_fn=fn)
+        rp._on_run_click(None)
+        if rp._thread is not None:
+            rp._thread.join(timeout=3)
+        assert ran.is_set()
+        assert rp.validation_alert.visible is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

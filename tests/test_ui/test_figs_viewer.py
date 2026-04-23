@@ -27,8 +27,8 @@ def state():
 
 @pytest.fixture()
 def fake_output_dir(tmp_path: Path) -> Path:
-    """Create an output_dir with a few PNG figures under sync/figures."""
-    figures_dir = tmp_path / "sync" / "figures"
+    """Create an output_dir with a few PNG figures under 04_sync/figures."""
+    figures_dir = tmp_path / "04_sync" / "figures"
     figures_dir.mkdir(parents=True)
     # Minimal 1x1 PNG header bytes (valid enough for file scanning).
     png_bytes = (
@@ -113,9 +113,9 @@ class TestFigureScanning:
         """Default scanner recurses (sync/figures, curate/plots, etc.)."""
         from pynpxpipe.ui.components.figs_viewer import FigsViewer
 
-        (tmp_path / "sync" / "figures").mkdir(parents=True)
+        (tmp_path / "04_sync" / "figures").mkdir(parents=True)
         (tmp_path / "postprocess" / "plots").mkdir(parents=True)
-        (tmp_path / "sync" / "figures" / "a.png").write_bytes(b"\x89PNG")
+        (tmp_path / "04_sync" / "figures" / "a.png").write_bytes(b"\x89PNG")
         (tmp_path / "postprocess" / "plots" / "b.png").write_bytes(b"\x89PNG")
 
         state.output_dir = str(tmp_path)
@@ -149,10 +149,10 @@ class TestFigureScanning:
         """Non-PNG files must not appear in figure_paths."""
         from pynpxpipe.ui.components.figs_viewer import FigsViewer
 
-        (tmp_path / "sync").mkdir()
-        (tmp_path / "sync" / "ok.png").write_bytes(b"\x89PNG")
-        (tmp_path / "sync" / "skip.txt").write_text("no")
-        (tmp_path / "sync" / "skip.jpg").write_bytes(b"\xff\xd8")
+        (tmp_path / "04_sync").mkdir()
+        (tmp_path / "04_sync" / "ok.png").write_bytes(b"\x89PNG")
+        (tmp_path / "04_sync" / "skip.txt").write_text("no")
+        (tmp_path / "04_sync" / "skip.jpg").write_bytes(b"\xff\xd8")
 
         state.output_dir = str(tmp_path)
         view = FigsViewer(state)
@@ -169,13 +169,15 @@ class TestFigureScanning:
 
 class TestFigureRendering:
     def test_gallery_has_one_entry_per_png(self, state, fake_output_dir):
+        """Every PNG yields a thumbnail (grouped or not)."""
         from pynpxpipe.ui.components.figs_viewer import FigsViewer
 
         state.output_dir = str(fake_output_dir)
         view = FigsViewer(state)
         view.load_figures()
 
-        assert len(view.gallery_container) == 3
+        # All three PNGs live under sync/figures → one card, three thumbnails.
+        assert len(view._thumbnails) == 3
 
     def test_filter_substring_narrows_gallery(self, state, fake_output_dir):
         """Entering a filter substring should hide non-matching thumbnails."""
@@ -188,7 +190,7 @@ class TestFigureRendering:
         view.filter_input.value = "residual"
         view._apply_filter()
 
-        visible = [item for item in view.gallery_container if getattr(item, "visible", True)]
+        visible = [t for t in view._thumbnails if getattr(t, "visible", True)]
         assert len(visible) == 1
 
     def test_filter_empty_shows_all(self, state, fake_output_dir):
@@ -201,7 +203,7 @@ class TestFigureRendering:
         view.filter_input.value = ""
         view._apply_filter()
 
-        visible = [item for item in view.gallery_container if getattr(item, "visible", True)]
+        visible = [t for t in view._thumbnails if getattr(t, "visible", True)]
         assert len(visible) == 3
 
 
@@ -225,3 +227,94 @@ class TestRefresh:
         view._on_refresh_click(None)
 
         assert calls["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Stage grouping
+# ---------------------------------------------------------------------------
+
+
+def _make_multistage_tree(root: Path) -> list[Path]:
+    """Create PNGs under three distinct stage directories and return them."""
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8"
+        b"\x0f\x00\x00\x01\x01\x00\x01\x5c\xcd\xff\x69\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    paths = []
+    for stage, name in (
+        ("04_sync", "01_sync_residuals.png"),
+        ("05_curated", "quality_metrics_dist.png"),
+        ("06_postprocessed", "psth_top_units.png"),
+    ):
+        d = root / stage / "figures"
+        d.mkdir(parents=True)
+        p = d / name
+        p.write_bytes(png_bytes)
+        paths.append(p)
+    return paths
+
+
+class TestStageGrouping:
+    def test_gallery_groups_by_stage(self, state, tmp_path):
+        """Three stage directories → three Cards with matching group titles."""
+        import panel as pn  # local import to keep fixture imports light
+
+        from pynpxpipe.ui.components.figs_viewer import FigsViewer
+
+        _make_multistage_tree(tmp_path)
+        state.output_dir = str(tmp_path)
+        view = FigsViewer(state)
+        view.load_figures()
+
+        cards = list(view.gallery_container)
+        assert len(cards) == 3
+        for card in cards:
+            assert isinstance(card, pn.Card)
+
+        titles = {getattr(card, "_pynpx_group_key", None) for card in cards}
+        assert titles == {"04_sync", "05_curated", "06_postprocessed"}
+
+    def test_gallery_empty_no_cards(self, state, tmp_path):
+        """An empty output dir should produce no Card widgets."""
+        from pynpxpipe.ui.components.figs_viewer import FigsViewer
+
+        state.output_dir = str(tmp_path)
+        view = FigsViewer(state)
+        view.load_figures()
+
+        assert list(view.gallery_container) == []
+        assert view._thumbnails == []
+
+    def test_filter_hides_non_matching_in_all_groups(self, state, tmp_path):
+        """Filter substring narrows visibility across every stage group."""
+        from pynpxpipe.ui.components.figs_viewer import FigsViewer
+
+        _make_multistage_tree(tmp_path)
+        state.output_dir = str(tmp_path)
+        view = FigsViewer(state)
+        view.load_figures()
+
+        # "psth" should match only the postprocessed figure.
+        view.filter_input.value = "psth"
+        view._apply_filter()
+
+        visible_thumbs = [t for t in view._thumbnails if getattr(t, "visible", True)]
+        assert len(visible_thumbs) == 1
+
+        # Cards whose thumbs are all filtered-out should be hidden.
+        visible_cards = [c for c in view.gallery_container if getattr(c, "visible", True)]
+        assert len(visible_cards) == 1
+        assert getattr(visible_cards[0], "_pynpx_group_key", None) == "06_postprocessed"
+
+    def test_single_stage_one_card(self, state, fake_output_dir):
+        """All PNGs under the same stage directory yield a single Card."""
+        from pynpxpipe.ui.components.figs_viewer import FigsViewer
+
+        state.output_dir = str(fake_output_dir)
+        view = FigsViewer(state)
+        view.load_figures()
+
+        cards = list(view.gallery_container)
+        assert len(cards) == 1
+        assert getattr(cards[0], "_pynpx_group_key", None) == "04_sync"

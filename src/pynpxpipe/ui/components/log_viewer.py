@@ -46,6 +46,17 @@ class LogViewer:
         """
         self.buffer.append(line)
 
+    def replace_last(self, line: str) -> None:
+        """Replace the most recent line in the buffer (for tqdm-style in-place updates).
+
+        Args:
+            line: New content to overwrite the last buffer entry.
+        """
+        if self.buffer:
+            self.buffer[-1] = line
+        else:
+            self.buffer.append(line)
+
     def refresh(self) -> None:
         """Update the display pane from the current buffer contents."""
         if not self.buffer:
@@ -63,7 +74,10 @@ class LogViewer:
             else:
                 lines_html.append(escaped)
 
-        self.display.object = "<br>".join(lines_html)
+        # Auto-scroll: img onerror executes even via innerHTML updates
+        _scroll_js = "this.parentElement.scrollTop=this.parentElement.scrollHeight;this.remove();"
+        scroll_tag = f'<img src="" onerror="{_scroll_js}" style="display:none">'
+        self.display.object = "<br>".join(lines_html) + scroll_tag
 
     def get_processor(self):
         """Return a structlog processor that appends to this viewer's buffer.

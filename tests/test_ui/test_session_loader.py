@@ -192,3 +192,93 @@ class TestSessionLoaderStatusIntegration:
         loader._on_load_click(None)
 
         assert state.output_dir == str(output_dir_with_session)
+
+
+# ---------------------------------------------------------------------------
+# SID S3 — restore NWB filename fields
+# ---------------------------------------------------------------------------
+
+
+class TestSessionLoaderNWBFieldRestore:
+    """SessionLoader must restore experiment / recording_date / probe_plan from session.json."""
+
+    @staticmethod
+    def _canonical_payload() -> dict:
+        return {
+            "session_dir": "C:/data/monkey_g0",
+            "output_dir": "C:/output/session1",
+            "bhv_file": "C:/data/task.bhv2",
+            "subject": {
+                "subject_id": "MaoDan",
+                "species": "Macaca mulatta",
+                "sex": "M",
+                "age": "P4Y",
+                "weight": "12kg",
+                "description": "",
+            },
+            "session_id": {
+                "date": "251024",
+                "subject": "MaoDan",
+                "experiment": "nsd1w",
+                "region": "MSB-V4",
+            },
+            "probe_plan": {"imec0": "MSB", "imec1": "V4"},
+            "probes": [],
+            "checkpoint": {},
+        }
+
+    def test_load_restores_experiment(self, tmp_path):
+        from pynpxpipe.ui.components.session_loader import SessionLoader
+
+        state = AppState()
+        payload = self._canonical_payload()
+        loader = SessionLoader(state, load_session_fn=lambda _p: payload)
+        loader.dir_input.value = str(tmp_path)
+        loader._on_load_click(None)
+        assert state.experiment == "nsd1w"
+
+    def test_load_restores_recording_date(self, tmp_path):
+        from pynpxpipe.ui.components.session_loader import SessionLoader
+
+        state = AppState()
+        payload = self._canonical_payload()
+        loader = SessionLoader(state, load_session_fn=lambda _p: payload)
+        loader.dir_input.value = str(tmp_path)
+        loader._on_load_click(None)
+        assert state.recording_date == "251024"
+
+    def test_load_restores_probe_plan(self, tmp_path):
+        from pynpxpipe.ui.components.session_loader import SessionLoader
+
+        state = AppState()
+        payload = self._canonical_payload()
+        loader = SessionLoader(state, load_session_fn=lambda _p: payload)
+        loader.dir_input.value = str(tmp_path)
+        loader._on_load_click(None)
+        assert state.probe_plan == {"imec0": "MSB", "imec1": "V4"}
+
+    def test_load_warns_when_session_json_lacks_nwb_metadata(self, tmp_path):
+        """Legacy session.json (no session_id / probe_plan) should keep state defaults and warn."""
+        from pynpxpipe.ui.components.session_loader import SessionLoader
+
+        legacy = {
+            "session_dir": "C:/data/legacy_g0",
+            "output_dir": "C:/output/legacy",
+            "bhv_file": "C:/data/task.bhv2",
+            "subject": {
+                "subject_id": "LegacyMonkey",
+                "species": "Macaca mulatta",
+                "sex": "M",
+                "age": "P4Y",
+                "weight": "12kg",
+                "description": "",
+            },
+            "probes": [],
+            "checkpoint": {},
+        }
+        state = AppState()
+        loader = SessionLoader(state, load_session_fn=lambda _p: legacy)
+        loader.dir_input.value = str(tmp_path)
+        loader._on_load_click(None)
+
+        assert "NWB filename metadata" in loader.message_pane.object

@@ -53,6 +53,14 @@ def test_app_state_default_error_message():
     assert state.error_message == ""
 
 
+def test_app_state_default_safe_to_exit_false():
+    """AppState.safe_to_exit starts as False (set by run_panel on Phase 3 OK)."""
+    from pynpxpipe.ui.state import AppState
+
+    state = AppState()
+    assert state.safe_to_exit is False
+
+
 def test_app_state_default_paths_are_none():
     """AppState path fields (session_dir, bhv_file, output_dir) default to None."""
     from pynpxpipe.ui.state import AppState
@@ -70,6 +78,73 @@ def test_app_state_run_status_rejects_invalid():
     state = AppState()
     with pytest.raises(ValueError):
         state.run_status = "not_a_valid_status"
+
+
+# ---------------------------------------------------------------------------
+# A6 — NWB filename regularization fields
+# ---------------------------------------------------------------------------
+
+
+def test_appstate_has_experiment_recording_date_probe_plan_fields():
+    """AppState exposes experiment / recording_date / probe_plan with expected defaults."""
+    from pynpxpipe.ui.state import AppState
+
+    state = AppState()
+    assert state.experiment == ""
+    assert state.recording_date == ""
+    assert state.probe_plan == {"imec0": ""}
+
+
+def test_session_id_property_returns_none_when_incomplete():
+    """session_id returns None while any required field is blank."""
+    from pynpxpipe.core.session import SubjectConfig
+    from pynpxpipe.ui.state import AppState
+
+    state = AppState()
+    assert state.session_id is None  # all blank
+
+    state.subject_config = SubjectConfig(
+        subject_id="MaoDan",
+        description="",
+        species="Macaca mulatta",
+        sex="M",
+        age="P4Y",
+        weight="12kg",
+    )
+    state.experiment = "nsd1w"
+    # recording_date still empty
+    assert state.session_id is None
+
+    state.recording_date = "251024"
+    # probe target_area still empty
+    assert state.session_id is None
+
+
+def test_session_id_property_returns_sessionid_when_complete():
+    """Full population yields a SessionID whose region is derive_region(probe_plan)."""
+    from pynpxpipe.core.session import SessionID, SubjectConfig
+    from pynpxpipe.ui.state import AppState
+
+    state = AppState()
+    state.subject_config = SubjectConfig(
+        subject_id="MaoDan",
+        description="",
+        species="Macaca mulatta",
+        sex="M",
+        age="P4Y",
+        weight="12kg",
+    )
+    state.experiment = "nsd1w"
+    state.recording_date = "251024"
+    state.probe_plan = {"imec0": "MSB", "imec1": "V4"}
+
+    sid = state.session_id
+    assert isinstance(sid, SessionID)
+    assert sid.date == "251024"
+    assert sid.subject == "MaoDan"
+    assert sid.experiment == "nsd1w"
+    assert sid.region == SessionID.derive_region({"imec0": "MSB", "imec1": "V4"})
+    assert sid.canonical() == "251024_MaoDan_nsd1w_MSB-V4"
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,11 @@ class SubjectForm:
         self.sex_select = pn.widgets.Select(name="Sex", options=["M", "F", "U", "O"], value="M")
         self.age_input = pn.widgets.TextInput(name="Age (ISO 8601)", placeholder="P3Y")
         self.weight_input = pn.widgets.TextInput(name="Weight", placeholder="10kg")
+        self.image_vault_paths_input = pn.widgets.TextAreaInput(
+            name="Image Vault Paths (one per line, optional)",
+            placeholder="/data/stimuli\n/mnt/shared/stim_library",
+            height=90,
+        )
 
         # ── YAML loader ──
         self.yaml_input = BrowsableInput(
@@ -62,6 +67,7 @@ class SubjectForm:
             self.sex_select,
             self.age_input,
             self.weight_input,
+            self.image_vault_paths_input,
         ):
             widget.param.watch(self._rebuild_config, "value")
 
@@ -86,6 +92,8 @@ class SubjectForm:
         ):
             self._state.subject_config = None
             return
+        raw = self.image_vault_paths_input.value or ""
+        vault_paths = [Path(line.strip()) for line in raw.splitlines() if line.strip()]
         self._state.subject_config = SubjectConfig(
             subject_id=self.subject_id_input.value,
             description=self.description_input.value,
@@ -93,6 +101,7 @@ class SubjectForm:
             sex=self.sex_select.value,
             age=self.age_input.value,
             weight=self.weight_input.value,
+            image_vault_paths=vault_paths,
         )
 
     def _on_save_click(self, event) -> None:
@@ -143,6 +152,9 @@ class SubjectForm:
         self.sex_select.value = cfg.sex
         self.age_input.value = cfg.age
         self.weight_input.value = cfg.weight
+        self.image_vault_paths_input.value = "\n".join(
+            str(p) for p in cfg.image_vault_paths
+        )
 
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
@@ -154,6 +166,7 @@ class SubjectForm:
             self.sex_select,
             self.age_input,
             self.weight_input,
+            self.image_vault_paths_input,
             self.save_path_input.panel(),
             self.save_btn,
             self.save_message,

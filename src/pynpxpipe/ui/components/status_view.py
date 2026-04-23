@@ -16,7 +16,7 @@ from pathlib import Path
 
 import panel as pn
 
-from pynpxpipe.pipelines.runner import STAGE_ORDER
+from pynpxpipe.pipelines.constants import STAGE_ORDER
 from pynpxpipe.ui.state import AppState
 
 # Status → display style mapping
