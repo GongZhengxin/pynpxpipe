@@ -9,7 +9,7 @@ MATLAB Engine backend (requires ``matlabengine`` package and MATLAB install).
 Public API:
   - :class:`TrialData` — dataclass for a single trial's behavioral data.
   - :class:`BHV2Parser` — high-level parser: ``parse()``, ``get_event_code_times()``,
-    ``get_session_metadata()``, ``get_analog_data()``.
+    ``get_session_metadata()``, ``get_analog_data()``, ``get_dataset_tsv_path()``.
 """
 
 from __future__ import annotations
@@ -38,13 +38,25 @@ class TrialData:
         trial_id: 1-indexed trial number from BHV2 (Trial field).
         condition_id: Stimulus condition number (Condition field).
         events: List of (time_ms, event_code) tuples in BHV2 time.
-        user_vars: Dict of UserVars fields for this trial.
+        user_vars: Dict of UserVars fields for this trial. The
+            ``DatasetName`` entry (per-trial copy of the session-level
+            stimulus tsv path) is read by
+            :meth:`BHV2Parser.get_dataset_tsv_path`.
+        variable_changes: Dict of VariableChanges for this trial
+            (e.g. onset_time, offset_time, fixation_window).
+        task_object: Dict of TaskObject fields for this trial. For
+            image_train paradigms ``TaskObject.Attribute`` only carries
+            a ``'fix'`` stimulus; actual stim filenames live in the
+            external tsv referenced by ``user_vars['DatasetName']``.
+            Empty dict if the trial carries no TaskObject.
     """
 
     trial_id: int
     condition_id: int
     events: list[tuple[float, int]]
     user_vars: dict = field(default_factory=dict)
+    variable_changes: dict = field(default_factory=dict)
+    task_object: dict = field(default_factory=dict)
 
 
 class BHV2Parser:
@@ -208,6 +220,62 @@ class BHV2Parser:
 
         return result
 
+    def get_dataset_tsv_path(self) -> str | None:
+        """Return the session's stimulus tsv path from ``UserVars.DatasetName``.
+
+        MonkeyLogic writes a per-trial copy of the session-level
+        ``DatasetName`` — a Windows absolute path string pointing to an
+        external ``.tsv`` stim manifest (e.g.
+        ``'C:\\#Datasets\\TripleN10k\\stimuli\\nsd1w.tsv'``). All trials
+        share the same value; this reader walks trials and returns the
+        first non-empty string found. Different-value sessions log a
+        warning (multi-dataset sessions are not supported).
+
+        No filesystem existence check is performed — the caller
+        (``io.stim_resolver``) handles fallback lookup under user-
+        provided ``image_vault_paths``.
+
+        Returns:
+            Windows path string if any trial carries a non-empty
+            ``DatasetName``; None if every trial's UserVars lacks the
+            key or holds an empty string (legacy non-image paradigm).
+        """
+        trials = self.parse()
+        first_value: str | None = None
+        for trial in trials:
+            raw = trial.user_vars.get("DatasetName")
+            if not isinstance(raw, str) or not raw:
+                continue
+            if first_value is None:
+                first_value = raw
+            elif raw != first_value:
+                logger.warning(
+                    "UserVars.DatasetName varies across trials "
+                    "(trial %d = %r vs first = %r); using first non-empty value.",
+                    trial.trial_id,
+                    raw,
+                    first_value,
+                )
+                break
+        return first_value
+
+    def get_sample_interval(self) -> float:
+        """Read the analog SampleInterval (ms) from the first trial.
+
+        Returns:
+            SampleInterval in milliseconds (typically 4.0 for 250 Hz).
+        """
+        reader = self._get_reader()
+        var_names = reader.list_variables()
+        trial_names = sorted(v for v in var_names if re.fullmatch(r"Trial\d+", v))
+        if not trial_names:
+            return 1.0  # safe fallback
+        raw = reader.read(trial_names[0])
+        analog = raw.get("AnalogData", {})
+        if isinstance(analog, dict):
+            return float(analog.get("SampleInterval", 1.0))
+        return 1.0
+
     @staticmethod
     def _map_trial(raw: dict) -> TrialData:
         """Map a raw BHV2Reader trial dict to a TrialData dataclass.
@@ -230,11 +298,21 @@ class BHV2Parser:
         if not isinstance(user_vars, dict):
             user_vars = {}
 
+        variable_changes = raw.get("VariableChanges", {})
+        if not isinstance(variable_changes, dict):
+            variable_changes = {}
+
+        task_object = raw.get("TaskObject", {})
+        if not isinstance(task_object, dict):
+            task_object = {}
+
         return TrialData(
             trial_id=trial_id,
             condition_id=condition_id,
             events=events,
             user_vars=user_vars,
+            variable_changes=variable_changes,
+            task_object=task_object,
         )
 
 

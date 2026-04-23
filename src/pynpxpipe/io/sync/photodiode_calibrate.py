@@ -4,6 +4,11 @@ Implements the third tier of the synchronisation pipeline:
 NIDQ photodiode channel → per-trial z-score + polarity correction →
 global threshold detection → calibrated stimulus onset times.
 
+Windows are extracted directly in the native NIDQ sampling domain
+(no ``resample_poly(up=1000, down=int(round(sr)))``), avoiding the
+ppm-level rate mismatch that accumulates as a linear time drift
+across a session when ``niSampRate`` is non-integer.
+
 cf. MATLAB step #10 (photodiode onset calibration) and
 step #11 (monitor delay correction).
 """
@@ -11,11 +16,9 @@ step #11 (monitor delay correction).
 from __future__ import annotations
 
 import logging
-import warnings
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.signal import resample_poly
 
 from pynpxpipe.core.errors import SyncError
 
@@ -51,20 +54,31 @@ def calibrate_photodiode(
     monitor_delay_ms: float,
     pd_window_pre_ms: float = 10.0,
     pd_window_post_ms: float = 100.0,
+    pd_hignline_skip_ms: float = 50.0,
+    pd_hignline_width_ms: float = 20.0,
     min_signal_variance: float = 1e-6,
 ) -> CalibratedOnsets:
     """Calibrate stimulus onset times using the photodiode analog signal.
 
-    Converts the raw NIDQ int16 photodiode channel to voltage, resamples to
-    1ms resolution, extracts per-trial windows around digital stim onset times,
-    applies per-trial z-score normalization with polarity correction, and
-    detects the first global-threshold crossing to measure actual display
-    onset latency.
+    Converts the raw NIDQ int16 photodiode channel to voltage, extracts
+    per-trial windows around digital stim onset times **directly in the
+    NIDQ sampling domain (no 1 kHz resampling)**, applies per-trial z-score
+    normalization with polarity correction, and detects the first
+    global-threshold crossing to measure actual display onset latency.
+
+    Avoiding ``resample_poly`` eliminates the ppm-level rate mismatch that
+    ``int(round(niSampRate))`` introduces when ``niSampRate`` is non-integer
+    (typical SpikeGLX output like ``25000.***`` / ``30000.***``). That
+    mismatch accumulates into ~10–30 ms of linear drift across a
+    30–60 min session.
 
     The global detection threshold is computed once across all valid trials:
-        threshold = 0.1 * baseline_mean + 0.9 * stim_period_mean
-    where baseline is the pre-onset window and stim_period is the post-onset
-    window, both in z-score units.
+        threshold = 0.1 * baseline_mean + 0.9 * hignline_mean
+    where ``baseline`` is the pre-onset window and ``hignline`` is a narrow
+    steady-state slice of the post-onset window (default 60–80 ms after
+    trigger, matching MATLAB ``po_dis(:, before+after_measure+[1:20])``).
+    Using the full 0–100 ms post window depresses the threshold with the
+    rising edge and produces too-early detections.
 
     Quality flags per trial:
         0 - good: photodiode onset detected and latency correction applied.
@@ -85,12 +99,20 @@ def calibrate_photodiode(
         stim_onset_times_s: 1D float64 array, shape (n_trials,). Digital
             stim onset times in NIDQ clock seconds. May contain NaN.
         monitor_delay_ms: Systematic display delay correction (ms). Read from
-            config.sync.monitor_delay_ms. Subtract from onset_latency_ms.
+            config.sync.monitor_delay_ms. Applied as
+            ``corrected_latency = latency_raw + monitor_delay_ms`` so that a
+            negative config value subtracts from the final onset time (MATLAB
+            equivalent: ``onset - 5`` with a hard-coded ``-5``).
             Typical value for 60 Hz monitor is -5 ms. Never hardcode.
         pd_window_pre_ms: Baseline window before stim onset (ms). Default 10.0.
             Read from config.sync.pd_window_pre_ms.
         pd_window_post_ms: Detection window after stim onset (ms).
             Default 100.0. Read from config.sync.pd_window_post_ms.
+        pd_hignline_skip_ms: Stabilization skip before threshold's "hignline"
+            window (ms), counted from trigger. Default 50.0. Read from
+            config.sync.pd_hignline_skip_ms.
+        pd_hignline_width_ms: Hignline window width (ms). Default 20.0.
+            Read from config.sync.pd_hignline_width_ms.
         min_signal_variance: Minimum acceptable signal variance after
             int16→voltage conversion. Default 1e-6.
 
@@ -113,13 +135,28 @@ def calibrate_photodiode(
         )
 
     # ------------------------------------------------------------------ #
-    # Step 2: Resample to 1 ms resolution (1000 Hz)
+    # Step 2: Native-domain window sizing (no resampling; see module docstring)
     # ------------------------------------------------------------------ #
-    up = 1000
-    down = int(round(sample_rate_hz))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        pd_1ms = resample_poly(voltage, up, down)
+    pre_samples = int(round(pd_window_pre_ms / 1000.0 * sample_rate_hz))
+    post_samples = int(round(pd_window_post_ms / 1000.0 * sample_rate_hz))
+    ms_per_sample = 1000.0 / sample_rate_hz
+    window_len = pre_samples + post_samples
+
+    hignline_skip_samples = int(round(pd_hignline_skip_ms / 1000.0 * sample_rate_hz))
+    hignline_width_samples = int(round(pd_hignline_width_ms / 1000.0 * sample_rate_hz))
+    hignline_start = pre_samples + hignline_skip_samples
+    hignline_end = hignline_start + hignline_width_samples
+    if hignline_end > window_len:
+        logger.warning(
+            "Hignline window end (%d samples, %.1f ms) exceeds post window "
+            "(%d samples, %.1f ms); falling back to full post-onset range for threshold.",
+            hignline_end,
+            hignline_end * ms_per_sample,
+            window_len,
+            window_len * ms_per_sample,
+        )
+        hignline_start = pre_samples
+        hignline_end = window_len
 
     # ------------------------------------------------------------------ #
     # Step 3: Initialise output arrays
@@ -128,8 +165,6 @@ def calibrate_photodiode(
     result_onsets = stim_onset_times_s.copy().astype(float)
     onset_latency_ms = np.full(n_trials, np.nan)
     quality_flags = np.zeros(n_trials, dtype=int)
-
-    pre_boundary = int(round(pd_window_pre_ms))  # samples before trigger
 
     # ------------------------------------------------------------------ #
     # Step 4: First pass — z-score + polarity correction per trial
@@ -142,17 +177,17 @@ def calibrate_photodiode(
             quality_flags[i] = 2
             continue
 
-        # 4b: Extract window indices (in 1ms-resampled signal)
-        t_onset_ms = stim_onset_times_s[i] * 1000.0
-        idx_start = int(round(t_onset_ms - pd_window_pre_ms))
-        idx_end = int(round(t_onset_ms + pd_window_post_ms))
+        # 4b: Extract window indices in native NIDQ samples
+        center = int(round(stim_onset_times_s[i] * sample_rate_hz))
+        idx_start = center - pre_samples
+        idx_end = center + post_samples
 
-        if idx_start < 0 or idx_end > len(pd_1ms):
+        if idx_start < 0 or idx_end > len(voltage):
             quality_flags[i] = 2
             continue
 
         # 4c: Extract window
-        window = pd_1ms[idx_start:idx_end]
+        window = voltage[idx_start:idx_end]
 
         # 4d: Per-trial signal variance check
         if np.var(window) < min_signal_variance:
@@ -180,6 +215,8 @@ def calibrate_photodiode(
 
     # ------------------------------------------------------------------ #
     # Step 5: Compute global threshold from all valid trials
+    #         Uses only the hignline window (default 60–80 ms) to avoid
+    #         the rising edge depressing the threshold.
     # ------------------------------------------------------------------ #
     valid_trials = [i for i in range(n_trials) if quality_flags[i] == 0]
 
@@ -193,16 +230,16 @@ def calibrate_photodiode(
         )
 
     baseline_vals: list[float] = []
-    stim_vals: list[float] = []
+    hignline_vals: list[float] = []
     for i in valid_trials:
         z_w = z_windows[i]
         assert z_w is not None  # guaranteed by valid_trials filter
-        baseline_vals.extend(z_w[:pre_boundary].tolist())
-        stim_vals.extend(z_w[pre_boundary:].tolist())
+        baseline_vals.extend(z_w[:pre_samples].tolist())
+        hignline_vals.extend(z_w[hignline_start:hignline_end].tolist())
 
     baseline_mean = float(np.mean(baseline_vals))
-    stim_period_mean = float(np.mean(stim_vals))
-    global_threshold = 0.1 * baseline_mean + 0.9 * stim_period_mean
+    hignline_mean = float(np.mean(hignline_vals))
+    global_threshold = 0.1 * baseline_mean + 0.9 * hignline_mean
 
     # ------------------------------------------------------------------ #
     # Step 6: Second pass — threshold detection
@@ -214,8 +251,8 @@ def calibrate_photodiode(
         z_w = z_windows[i]
         assert z_w is not None
 
-        baseline_seg = z_w[:pre_boundary]
-        stim_seg = z_w[pre_boundary:]
+        baseline_seg = z_w[:pre_samples]
+        stim_seg = z_w[pre_samples:]
 
         # 6b/6c: Find first crossing in stim segment
         above = np.where(stim_seg > global_threshold)[0]
@@ -225,7 +262,7 @@ def calibrate_photodiode(
             continue
 
         first_above = int(above[0])
-        latency_raw_ms = float(first_above)  # ms offset from trigger onset
+        latency_raw_ms = first_above * ms_per_sample
 
         # 6e: Negative-latency check (signal already high in baseline)
         if np.any(baseline_seg > global_threshold):
@@ -237,7 +274,9 @@ def calibrate_photodiode(
             continue
 
         # 6f/6g: Apply monitor delay and update outputs
-        corrected_latency_ms = latency_raw_ms - monitor_delay_ms
+        # corrected = latency_raw + monitor_delay_ms  (MATLAB equivalent: onset - 5
+        # with a hard-coded -5; config value is signed).
+        corrected_latency_ms = latency_raw_ms + monitor_delay_ms
         onset_latency_ms[i] = corrected_latency_ms
         result_onsets[i] = stim_onset_times_s[i] + corrected_latency_ms / 1000.0
 

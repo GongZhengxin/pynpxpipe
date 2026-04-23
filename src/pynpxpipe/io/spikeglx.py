@@ -6,6 +6,7 @@ Handles multi-probe SpikeGLX recording folders. No UI dependencies.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -91,6 +92,7 @@ class SpikeGLXDiscovery:
                 n_channels=int(meta.get("nSavedChans", 0)),
                 serial_number=meta.get("imProbeSN", "unknown"),
                 probe_type=meta.get("imProbeOpt", meta.get("imProbeType", "unknown")),
+                target_area="",  # placeholder; DiscoverStage fills from session.probe_plan
             )
             probes.append((probe_idx, probe))
 
@@ -195,7 +197,7 @@ class SpikeGLXLoader:
     """
 
     @staticmethod
-    def load_ap(probe: ProbeInfo) -> si.BaseRecording:
+    def load_ap(probe: ProbeInfo, *, load_sync_channel: bool = False) -> si.BaseRecording:
         """Load the AP recording for a probe as a lazy SpikeInterface Recording.
 
         Uses ``spikeinterface.extractors.read_spikeglx()`` with the probe's
@@ -203,6 +205,9 @@ class SpikeGLXLoader:
 
         Args:
             probe: ProbeInfo with ap_bin and ap_meta paths populated.
+            load_sync_channel: If True, load the sync channel (needed for
+                synchronization but disables probe property loading including
+                inter_sample_shift).
 
         Returns:
             Lazy SpikeInterface BaseRecording for the AP stream.
@@ -211,8 +216,26 @@ class SpikeGLXLoader:
         return se.read_spikeglx(
             probe.ap_bin.parent,
             stream_name=stream_name,
-            load_sync_channel=True,
+            load_sync_channel=load_sync_channel,
         )
+
+    @staticmethod
+    def load_lf(probe: ProbeInfo) -> si.BaseRecording:
+        """Load the LF recording for a probe as a lazy SpikeInterface Recording.
+
+        Args:
+            probe: ProbeInfo with lf_bin path populated.
+
+        Returns:
+            Lazy SpikeInterface BaseRecording for the LF stream.
+
+        Raises:
+            ValueError: If probe has no LF data (lf_bin is None).
+        """
+        if probe.lf_bin is None:
+            raise ValueError(f"Probe {probe.probe_id} has no LF data")
+        stream_name = f"{probe.probe_id}.lf"
+        return se.read_spikeglx(probe.lf_bin.parent, stream_name=stream_name)
 
     @staticmethod
     def load_nidq(nidq_bin: Path, nidq_meta: Path) -> si.BaseRecording:
@@ -240,6 +263,48 @@ class SpikeGLXLoader:
         return si.load(recording_path)
 
     @staticmethod
+    def read_recording_date(ap_meta_path: Path) -> str:
+        """Extract the recording date from an AP .meta file as YYMMDD.
+
+        Parses the ``fileCreateTime`` field, which is ISO 8601 with either a
+        ``T`` or space separator between date and time, e.g.
+        ``2025-10-24T14:30:00`` or ``2025-10-24 14:30:00``.
+
+        Args:
+            ap_meta_path: Path to a SpikeGLX .ap.meta file.
+
+        Returns:
+            6-digit YYMMDD string (e.g. "251024" for 2025-10-24).
+
+        Raises:
+            FileNotFoundError: If ap_meta_path does not exist.
+            ValueError: If fileCreateTime is missing, uses date-only or non-ISO
+                format, or is otherwise unparseable.
+        """
+        if not ap_meta_path.exists():
+            raise FileNotFoundError(f"AP meta file not found: {ap_meta_path}")
+
+        meta = SpikeGLXDiscovery(ap_meta_path.parent).parse_meta(ap_meta_path)
+        raw = meta.get("fileCreateTime")
+        if not raw:
+            raise ValueError(f"fileCreateTime missing from {ap_meta_path}")
+
+        # Require both a date and a time component — date-only is ambiguous.
+        if "T" not in raw and " " not in raw:
+            raise ValueError(
+                f"fileCreateTime {raw!r} in {ap_meta_path} lacks a time component; "
+                "expected ISO 8601 with T or space separator"
+            )
+        normalized = raw.replace(" ", "T", 1)
+        try:
+            dt = datetime.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError(
+                f"fileCreateTime {raw!r} in {ap_meta_path} is not ISO 8601: {exc}"
+            ) from exc
+        return f"{dt.year % 100:02d}{dt.month:02d}{dt.day:02d}"
+
+    @staticmethod
     def extract_sync_edges(
         recording: si.BaseRecording,
         sync_bit: int,
@@ -259,7 +324,14 @@ class SpikeGLXLoader:
             List of sync pulse rising-edge times in seconds.
         """
         raw = recording.get_traces()
-        digital = (raw.flatten().astype(np.uint16) >> sync_bit) & 1
+        # Sync/digital channel is always the last saved channel:
+        # - AP with load_sync_channel=True: sync appended as last channel
+        # - NIDQ: digital word follows analog channels (acqMnMaXaDw order)
+        if raw.ndim > 1:
+            digital_word = raw[:, -1].astype(np.uint16)
+        else:
+            digital_word = raw.astype(np.uint16)
+        digital = (digital_word >> sync_bit) & 1
         diff = np.diff(digital.astype(np.int8))
         rising_indices = np.where(diff == 1)[0] + 1
         return (rising_indices / sample_rate).tolist()

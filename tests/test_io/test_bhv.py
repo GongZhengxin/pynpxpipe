@@ -100,6 +100,11 @@ def _make_mock_reader(
                     "SampleInterval": 4.0,
                 },
                 "UserVars": {"DatasetName": "test_dataset"},
+                "VariableChanges": {
+                    "onset_time": 150.0,
+                    "offset_time": 150.0,
+                    "fixation_window": 5.0,
+                },
             },
             "Trial2": {
                 "Trial": 2.0,
@@ -249,6 +254,24 @@ class TestParsePurePython:
         assert trials[1].user_vars == {}
 
     @patch("pynpxpipe.io.bhv.BHV2Reader")
+    def test_maps_variable_changes(self, MockReader, minimal_bhv2):
+        MockReader.return_value = _make_mock_reader()
+        parser = BHV2Parser(minimal_bhv2)
+        trials = parser.parse()
+        vc = trials[0].variable_changes
+        assert vc["onset_time"] == 150.0
+        assert vc["offset_time"] == 150.0
+        assert vc["fixation_window"] == 5.0
+
+    @patch("pynpxpipe.io.bhv.BHV2Reader")
+    def test_missing_variable_changes_returns_empty_dict(self, MockReader, minimal_bhv2):
+        MockReader.return_value = _make_mock_reader()
+        parser = BHV2Parser(minimal_bhv2)
+        trials = parser.parse()
+        # Trial2 has no VariableChanges in mock
+        assert trials[1].variable_changes == {}
+
+    @patch("pynpxpipe.io.bhv.BHV2Reader")
     def test_trials_sorted_by_id(self, MockReader, minimal_bhv2):
         MockReader.return_value = _make_mock_reader()
         parser = BHV2Parser(minimal_bhv2)
@@ -375,6 +398,88 @@ class TestGetAnalogDataPurePython:
         for arr in result.values():
             assert arr.ndim == 2
             assert arr.shape[1] == 2
+
+
+def _trial_with_user_vars(trial_id: int, user_vars: dict) -> dict:
+    """Build a minimal mock-reader trial dict with a chosen UserVars payload."""
+    return {
+        "Trial": float(trial_id),
+        "Condition": 1.0,
+        "BehavioralCodes": {
+            "CodeTimes": np.array([[0.0]]),
+            "CodeNumbers": np.array([[9]], dtype=np.uint16),
+        },
+        "AnalogData": {"Eye": np.zeros((1, 2)), "SampleInterval": 4.0},
+        "UserVars": user_vars,
+    }
+
+
+class TestGetDatasetTsvPathPurePython:
+    """BHV2Parser.get_dataset_tsv_path() — UserVars.DatasetName reader."""
+
+    @patch("pynpxpipe.io.bhv.BHV2Reader")
+    def test_returns_first_non_empty_value(self, MockReader, minimal_bhv2):
+        trials = {
+            "Trial1": _trial_with_user_vars(1, {"DatasetName": ""}),
+            "Trial2": _trial_with_user_vars(
+                2, {"DatasetName": "C:/#Datasets/TripleN10k/stimuli/nsd1w.tsv"}
+            ),
+        }
+        MockReader.return_value = _make_mock_reader(
+            trial_dicts=trials,
+            var_list=[*trials.keys(), "MLConfig", "FileInfo", "FileIndex", "IndexPosition"],
+        )
+        parser = BHV2Parser(minimal_bhv2)
+        assert (
+            parser.get_dataset_tsv_path()
+            == "C:/#Datasets/TripleN10k/stimuli/nsd1w.tsv"
+        )
+
+    @patch("pynpxpipe.io.bhv.BHV2Reader")
+    def test_returns_none_when_all_empty(self, MockReader, minimal_bhv2):
+        trials = {
+            "Trial1": _trial_with_user_vars(1, {"DatasetName": ""}),
+            "Trial2": _trial_with_user_vars(2, {}),
+        }
+        MockReader.return_value = _make_mock_reader(
+            trial_dicts=trials,
+            var_list=[*trials.keys(), "MLConfig", "FileInfo", "FileIndex", "IndexPosition"],
+        )
+        parser = BHV2Parser(minimal_bhv2)
+        assert parser.get_dataset_tsv_path() is None
+
+    @patch("pynpxpipe.io.bhv.BHV2Reader")
+    def test_ignores_non_string_values(self, MockReader, minimal_bhv2):
+        trials = {
+            "Trial1": _trial_with_user_vars(1, {"DatasetName": 42}),
+            "Trial2": _trial_with_user_vars(
+                2, {"DatasetName": "C:/valid/path.tsv"}
+            ),
+        }
+        MockReader.return_value = _make_mock_reader(
+            trial_dicts=trials,
+            var_list=[*trials.keys(), "MLConfig", "FileInfo", "FileIndex", "IndexPosition"],
+        )
+        parser = BHV2Parser(minimal_bhv2)
+        assert parser.get_dataset_tsv_path() == "C:/valid/path.tsv"
+
+    @patch("pynpxpipe.io.bhv.BHV2Reader")
+    def test_warns_on_divergent_values(self, MockReader, minimal_bhv2, caplog):
+        import logging
+
+        trials = {
+            "Trial1": _trial_with_user_vars(1, {"DatasetName": "a.tsv"}),
+            "Trial2": _trial_with_user_vars(2, {"DatasetName": "b.tsv"}),
+        }
+        MockReader.return_value = _make_mock_reader(
+            trial_dicts=trials,
+            var_list=[*trials.keys(), "MLConfig", "FileInfo", "FileIndex", "IndexPosition"],
+        )
+        parser = BHV2Parser(minimal_bhv2)
+        with caplog.at_level(logging.WARNING, logger="pynpxpipe.io.bhv"):
+            result = parser.get_dataset_tsv_path()
+        assert result == "a.tsv"
+        assert any("varies across trials" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

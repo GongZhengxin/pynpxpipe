@@ -1,8 +1,17 @@
 """BHV2-to-NIDQ behavioral event alignment.
 
 Decodes trial onset times from NIDQ digital event codes, matches them 1:1
-with BHV2 trials, and computes stimulus onset times in NIDQ clock by adding
-per-trial BHV2 relative offsets to the aligned trial onset times.
+with BHV2 trials, and resolves each stimulus onset in NIDQ clock by
+directly matching it to the NIDQ stim-onset rising edge that falls inside
+the trial window (MATLAB-style — cf. ground_truth step #10:
+``onset_LOC = find(diff(bitand(DCode_NI.CodeVal,64))>0)+1``).
+
+The older ``trial_anchor + bhv_offset`` formula accumulates per-trial drift
+(empirically up to ±120ms) because BHV2's "trial zero" and the NIDQ
+trial_start rising edge are not simultaneous — the gap between ML's
+trial-entry timestamp and the first emitted NIDQ trial_start code varies
+per trial. That drift pushed many stim onsets outside the photodiode
+calibration window, causing widespread flag=3.
 """
 
 from __future__ import annotations
@@ -24,13 +33,19 @@ class TrialAlignment:
     """Result of BHV2-to-NIDQ behavioral event alignment.
 
     Attributes:
-        trial_events_df: Per-trial aligned event table in NIDQ clock.
+        trial_events_df: Per-stimulus aligned event table in NIDQ clock.
+            When a BHV2 trial contains multiple stim_onset_code events
+            (e.g. RSVP paradigms), each stimulus gets its own row.
             Columns: trial_id (int), onset_nidq_s (float),
             stim_onset_nidq_s (float), condition_id (int),
+            stim_index (int, 1-based stimulus identity from
+            Current_Image_Train UserVar, or 0 if unavailable),
             trial_valid (float, NaN placeholder for postprocess stage).
         dataset_name: Value of DatasetName field from BHV2 MLConfig.
         bhv_metadata: Full session metadata dict from BHV2Parser.get_session_metadata().
-        detected_trial_start_bit: The NIDQ digital bit used to identify trial
+        detected_trial_start_bit: Decoded-domain bit index used for trial
+            onsets (either as given or auto-detected).
+        detected_stim_onset_bit: Decoded-domain bit index used for stim
             onsets (either as given or auto-detected).
     """
 
@@ -38,6 +53,7 @@ class TrialAlignment:
     dataset_name: str
     bhv_metadata: dict
     detected_trial_start_bit: int
+    detected_stim_onset_bit: int = -1
 
 
 def align_bhv2_to_nidq(
@@ -46,17 +62,27 @@ def align_bhv2_to_nidq(
     nidq_event_codes: np.ndarray,
     stim_onset_code: int,
     trial_start_bit: int | None = None,
+    stim_onset_bit: int | None = None,
     max_time_error_ms: float = 17.0,
     trial_count_tolerance: int = 2,
+    stim_count_tolerance: int = 0,
 ) -> TrialAlignment:
     """Align BHV2 behavioral events to the NIDQ clock.
 
     Decodes trial onset times from NIDQ digital event codes, matches them
-    1:1 with BHV2 trials, and computes stimulus onset times in NIDQ clock
-    by adding per-trial BHV2 relative offsets to the aligned trial onset times.
+    1:1 with BHV2 trials, and resolves each stimulus onset directly to the
+    corresponding NIDQ rising edge inside its trial window (MATLAB-style,
+    cf. ground_truth step #10: ``find(diff(bitand(CodeVal,64))>0)+1``).
 
-    Auto-detection of trial_start_bit: if trial_start_bit is None, iterates
-    bits 0-7 to find the NIDQ bit whose event count best matches n_bhv_trials.
+    Auto-detection:
+      * ``trial_start_bit=None`` → iterate decoded bits 0-7, pick the one
+        whose event count best matches ``n_bhv_trials``.
+      * ``stim_onset_bit=None`` → iterate decoded bits 0-7 (excluding
+        ``trial_start_bit``), pick the first bit whose event count exactly
+        matches total BHV2 stim events. If none match, fall back to the
+        ``trial_anchor + bhv_offset`` formula (legacy behaviour; per-trial
+        drift may be present — useful only when the NIDQ stim bit is
+        missing from the recording).
 
     Args:
         bhv_parser: Initialized BHV2Parser pointing to the .bhv2 file.
@@ -65,24 +91,34 @@ def align_bhv2_to_nidq(
         nidq_event_codes: 1D int array of decoded integer event codes from
             the NIDQ digital channel. Same length as nidq_event_times.
         stim_onset_code: Integer event code value that marks stimulus onset
-            in the BHV2 event list. Read from config.sync.stim_onset_code.
-            Must be in range 0-255. Never hardcode.
-        trial_start_bit: NIDQ digital bit position (0-7) for trial start signal.
+            in the BHV2 event list (raw MonkeyLogic domain, e.g. 64). Read
+            from config.sync.stim_onset_code. Must be in 0-255. Never
+            hardcode.
+        trial_start_bit: Decoded-domain bit position (0-7) for trial start.
             If None, auto-detection is performed.
+        stim_onset_bit: Decoded-domain bit position (0-7) for stim onset.
+            NOTE: this is the decoded bit, not the raw ML bit — the NIDQ
+            decoder in synchronize.py packs ``event_bits`` into contiguous
+            decoded bits, so raw bit 6 (stim_onset_code=64) typically maps
+            to decoded bit 5 (value 32). If None, auto-detected.
         max_time_error_ms: Maximum allowed alignment error in milliseconds.
             Read from config.sync.max_time_error_ms. Default 17.0.
-        trial_count_tolerance: Maximum allowed difference between BHV2 trial
-            count and NIDQ decoded trial count before raising SyncError.
-            Read from config.sync.trial_count_tolerance. Default 2.
+        trial_count_tolerance: Maximum allowed difference between BHV2 and
+            NIDQ trial counts before raising SyncError. Default 2.
+        stim_count_tolerance: Per-trial tolerance for BHV2 vs NIDQ stim
+            count mismatch. 0 = strict. When within tolerance, extra BHV
+            stims beyond available NIDQ rising edges get stim_onset_nidq_s
+            = NaN. When exceeded, all stims in that trial → NaN. Default 0.
 
     Returns:
-        TrialAlignment with per-trial DataFrame, dataset_name, bhv_metadata,
-        and the trial_start_bit actually used.
+        TrialAlignment with per-stimulus DataFrame, dataset_name,
+        bhv_metadata, detected_trial_start_bit, and detected_stim_onset_bit
+        (-1 indicates fallback formula was used).
 
     Raises:
         SyncError: If event array lengths mismatch, stim_onset_code out of
-            range, trial count mismatch exceeds tolerance, auto-detection
-            fails, or alignment error exceeds max_time_error_ms.
+            range, trial count mismatch exceeds tolerance, or trial_start
+            auto-detection fails.
     """
     # Step 1: Input validation
     n_times = len(nidq_event_times)
@@ -144,59 +180,185 @@ def align_bhv2_to_nidq(
     else:
         n_trials = n_bhv
 
-    # Step 6: Extract stimulus onset times
+    # Step 6a: Collect BHV2 stim-onset events grouped by trial
     stim_event_pairs = bhv_parser.get_event_code_times(
         stim_onset_code,
         trials=[t.trial_id for t in trials],
     )
-    # Build per-trial lookup: trial_id → first stim time (ms)
-    stim_time_by_trial: dict[int, float] = {}
+    stim_times_by_trial: dict[int, list[float]] = {}
     for trial_id, time_ms in stim_event_pairs:
-        if trial_id not in stim_time_by_trial:
-            stim_time_by_trial[trial_id] = time_ms
+        stim_times_by_trial.setdefault(trial_id, []).append(time_ms)
+    n_bhv_stims_total = len(stim_event_pairs)
 
-    stim_onset_nidq_s = np.empty(n_trials, dtype=np.float64)
+    # Step 6b: Resolve stim_onset_bit (explicit or auto-detect).
+    # detected_stim_onset_bit == -1 → fallback to legacy offset formula.
+    if stim_onset_bit is not None:
+        detected_stim_onset_bit = stim_onset_bit
+    else:
+        detected_stim_onset_bit = _auto_detect_stim_onset_bit(
+            nidq_event_codes,
+            n_bhv_stims_total,
+            exclude_bit=detected_trial_start_bit,
+        )
+
+    # Step 6c: Extract NIDQ stim rising edges (if bit is known)
+    use_nidq_rising = detected_stim_onset_bit >= 0
+    if use_nidq_rising:
+        stim_code_val = 1 << detected_stim_onset_bit
+        stim_rising_mask = nidq_event_codes == stim_code_val
+        nidq_stim_rising_times = nidq_event_times[stim_rising_mask]
+        logger.info(
+            "Using NIDQ stim rising bit=%d (code_val=%d, n=%d) for per-trial window matching",
+            detected_stim_onset_bit,
+            stim_code_val,
+            len(nidq_stim_rising_times),
+        )
+    else:
+        nidq_stim_rising_times = np.array([], dtype=np.float64)
+        logger.warning(
+            "No NIDQ bit matches BHV2 stim count (%d); falling back to "
+            "trial_anchor + bhv_offset formula (may accumulate per-trial drift).",
+            n_bhv_stims_total,
+        )
+
+    # Step 6d: Build per-stimulus rows with window-based matching
+    rows_trial_id: list[int] = []
+    rows_onset_nidq_s: list[float] = []
+    rows_stim_onset_nidq_s: list[float] = []
+    rows_condition_id: list[int] = []
+    rows_stim_index: list[int] = []
+    rows_onset_time_ms: list[float] = []
+    rows_offset_time_ms: list[float] = []
+    rows_fixation_window: list[float] = []
+    rows_stim_onset_bhv_ms: list[float] = []
+
     for idx, trial in enumerate(trials):
-        if trial.trial_id in stim_time_by_trial:
-            # BHV2 stim offset relative to trial start (time 0 ms)
-            offset_s = stim_time_by_trial[trial.trial_id] / 1000.0
-            stim_onset_nidq_s[idx] = nidq_trial_onset_times[idx] + offset_s
-        else:
+        stim_times_ms = stim_times_by_trial.get(trial.trial_id, [])
+        vc = trial.variable_changes
+        onset_time = float(vc.get("onset_time", 150.0))
+        offset_time = float(vc.get("offset_time", 150.0))
+        fix_win = float(vc.get("fixation_window", 5.0))
+
+        if not stim_times_ms:
             logger.warning(
-                "Trial %d has no stim_onset_code=%d in BHV2; stim_onset_nidq_s set to NaN",
+                "Trial %d has no stim_onset_code=%d in BHV2; "
+                "adding one row with stim_onset_nidq_s=NaN",
                 trial.trial_id,
                 stim_onset_code,
             )
-            stim_onset_nidq_s[idx] = np.nan
+            rows_trial_id.append(trial.trial_id)
+            rows_onset_nidq_s.append(nidq_trial_onset_times[idx])
+            rows_stim_onset_nidq_s.append(np.nan)
+            rows_condition_id.append(trial.condition_id)
+            rows_stim_index.append(0)
+            rows_onset_time_ms.append(onset_time)
+            rows_offset_time_ms.append(offset_time)
+            rows_fixation_window.append(fix_win)
+            rows_stim_onset_bhv_ms.append(np.nan)
+            continue
 
-    # Step 7: Alignment quality validation (inter-trial interval consistency)
+        cit = trial.user_vars.get("Current_Image_Train")
+        cit_flat = np.asarray(cit).flatten() if cit is not None else None
+        n_bhv_stim = len(stim_times_ms)
+
+        # Compute per-stim NIDQ times
+        if use_nidq_rising:
+            window_start = nidq_trial_onset_times[idx]
+            window_end = nidq_trial_onset_times[idx + 1] if (idx + 1) < n_trials else np.inf
+            in_window = (nidq_stim_rising_times >= window_start) & (
+                nidq_stim_rising_times < window_end
+            )
+            nidq_stims_this_trial = nidq_stim_rising_times[in_window]
+            n_nidq_stim = len(nidq_stims_this_trial)
+
+            if abs(n_bhv_stim - n_nidq_stim) > stim_count_tolerance:
+                logger.warning(
+                    "Trial %d: BHV stim count=%d, NIDQ rising count=%d, "
+                    "tolerance=%d → all stim_onset_nidq_s = NaN",
+                    trial.trial_id,
+                    n_bhv_stim,
+                    n_nidq_stim,
+                    stim_count_tolerance,
+                )
+                nidq_stim_values = [np.nan] * n_bhv_stim
+            else:
+                n_use = min(n_bhv_stim, n_nidq_stim)
+                nidq_stim_values = [
+                    float(nidq_stims_this_trial[i]) if i < n_use else np.nan
+                    for i in range(n_bhv_stim)
+                ]
+        else:
+            # Legacy fallback — anchor + per-stim BHV offset
+            nidq_stim_values = [
+                nidq_trial_onset_times[idx] + stim_ms / 1000.0 for stim_ms in stim_times_ms
+            ]
+
+        for stim_i, (stim_ms, nidq_stim) in enumerate(
+            zip(stim_times_ms, nidq_stim_values, strict=True)
+        ):
+            rows_trial_id.append(trial.trial_id)
+            rows_onset_nidq_s.append(nidq_trial_onset_times[idx])
+            rows_stim_onset_nidq_s.append(nidq_stim)
+            rows_condition_id.append(trial.condition_id)
+            if cit_flat is not None and stim_i < len(cit_flat):
+                rows_stim_index.append(int(cit_flat[stim_i]))
+            else:
+                rows_stim_index.append(0)
+            rows_onset_time_ms.append(onset_time)
+            rows_offset_time_ms.append(offset_time)
+            rows_fixation_window.append(fix_win)
+            rows_stim_onset_bhv_ms.append(stim_ms)
+
+        if n_bhv_stim > 1:
+            logger.info(
+                "Trial %d: expanded %d stimulus presentations (RSVP)",
+                trial.trial_id,
+                n_bhv_stim,
+            )
+
+    n_rows = len(rows_trial_id)
+    stim_onset_nidq_s = np.array(rows_stim_onset_nidq_s, dtype=np.float64)
+
+    logger.info(
+        "Expanded %d BHV2 trials → %d stimulus rows",
+        n_trials,
+        n_rows,
+    )
+
+    # Step 7: Alignment quality validation (monotonicity + trial onset ordering)
     if n_trials >= 2:
-        # Use stim_onset times for cross-validation if available
+        # Verify trial onset times are strictly increasing
+        onset_diffs = np.diff(nidq_trial_onset_times)
+        if np.any(onset_diffs <= 0):
+            raise SyncError(
+                "NIDQ trial onset times are not strictly increasing. "
+                "Check trial_start_bit detection."
+            )
+        # Verify stim onset times are monotonically increasing (where valid)
         valid_mask = ~np.isnan(stim_onset_nidq_s)
         if valid_mask.sum() >= 2:
-            nidq_onsets_valid = nidq_trial_onset_times[valid_mask]
-            nidq_iti = np.diff(nidq_onsets_valid)
-            # Compare BHV2 stim-onset inter-trial intervals with NIDQ
             stim_valid = stim_onset_nidq_s[valid_mask]
-            stim_iti = np.diff(stim_valid)
-            if len(nidq_iti) > 0 and len(stim_iti) > 0:
-                mean_err_s = (
-                    np.abs(nidq_iti - stim_iti).mean() if len(nidq_iti) == len(stim_iti) else 0.0
+            stim_diffs = np.diff(stim_valid)
+            if np.any(stim_diffs <= 0):
+                logger.warning(
+                    "Stim onset times are not strictly increasing — "
+                    "%d reversals detected. Check stim_onset_code.",
+                    int(np.sum(stim_diffs <= 0)),
                 )
-                if mean_err_s > max_time_error_ms / 1000.0:
-                    raise SyncError(
-                        f"BHV2-NIDQ alignment error exceeds {max_time_error_ms} ms. "
-                        "Check event code definitions."
-                    )
 
     # Step 8: Build DataFrame
     df = pd.DataFrame(
         {
-            "trial_id": [t.trial_id for t in trials],
-            "onset_nidq_s": nidq_trial_onset_times,
+            "trial_id": rows_trial_id,
+            "onset_nidq_s": rows_onset_nidq_s,
             "stim_onset_nidq_s": stim_onset_nidq_s,
-            "condition_id": [t.condition_id for t in trials],
-            "trial_valid": np.full(n_trials, np.nan),
+            "condition_id": rows_condition_id,
+            "stim_index": rows_stim_index,
+            "trial_valid": np.full(n_rows, np.nan),
+            "onset_time_ms": rows_onset_time_ms,
+            "offset_time_ms": rows_offset_time_ms,
+            "fixation_window": rows_fixation_window,
+            "stim_onset_bhv_ms": rows_stim_onset_bhv_ms,
         }
     )
 
@@ -205,6 +367,7 @@ def align_bhv2_to_nidq(
         dataset_name=dataset_name,
         bhv_metadata=bhv_metadata,
         detected_trial_start_bit=detected_trial_start_bit,
+        detected_stim_onset_bit=detected_stim_onset_bit,
     )
 
 
@@ -257,3 +420,43 @@ def _auto_detect_trial_start_bit(
         n_bhv_trials,
     )
     return best_bit
+
+
+def _auto_detect_stim_onset_bit(
+    nidq_event_codes: np.ndarray,
+    n_bhv_stims_total: int,
+    *,
+    exclude_bit: int,
+) -> int:
+    """Find a decoded-domain bit whose rising count exactly matches total BHV2 stims.
+
+    Iterates decoded bits 0-7, skipping ``exclude_bit`` (the trial_start
+    bit). Returns the first bit whose count == n_bhv_stims_total, or -1
+    if none match exactly. Returning -1 lets the caller fall back to the
+    legacy ``trial_anchor + bhv_offset`` formula.
+
+    Args:
+        nidq_event_codes: 1D int array of decoded NIDQ event codes.
+        n_bhv_stims_total: Total number of stim_onset_code events across
+            all aligned BHV2 trials.
+        exclude_bit: Decoded bit to skip (typically the detected
+            trial_start_bit so stim and trial don't collapse onto the
+            same channel when counts happen to coincide).
+
+    Returns:
+        Best-matching decoded bit index (0-7), or -1 if no exact match.
+    """
+    for bit in range(8):
+        if bit == exclude_bit:
+            continue
+        code_val = 1 << bit
+        count = int(np.sum(nidq_event_codes == code_val))
+        if count == n_bhv_stims_total:
+            logger.info(
+                "Auto-detected stim_onset_bit=%d (NIDQ count=%d, BHV2 count=%d)",
+                bit,
+                count,
+                n_bhv_stims_total,
+            )
+            return bit
+    return -1

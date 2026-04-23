@@ -43,6 +43,7 @@ def _make_bhv_parser(
             condition_id=d["condition_id"],
             events=d.get("events", []),
             user_vars=d.get("user_vars", {}),
+            variable_changes=d.get("variable_changes", {}),
         )
         for d in trials_data
     ]
@@ -77,6 +78,43 @@ def _make_nidq_events(
     code_val = 2**trial_start_bit
     times = np.array(onset_times, dtype=np.float64)
     codes = np.full(n_trials, code_val, dtype=int)
+    return times, codes
+
+
+def _make_nidq_events_with_stim(
+    trial_anchors_s: list[float],
+    stim_times_per_trial_s: list[list[float]],
+    *,
+    trial_start_bit: int = 1,
+    stim_onset_bit: int = 5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build NIDQ event arrays containing BOTH trial_start and stim_onset rising edges.
+
+    Args:
+        trial_anchors_s: Absolute NIDQ times (s) for each trial start rising.
+        stim_times_per_trial_s: Per-trial list of absolute NIDQ stim rising times.
+            Length must equal len(trial_anchors_s). Each inner list is the absolute
+            NIDQ time of each stim in that trial (not an offset — absolute).
+        trial_start_bit: Decoded-domain bit index for trial_start. Default 1.
+        stim_onset_bit: Decoded-domain bit index for stim_onset. Default 5
+            (matches real data: decoded bit 5 = ML raw bit 6 = BHV code 64).
+
+    Returns:
+        (event_times_s, event_codes) sorted by time.
+    """
+    assert len(trial_anchors_s) == len(stim_times_per_trial_s)
+    trial_code = 1 << trial_start_bit
+    stim_code = 1 << stim_onset_bit
+
+    rows: list[tuple[float, int]] = []
+    for anchor, stims in zip(trial_anchors_s, stim_times_per_trial_s, strict=True):
+        rows.append((float(anchor), trial_code))
+        for s in stims:
+            rows.append((float(s), stim_code))
+    rows.sort(key=lambda x: x[0])
+
+    times = np.array([r[0] for r in rows], dtype=np.float64)
+    codes = np.array([r[1] for r in rows], dtype=int)
     return times, codes
 
 
@@ -541,8 +579,8 @@ class TestStimOnsetHandling:
         assert np.isnan(df.iloc[1]["stim_onset_nidq_s"])
         assert not np.isnan(df.iloc[2]["stim_onset_nidq_s"])
 
-    def test_stim_onset_multiple_occurrences_uses_first(self):
-        """Trial with 2 stim_onset_code events → uses first occurrence."""
+    def test_stim_onset_multiple_occurrences_expands_rows(self):
+        """Trial with 2 stim_onset_code events → 2 rows (RSVP expansion)."""
         stim_code = 64
         trials_data = [
             {
@@ -562,8 +600,211 @@ class TestStimOnsetHandling:
             trial_start_bit=1,
         )
 
-        expected = 5.0 + 0.1  # onset 5.0 + 100ms offset
-        assert abs(result.trial_events_df.iloc[0]["stim_onset_nidq_s"] - expected) < 1e-9
+        df = result.trial_events_df
+        assert len(df) == 2
+        assert df.iloc[0]["stim_onset_nidq_s"] == pytest.approx(5.0 + 0.1)
+        assert df.iloc[1]["stim_onset_nidq_s"] == pytest.approx(5.0 + 0.2)
+        # Both rows share the same trial_id
+        assert df.iloc[0]["trial_id"] == 1
+        assert df.iloc[1]["trial_id"] == 1
+
+    def test_rsvp_expansion_with_current_image_train(self):
+        """RSVP trial with Current_Image_Train populates stim_index column."""
+        stim_code = 64
+        cit = np.array([[42.0, 7.0, 99.0] + [0.0] * 97])  # 1x100 padded
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [
+                    (100.0, stim_code),
+                    (250.0, stim_code),
+                    (400.0, stim_code),
+                ],
+                "user_vars": {"Current_Image_Train": cit},
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(1, trial_start_bit=1, onset_times=[10.0])
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        df = result.trial_events_df
+        assert len(df) == 3
+        assert df["stim_index"].tolist() == [42, 7, 99]
+
+    def test_stim_index_zero_when_no_current_image_train(self):
+        """Without Current_Image_Train in user_vars, stim_index defaults to 0."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (200.0, stim_code)],
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(1, trial_start_bit=1, onset_times=[5.0])
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        assert result.trial_events_df["stim_index"].tolist() == [0, 0]
+
+    def test_mixed_single_and_rsvp_trials(self):
+        """Mix of single-stimulus and RSVP trials expands correctly."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code)],  # single stim
+            },
+            {
+                "trial_id": 2,
+                "condition_id": 2,
+                "events": [(100.0, stim_code), (250.0, stim_code), (400.0, stim_code)],
+            },
+            {
+                "trial_id": 3,
+                "condition_id": 3,
+                "events": [(100.0, stim_code)],  # single stim
+            },
+        ]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(3, trial_start_bit=1, onset_times=[1.0, 2.0, 3.0])
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        df = result.trial_events_df
+        assert len(df) == 5  # 1 + 3 + 1
+        assert df["trial_id"].tolist() == [1, 2, 2, 2, 3]
+        assert df["condition_id"].tolist() == [1, 2, 2, 2, 3]
+
+    def test_timing_columns_from_variable_changes(self):
+        """onset_time_ms, offset_time_ms, fixation_window populated from VariableChanges."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code)],
+                "variable_changes": {
+                    "onset_time": 200.0,
+                    "offset_time": 100.0,
+                    "fixation_window": 3.0,
+                },
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(1, trial_start_bit=1, onset_times=[5.0])
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        df = result.trial_events_df
+        assert df.iloc[0]["onset_time_ms"] == 200.0
+        assert df.iloc[0]["offset_time_ms"] == 100.0
+        assert df.iloc[0]["fixation_window"] == 3.0
+
+    def test_timing_columns_default_when_no_variable_changes(self):
+        """Without VariableChanges, timing columns use defaults."""
+        stim_code = 64
+        trials_data = [{"trial_id": 1, "condition_id": 1, "events": [(100.0, stim_code)]}]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(1, trial_start_bit=1)
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        df = result.trial_events_df
+        assert df.iloc[0]["onset_time_ms"] == 150.0
+        assert df.iloc[0]["offset_time_ms"] == 150.0
+        assert df.iloc[0]["fixation_window"] == 5.0
+
+    def test_stim_onset_bhv_ms_column(self):
+        """stim_onset_bhv_ms stores BHV2-relative stimulus time in ms."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (250.0, stim_code)],
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(1, trial_start_bit=1, onset_times=[5.0])
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        df = result.trial_events_df
+        assert df.iloc[0]["stim_onset_bhv_ms"] == 100.0
+        assert df.iloc[1]["stim_onset_bhv_ms"] == 250.0
+
+    def test_rsvp_timing_columns_replicated_per_stim(self):
+        """In RSVP expansion, timing columns are replicated for each stimulus."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (250.0, stim_code), (400.0, stim_code)],
+                "variable_changes": {
+                    "onset_time": 120.0,
+                    "offset_time": 80.0,
+                    "fixation_window": 4.0,
+                },
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+        times, codes = _make_nidq_events(1, trial_start_bit=1, onset_times=[10.0])
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+        )
+
+        df = result.trial_events_df
+        assert len(df) == 3
+        assert df["onset_time_ms"].tolist() == [120.0, 120.0, 120.0]
+        assert df["offset_time_ms"].tolist() == [80.0, 80.0, 80.0]
+        assert df["fixation_window"].tolist() == [4.0, 4.0, 4.0]
 
 
 # ---------------------------------------------------------------------------
@@ -676,3 +917,293 @@ class TestNumericalCorrectness:
 
         assert result1.trial_events_df.iloc[0]["onset_nidq_s"] == 5.0
         assert result2.trial_events_df.iloc[0]["onset_nidq_s"] == 50.0
+
+
+# ---------------------------------------------------------------------------
+# MATLAB-style bit-6-direct alignment (new behaviour under bhv_nidq_align redesign)
+# ---------------------------------------------------------------------------
+
+
+class TestStimOnsetFromNidqRising:
+    """stim_onset_nidq_s must come from the NIDQ stim rising edge, NOT from
+    trial_anchor + BHV offset. The formula accumulates up to ±120ms drift
+    because BHV2's "trial zero" and the NIDQ trial_start rising are not
+    simultaneous; real NIDQ rising is the source of truth.
+    """
+
+    def test_stim_onset_from_nidq_rising_not_offset(self):
+        """NIDQ stim rising at anchor+0.230, BHV offset 0.200 → output = 0.230."""
+        stim_code = 64
+        # BHV says stim at 200ms after trial start
+        trials_data = [
+            {"trial_id": 1, "condition_id": 1, "events": [(200.0, stim_code)]},
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        # NIDQ: trial anchor @ 5.0, stim rising @ 5.230 (NOT 5.200)
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[5.0],
+            stim_times_per_trial_s=[[5.230]],
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        actual = result.trial_events_df.iloc[0]["stim_onset_nidq_s"]
+        assert abs(actual - 5.230) < 1e-9, (
+            f"stim_onset_nidq_s should follow NIDQ rising (5.230), got {actual}. "
+            f"Hint: impl is probably using trial_anchor + bhv_offset formula."
+        )
+
+    def test_no_drift_across_trials(self):
+        """Per-trial BHV→NIDQ gap varies (58ms, 85ms, 121ms);
+        NIDQ rising is the truth, formula output would diverge.
+        """
+        stim_code = 64
+        trials_data = [
+            {"trial_id": i, "condition_id": 1, "events": [(200.0, stim_code)]} for i in range(1, 4)
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        # Real NIDQ stim rising positions (absolute, not formula-derived)
+        stim_abs = [1.258, 2.285, 3.321]  # each offset = 0.258, 0.285, 0.321 — drifting
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[1.0, 2.0, 3.0],
+            stim_times_per_trial_s=[[s] for s in stim_abs],
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        np.testing.assert_array_almost_equal(
+            result.trial_events_df["stim_onset_nidq_s"].to_numpy(),
+            np.array(stim_abs),
+            decimal=9,
+        )
+
+    def test_rsvp_multi_stim_matched_to_nidq_rising(self):
+        """Trial with 3 BHV stims; 3 NIDQ rising edges in trial window → 1:1 match."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (250.0, stim_code), (400.0, stim_code)],
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        nidq_stims = [10.111, 10.262, 10.419]
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[10.0],
+            stim_times_per_trial_s=[nidq_stims],
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        np.testing.assert_array_almost_equal(
+            result.trial_events_df["stim_onset_nidq_s"].to_numpy(),
+            np.array(nidq_stims),
+            decimal=9,
+        )
+
+    def test_last_trial_window_extends_to_infinity(self):
+        """Stim rising after the last trial anchor (no next anchor) is still matched."""
+        stim_code = 64
+        trials_data = [
+            {"trial_id": 1, "condition_id": 1, "events": [(100.0, stim_code)]},
+            {"trial_id": 2, "condition_id": 1, "events": [(100.0, stim_code)]},
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[1.0, 2.0],
+            stim_times_per_trial_s=[[1.1], [2.1]],
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        assert result.trial_events_df.iloc[1]["stim_onset_nidq_s"] == pytest.approx(2.1)
+
+    def test_per_trial_stim_count_mismatch_gives_nan(self):
+        """BHV has 2 stims in a trial, NIDQ has 1 rising → that trial's stims → NaN."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (250.0, stim_code)],
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        # Only 1 NIDQ stim rising in the trial window — mismatch
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[5.0],
+            stim_times_per_trial_s=[[5.11]],
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=5,
+            stim_count_tolerance=0,
+        )
+
+        # Both stim rows for trial 1 should be NaN under strict tolerance
+        assert result.trial_events_df["stim_onset_nidq_s"].isna().all()
+
+    def test_per_trial_stim_count_within_tolerance_takes_shortest(self):
+        """Same mismatch but tolerance=1 → take min(n_bhv, n_nidq) rising edges."""
+        stim_code = 64
+        trials_data = [
+            {
+                "trial_id": 1,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (250.0, stim_code)],
+            }
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[5.0],
+            stim_times_per_trial_s=[[5.11]],
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=5,
+            stim_count_tolerance=1,
+        )
+
+        df = result.trial_events_df
+        assert df.iloc[0]["stim_onset_nidq_s"] == pytest.approx(5.11)
+        # Second BHV stim has no NIDQ rising → NaN
+        assert np.isnan(df.iloc[1]["stim_onset_nidq_s"])
+
+
+class TestAutoDetectStimOnsetBit:
+    """stim_onset_bit autodetect: pick decoded-domain bit whose rising count
+    best matches total BHV2 stim_onset_code events.
+    """
+
+    def test_auto_detect_stim_bit_selects_matching_count(self):
+        stim_code = 64
+        # 3 trials, each with 2 stims → total 6 BHV stim events
+        trials_data = [
+            {
+                "trial_id": i,
+                "condition_id": 1,
+                "events": [(100.0, stim_code), (250.0, stim_code)],
+            }
+            for i in range(1, 4)
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        # 3 trial-start rising + 6 stim rising (on decoded bit 5, value 32)
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[1.0, 2.0, 3.0],
+            stim_times_per_trial_s=[[1.1, 1.25], [2.1, 2.25], [3.1, 3.25]],
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=None,  # auto-detect
+        )
+
+        assert result.detected_stim_onset_bit == 5
+
+    def test_auto_detect_stim_bit_excludes_trial_start_bit(self):
+        """When stim total == trial total, must not collapse onto trial_start bit."""
+        stim_code = 64
+        # 3 trials, 1 stim each → total 3 stim events (== 3 trials)
+        trials_data = [
+            {"trial_id": i, "condition_id": 1, "events": [(100.0, stim_code)]} for i in range(1, 4)
+        ]
+        parser = _make_bhv_parser(trials_data)
+
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[1.0, 2.0, 3.0],
+            stim_times_per_trial_s=[[1.1], [2.1], [3.1]],
+            trial_start_bit=1,
+            stim_onset_bit=5,
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=None,
+        )
+
+        # Must NOT pick bit 1 (trial_start's bit)
+        assert result.detected_stim_onset_bit != 1
+        assert result.detected_stim_onset_bit == 5
+
+    def test_explicit_stim_onset_bit_skips_auto_detect(self):
+        stim_code = 64
+        trials_data = [{"trial_id": 1, "condition_id": 1, "events": [(100.0, stim_code)]}]
+        parser = _make_bhv_parser(trials_data)
+
+        times, codes = _make_nidq_events_with_stim(
+            trial_anchors_s=[1.0],
+            stim_times_per_trial_s=[[1.1]],
+            trial_start_bit=1,
+            stim_onset_bit=6,
+        )
+
+        result = align_bhv2_to_nidq(
+            bhv_parser=parser,
+            nidq_event_times=times,
+            nidq_event_codes=codes,
+            stim_onset_code=stim_code,
+            trial_start_bit=1,
+            stim_onset_bit=6,
+        )
+
+        assert result.detected_stim_onset_bit == 6

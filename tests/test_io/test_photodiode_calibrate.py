@@ -1,9 +1,9 @@
 """Tests for io/sync/photodiode_calibrate.py.
 
 Uses 1 kHz signals (sample_rate_hz=1000) for most tests so that
-resample_poly(v, 1000, 1000) is a near-identity op and millisecond
-arithmetic is exact.  Separate tests cover the resampling path at
-30 kHz / 25 kHz.
+millisecond arithmetic is exact.  Separate tests cover the
+native-sampling-domain path at 30 kHz / 25 kHz / non-integer rates
+(no resampling is performed; see spec for rationale).
 """
 
 from __future__ import annotations
@@ -95,9 +95,11 @@ def test_onset_latency_detected_correctly():
 
 
 def test_monitor_delay_applied():
-    # latency_raw=20ms, monitor_delay=-5ms → corrected = 20 - (-5) = 25
+    # latency_raw=20ms, monitor_delay=-5ms → corrected = 20 + (-5) = 15
+    # MATLAB equivalent: onset_time = trigger + latency - 5
+    # (Load_Data_function.m L213 + L263; spec §4.6.f).
     result = _good_call(latency_ms=20.0, monitor_delay_ms=-5.0)
-    assert abs(result.onset_latency_ms[0] - 25.0) <= 1.0
+    assert abs(result.onset_latency_ms[0] - 15.0) <= 1.0
 
 
 def test_stim_onset_nidq_updated():
@@ -150,12 +152,12 @@ def test_int16_to_voltage_conversion():
 
 
 # =========================================================================== #
-# Resampling
+# Native-sampling-domain path (no resample_poly; see spec §4.2)
 # =========================================================================== #
 
 
-def test_resample_to_1ms():
-    """1 second of 30 kHz data resamples to ≈1000 samples."""
+def test_runs_at_30khz():
+    """30 kHz signal: no resample_poly; smoke test that the function runs."""
     sr = 30_000.0
     n = int(1.0 * sr)  # 30000 samples
     pd = _step_int16(n, n // 2)  # step in the middle
@@ -173,8 +175,8 @@ def test_resample_to_1ms():
     assert isinstance(result, CalibratedOnsets)
 
 
-def test_resample_preserves_step_location():
-    """After resampling 30 kHz → 1 ms, detected onset ≈ planted latency."""
+def test_step_location_preserved_at_30khz():
+    """At 30 kHz native sampling, detected onset ≈ planted latency."""
     sr = 30_000.0
     trigger_s = 0.5
     latency_ms = 20.0
@@ -195,8 +197,8 @@ def test_resample_preserves_step_location():
     assert abs(result.onset_latency_ms[0] - latency_ms) <= 2.0
 
 
-def test_resample_ratio_from_sample_rate():
-    """25 kHz signal resamples correctly (down ratio = 25, not 25000)."""
+def test_step_location_preserved_at_25khz():
+    """25 kHz signal: window sized in native samples, latency still correct."""
     sr = 25_000.0
     trigger_s = 0.5
     latency_ms = 30.0
@@ -215,6 +217,45 @@ def test_resample_ratio_from_sample_rate():
     )
     assert result.quality_flags[0] == 0
     assert abs(result.onset_latency_ms[0] - latency_ms) <= 2.0
+
+
+def test_non_integer_sample_rate_no_drift():
+    """Non-integer niSampRate (e.g. 25000.487 Hz): verify no time-linear drift.
+
+    With the legacy ``resample_poly(up=1000, down=int(round(sr)))`` path, a
+    20 ppm rate mismatch accumulates as a linear drift so that trials at the
+    end of a session see several ms of extra latency relative to truth.
+    Native-domain extraction (the current spec) must keep every trial within
+    ±1 ms of the planted 20 ms latency regardless of wall-clock time.
+    """
+    sr = 25000.487  # realistic SpikeGLX niSampRate (non-integer)
+    total_s = 180.0  # 3 minutes — enough to expose drift (≥3 ms at t=170s)
+    n_samples = int(total_s * sr)
+    latency_s = 0.020
+    triggers = np.linspace(20.0, 170.0, 10)  # 10 trials spread over 3 min
+    pulse_samples = int(round(0.3 * sr))  # brief 300-ms high pulse per trial
+    voltage = np.zeros(n_samples, dtype=float)
+    for t in triggers:
+        step_idx = int(round((t + latency_s) * sr))
+        end_idx = min(step_idx + pulse_samples, n_samples)
+        voltage[step_idx:end_idx] = 1.0
+    pd = (voltage * 32768.0 / VR).clip(-32768, 32767).astype(np.int16)
+    result = calibrate_photodiode(
+        pd,
+        sr,
+        VR,
+        triggers,
+        monitor_delay_ms=0.0,
+        pd_window_pre_ms=PRE,
+        pd_window_post_ms=POST,
+    )
+    assert np.all(result.quality_flags == 0), (
+        f"expected all trials good, got flags={result.quality_flags}"
+    )
+    for i, lat in enumerate(result.onset_latency_ms):
+        assert abs(lat - 20.0) <= 1.0, (
+            f"trial {i} (t={triggers[i]:.1f}s): latency {lat:.3f}ms drifts from truth 20ms"
+        )
 
 
 # =========================================================================== #
@@ -405,6 +446,51 @@ def test_threshold_is_global_not_per_trial():
     assert result.quality_flags[1] == 0
     # Both should detect at roughly the same latency (global threshold applied)
     assert abs(result.onset_latency_ms[0] - result.onset_latency_ms[1]) <= 1.0
+
+
+def test_threshold_uses_hignline_window_not_full_post():
+    """Slow-rise-then-plateau signal: threshold must be dominated by the
+    60-80 ms hignline plateau, not the full 0-100 ms post window whose mean
+    is depressed by the rising edge.
+
+    MATLAB formula uses ``po_dis(:, before+after_measure+[1:20])`` = 60–80 ms
+    steady-state. Using the full post window yields an artificially low
+    threshold and too-early detections.
+    """
+    n = int(DUR * SR)
+    trigger_s = 1.0
+    trigger_idx = int(trigger_s * SR)
+    voltage = np.zeros(n, dtype=float)
+    # 0–50 ms after trigger: linear rise 0 → 1 (the transition)
+    rise_len = 50
+    for k in range(rise_len):
+        voltage[trigger_idx + k] = k / float(rise_len - 1)
+    # 50–100 ms after trigger: plateau at 1.0
+    voltage[trigger_idx + rise_len : trigger_idx + 100] = 1.0
+    # Ensure global variance passes (add a late step elsewhere)
+    voltage[int(3.5 * SR) :] = 1.0
+    pd = (voltage * 32768.0 / VR).clip(-32768, 32767).astype(np.int16)
+    onsets = np.array([trigger_s])
+    result = calibrate_photodiode(
+        pd,
+        SR,
+        VR,
+        onsets,
+        monitor_delay_ms=0.0,
+        pd_window_pre_ms=PRE,
+        pd_window_post_ms=POST,
+    )
+    assert result.quality_flags[0] == 0
+    # Hignline (60–80 ms) dominates → threshold lands near plateau entry (~50 ms).
+    # Full-post (buggy) mean dominates → detection lands during the rise (<40 ms).
+    assert result.onset_latency_ms[0] >= 40.0, (
+        f"latency {result.onset_latency_ms[0]}ms suggests threshold was "
+        f"depressed by the rising edge (full-post mean), not dominated by "
+        f"the 60-80 ms plateau (hignline)"
+    )
+    assert result.onset_latency_ms[0] <= 55.0, (
+        f"latency {result.onset_latency_ms[0]}ms is too late — plateau entry is at 50 ms"
+    )
 
 
 # =========================================================================== #

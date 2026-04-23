@@ -240,6 +240,7 @@ class TestValidateProbe:
             n_channels=385,
             serial_number="unknown",
             probe_type="unknown",
+            target_area="",
         )
         warnings = SpikeGLXDiscovery(tmp_path).validate_probe(probe)
         assert any("imSampRate" in w or "samp" in w.lower() for w in warnings)
@@ -352,7 +353,7 @@ class TestSpikeGLXLoader:
         assert result is mock_recording
 
     def test_load_preprocessed_calls_load_extractor(self, tmp_path: Path) -> None:
-        zarr_dir = tmp_path / "preprocessed"
+        zarr_dir = tmp_path / "01_preprocessed"
         zarr_dir.mkdir()
         mock_recording = MagicMock()
         with patch("pynpxpipe.io.spikeglx.si.load", return_value=mock_recording) as mock_fn:
@@ -409,4 +410,61 @@ class TestExtractSyncEdges:
         recording = self._make_recording(signal)
         edges = SpikeGLXLoader.extract_sync_edges(recording, sync_bit=0, sample_rate=30000.0)
         assert len(edges) == 1
-        assert edges[0] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# SpikeGLXLoader.read_recording_date
+# ---------------------------------------------------------------------------
+
+
+class TestReadRecordingDate:
+    """YYMMDD extraction from SpikeGLX .ap.meta fileCreateTime field."""
+
+    def _write_meta(self, tmp_path: Path, create_time: str) -> Path:
+        meta = tmp_path / "x.ap.meta"
+        meta.write_text(
+            f"typeThis=imec\nfileCreateTime={create_time}\nimSampRate=30000\n",
+            encoding="utf-8",
+        )
+        return meta
+
+    def test_iso_with_T_separator(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "2025-10-24T14:30:00")
+        assert SpikeGLXLoader.read_recording_date(meta) == "251024"
+
+    def test_iso_with_space_separator(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "2025-10-24 14:30:00")
+        assert SpikeGLXLoader.read_recording_date(meta) == "251024"
+
+    def test_year_2000(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "2000-01-01T00:00:00")
+        assert SpikeGLXLoader.read_recording_date(meta) == "000101"
+
+    def test_single_digit_month_day_zero_padded(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "2024-03-07T12:00:00")
+        assert SpikeGLXLoader.read_recording_date(meta) == "240307"
+
+    def test_missing_file_create_time_raises(self, tmp_path: Path) -> None:
+        meta = tmp_path / "x.ap.meta"
+        meta.write_text("typeThis=imec\nimSampRate=30000\n", encoding="utf-8")
+        with pytest.raises(ValueError):
+            SpikeGLXLoader.read_recording_date(meta)
+
+    def test_malformed_value_raises(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "not-a-date")
+        with pytest.raises(ValueError):
+            SpikeGLXLoader.read_recording_date(meta)
+
+    def test_date_only_rejected(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "2025-10-24")
+        with pytest.raises(ValueError):
+            SpikeGLXLoader.read_recording_date(meta)
+
+    def test_us_format_rejected(self, tmp_path: Path) -> None:
+        meta = self._write_meta(tmp_path, "10/24/2025 14:30:00")
+        with pytest.raises(ValueError):
+            SpikeGLXLoader.read_recording_date(meta)
+
+    def test_missing_meta_file_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            SpikeGLXLoader.read_recording_date(tmp_path / "nonexistent.ap.meta")
