@@ -23,12 +23,17 @@ Requires Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/).
 **As a dependency in your own project:**
 
 ```bash
-# Core only
-uv add git+https://github.com/GongZhengxin/pynpxpipe.git
+# Recommended: full pipeline with Web UI
+uv add "pynpxpipe[ui,sort,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
 
-# With Web UI + GPU detection + plots
-uv add "pynpxpipe[ui,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
+# Core only (no Kilosort4, no DREDge motion correction, no UI)
+uv add git+https://github.com/GongZhengxin/pynpxpipe.git
 ```
+
+> The `sort` extra pulls `kilosort` which brings `torch` along — required for
+> both the `sort` stage (Kilosort4) and DREDge motion correction in `preprocess`.
+> CPU torch from pypi is installed by default; for GPU acceleration install a
+> CUDA build of torch from [pytorch.org](https://pytorch.org) after `uv sync`.
 
 **For development / contributing:**
 
@@ -42,6 +47,7 @@ uv sync --all-groups
 
 | Extra | Purpose |
 |---|---|
+| `sort` | Kilosort4 sorter + DREDge motion correction (pulls `kilosort` → `torch`) |
 | `ui` | Panel Web UI (`pynpxpipe-ui` command) |
 | `gpu` | NVIDIA VRAM detection via `nvidia-ml-py` |
 | `plots` | matplotlib-based sync diagnostic figures |
@@ -99,12 +105,17 @@ MIT — see [`LICENSE`](LICENSE).
 需要 Python 3.11 或 3.12，以及 [uv](https://docs.astral.sh/uv/) 包管理器。
 
 ```bash
-# 仅核心功能
-uv add git+https://github.com/GongZhengxin/pynpxpipe.git
+# 推荐：完整 pipeline + Web UI
+uv add "pynpxpipe[ui,sort,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
 
-# Web UI + GPU 检测 + 诊断图
-uv add "pynpxpipe[ui,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
+# 仅核心功能（不含 Kilosort4、DREDge 运动校正、UI）
+uv add git+https://github.com/GongZhengxin/pynpxpipe.git
 ```
+
+> `sort` extra 会拉 `kilosort`（及其依赖 `torch`），同时覆盖 `sort` 阶段的
+> Kilosort4 和 `preprocess` 阶段的 DREDge 运动校正。默认安装的是 pypi 上的 CPU
+> 版 torch；需要 GPU 加速的用户请在 `uv sync` 之后从 pytorch.org 安装 CUDA 版
+> torch。
 
 开发者请 clone 仓库后运行 `uv sync --all-groups`。
 

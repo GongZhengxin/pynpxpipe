@@ -23,6 +23,8 @@
 | `monitor_delay_ms` | `float` | 显示器系统延迟校正量（ms），从 `config.sync.monitor_delay_ms` 读取，**禁止硬编码** |
 | `pd_window_pre_ms` | `float` | photodiode 检测窗口的前置时长（ms），默认 `10.0`，从 `config.sync.pd_window_pre_ms` 读取 |
 | `pd_window_post_ms` | `float` | photodiode 检测窗口的后置时长（ms），默认 `100.0`，从 `config.sync.pd_window_post_ms` 读取 |
+| `pd_hignline_skip_ms` | `float` | 阈值计算时跳过 trigger 后这么多 ms 的上升过渡期（ms），默认 `50.0`，从 `config.sync.pd_hignline_skip_ms` 读取。对应 MATLAB `after_onset_measure` |
+| `pd_hignline_width_ms` | `float` | 阈值计算用的稳态窗口宽度（ms），默认 `20.0`，从 `config.sync.pd_hignline_width_ms` 读取。对应 MATLAB 的 `[1:20]` 范围 |
 | `min_signal_variance` | `float` | 信号方差下限，低于此值认为 photodiode 无信号（接头松动），默认 `1e-6`，从配置读取 |
 
 约束：
@@ -75,11 +77,10 @@ class CalibratedOnsets:
    - 计算全局信号方差 `np.var(voltage)`
    - 若方差 < `min_signal_variance` → raise `SyncError("Photodiode signal variance {variance:.2e} too low. Check photodiode connection.")`
 
-2. **重采样到 1ms 分辨率**
-   - 目标采样率为 1000 Hz（1ms/sample）
-   - 计算重采样比率：`up = 1000`，`down = int(round(sample_rate_hz))`（精确使用整数比率）
-   - 调用 `scipy.signal.resample_poly(voltage, up, down)` 得到 `pd_1ms`
-   - `pd_1ms` 的时间轴：每个采样点对应 1ms，`pd_1ms[i]` 对应 NIDQ 时间 `i / 1000.0` 秒
+2. **原始采样域窗口尺寸计算**（**不重采样**；避免 `resample_poly(up=1000, down=int(round(sr)))` 在 `niSampRate` 非整数时（SpikeGLX 实测典型 `25000.***`）产生的 ppm 级比率误差，此误差会沿会话累积为 10–30 ms 的线性时间漂移）
+   - `pre_samples = int(round(pd_window_pre_ms / 1000.0 * sample_rate_hz))`
+   - `post_samples = int(round(pd_window_post_ms / 1000.0 * sample_rate_hz))`
+   - 样本↔毫秒换算因子：`ms_per_sample = 1000.0 / sample_rate_hz`
 
 3. **初始化输出数组**
    - `n_trials = len(stim_onset_times_s)`
@@ -91,13 +92,13 @@ class CalibratedOnsets:
 
    a. **处理 NaN onset**：若 `stim_onset_times_s[i]` 为 NaN → `quality_flags[i] = 2`，continue
 
-   b. **提取窗口样本索引**：
-      - `t_onset_ms = stim_onset_times_s[i] * 1000.0`
-      - `idx_start = int(round(t_onset_ms - pd_window_pre_ms))`
-      - `idx_end = int(round(t_onset_ms + pd_window_post_ms))`
-      - 越界检查：若 `idx_start < 0` 或 `idx_end > len(pd_1ms)` → `quality_flags[i] = 2`，continue
+   b. **提取窗口样本索引（NIDQ 原始采样域）**：
+      - `center = int(round(stim_onset_times_s[i] * sample_rate_hz))`
+      - `idx_start = center - pre_samples`
+      - `idx_end = center + post_samples`
+      - 越界检查：若 `idx_start < 0` 或 `idx_end > len(voltage)` → `quality_flags[i] = 2`，continue
 
-   c. **提取窗口信号**：`window = pd_1ms[idx_start:idx_end]`，长度 = `pd_window_pre_ms + pd_window_post_ms`
+   c. **提取窗口信号**：`window = voltage[idx_start:idx_end]`，长度 = `pre_samples + post_samples`（NIDQ 采样单位，非 ms）
 
    d. **信号方差检查**：若 `np.var(window) < min_signal_variance` → `quality_flags[i] = 3`，记录警告，continue
 
@@ -115,23 +116,31 @@ class CalibratedOnsets:
 
 5. **计算全局阈值**（先收集所有有效 trial z-score 窗口，再统一计算）：
    - 收集所有 `quality_flag == 0` 的 trial z-score 窗口
-   - `baseline_values` = 每个有效 trial 窗口中前 `pd_window_pre_ms` 个样本的 z-score，拼接后取均值 `baseline_mean`
-   - `stim_values` = 每个有效 trial 窗口中后 `pd_window_post_ms` 个样本的 z-score，拼接后取均值 `stim_period_mean`
+   - `baseline_values` = 每个有效 trial 窗口前 `pre_samples` 个样本（基线段），拼接后取均值 `baseline_mean`
+   - **`hignline_values`（稳态响应段）**：不用整个 post 区——那样会被光电上升沿的过渡期（0–50 ms）拉低阈值。仅取刺激后 `pd_hignline_skip_ms`(默认 50 ms) 起 `pd_hignline_width_ms`(默认 20 ms) 宽的窗，对应 MATLAB `po_dis(:, before+after_measure+[1:20])` = 60–80 ms 稳态。换算成样本索引：
+     - `hignline_skip_samples = int(round(pd_hignline_skip_ms / 1000.0 * sample_rate_hz))`
+     - `hignline_width_samples = int(round(pd_hignline_width_ms / 1000.0 * sample_rate_hz))`
+     - `hignline_start = pre_samples + hignline_skip_samples`
+     - `hignline_end   = hignline_start + hignline_width_samples`
+     - 若 `hignline_end > pre_samples + post_samples`（参数配到超出 post 窗），回退到 `[pre_samples: ]`（整个 post 区）并 `logger.warning` 一次
+   - `stim_period_mean = mean(z_window[hignline_start:hignline_end])` 跨所有有效 trial 聚合
    - `global_threshold = 0.1 * baseline_mean + 0.9 * stim_period_mean`
 
 6. **逐 trial 阈值检测（第二次循环，使用 `global_threshold`）**
 
    a. 跳过 `quality_flags[i] != 0` 的 trial
 
-   b. 在 z-score 窗口的刺激期（从第 `pd_window_pre_ms` 个样本开始）中找第一个超过 `global_threshold` 的样本索引 `first_above`
+   b. 在 z-score 窗口的刺激期（从第 `pre_samples` 个样本起）中找第一个超过 `global_threshold` 的样本索引 `first_above`（以刺激段起点为原点的样本偏移）
 
    c. 若无样本超过阈值：`quality_flags[i] = 3`，记录警告，continue
 
-   d. 计算原始延迟：`latency_raw_ms = first_above`（从刺激期开始的 ms 偏移）
+   d. 计算原始延迟（样本→毫秒换算）：`latency_raw_ms = first_above * ms_per_sample`
 
-   e. 处理负延迟（信号在触发前超阈）：在刺激期之前（基线段）也找超阈点，若存在则 `latency_raw_ms` 为负 → `quality_flags[i] = 1`，记录警告，continue（不校正，保留原始数字触发时间）
+   e. 处理负延迟（信号在触发前超阈）：在刺激期之前（基线段）也找超阈点，若存在则认为触发已超阈 → `quality_flags[i] = 1`，记录警告，continue（不校正，保留原始数字触发时间）
 
-   f. 应用显示器延迟校正：`corrected_latency_ms = latency_raw_ms - monitor_delay_ms`
+   f. **应用显示器延迟校正（与 MATLAB 等价）**：`corrected_latency_ms = latency_raw_ms + monitor_delay_ms`
+      - 约定：`monitor_delay_ms = -5` 表示「光电比真实显示落后 5 ms」，所以从 latency 里加上 `-5`（= 减 5）得到净校正量。MATLAB 等价式 `onset_time_ms = onset_time_ms + latency_ms - 5`（Load_Data_function.m L213+L263）。
+      - 历史 bug（已修）：旧版用 `- monitor_delay_ms`，当 config `monitor_delay_ms=-5` 时变成 `+ 5` ms，与 MATLAB 差 10 ms 常量偏置。
 
    g. 更新输出：
       - `onset_latency_ms[i] = corrected_latency_ms`
@@ -186,14 +195,23 @@ def calibrate_photodiode(
     monitor_delay_ms: float,
     pd_window_pre_ms: float = 10.0,
     pd_window_post_ms: float = 100.0,
+    pd_hignline_skip_ms: float = 50.0,
+    pd_hignline_width_ms: float = 20.0,
     min_signal_variance: float = 1e-6,
 ) -> CalibratedOnsets:
     """Calibrate stimulus onset times using the photodiode analog signal.
 
-    Converts the raw NIDQ int16 photodiode channel to voltage, resamples to
-    1ms resolution, extracts per-trial windows around digital stim onset times,
-    applies per-trial z-score normalization, and detects the first threshold
-    crossing to determine actual display onset latency.
+    Converts the raw NIDQ int16 photodiode channel to voltage, extracts
+    per-trial windows around digital stim onset times **directly in the
+    NIDQ sampling domain (no 1 kHz resampling)**, applies per-trial z-score
+    normalization, and detects the first threshold crossing to determine
+    actual display onset latency.
+
+    Avoiding `resample_poly` eliminates the ppm-level rate mismatch that
+    `int(round(niSampRate))` introduces when `niSampRate` is non-integer
+    (typical SpikeGLX output like `25000.***` / `30000.***`). That mismatch
+    accumulates into ~10–30 ms of linear drift across a 30–60 min session
+    (cf. docs/todo.md V.8).
 
     The global detection threshold is computed once across all valid trials:
         threshold = 0.1 * baseline_mean + 0.9 * stim_period_mean
@@ -219,12 +237,23 @@ def calibrate_photodiode(
         stim_onset_times_s: 1D float64 array, shape (n_trials,). Digital
             stim onset times in NIDQ clock seconds. May contain NaN.
         monitor_delay_ms: Systematic display delay correction (ms). Read from
-            config.sync.monitor_delay_ms. Subtract from onset_latency_ms.
-            Typical value for 60Hz monitor is -5ms. Never hardcode.
+            config.sync.monitor_delay_ms. Applied as
+            ``corrected_latency = latency_raw + monitor_delay_ms`` so that a
+            negative config value subtracts from the final onset time (MATLAB
+            equivalent: ``onset - 5`` with a hard-coded ``-5``).
+            Typical value for 60Hz monitor is ``-5``. Never hardcode.
         pd_window_pre_ms: Baseline window before stim onset (ms). Default 10.0.
             Read from config.sync.pd_window_pre_ms.
         pd_window_post_ms: Detection window after stim onset (ms). Default 100.0.
             Read from config.sync.pd_window_post_ms.
+        pd_hignline_skip_ms: Stabilization skip before threshold's "hignline"
+            window (ms), counted from trigger. Default 50.0 (matches MATLAB
+            ``after_onset_measure=50``). Threshold formula uses only the
+            60–80 ms steady-state band by default — not the full 0–100 ms
+            post-window, whose mean gets depressed by the rising edge and
+            produces an artificially low threshold → too-early detections.
+        pd_hignline_width_ms: Hignline window width (ms). Default 20.0
+            (matches MATLAB ``[1:20]``).
         min_signal_variance: Minimum acceptable signal variance after int16→voltage
             conversion. Default 1e-6.
 
@@ -242,9 +271,11 @@ def calibrate_photodiode(
 
 | 参数 | 对应配置键 | 说明 |
 |---|---|---|
-| `monitor_delay_ms` | `config.sync.monitor_delay_ms` | 显示器系统延迟（ms），60Hz 显示器通常为 `-5`，**禁止硬编码** |
+| `monitor_delay_ms` | `config.sync.monitor_delay_ms` | 显示器系统延迟（ms），60Hz 显示器通常为 `-5`（语义：从 latency 加上该值）。**禁止硬编码** |
 | `pd_window_pre_ms` | `config.sync.pd_window_pre_ms` | 基线窗口时长（ms），默认 `10.0` |
 | `pd_window_post_ms` | `config.sync.pd_window_post_ms` | 检测窗口时长（ms），默认 `100.0` |
+| `pd_hignline_skip_ms` | `config.sync.pd_hignline_skip_ms` | 阈值 hignline 窗的跳过时间（ms），默认 `50.0` |
+| `pd_hignline_width_ms` | `config.sync.pd_hignline_width_ms` | 阈值 hignline 窗的宽度（ms），默认 `20.0` |
 | `voltage_range` | `nidq.meta["niAiRangeMax"]` | ADC 量程（伏特），从 nidq.meta 读取，**禁止硬编码** |
 | `sample_rate_hz` | `nidq.meta["niSampRate"]` | 采样率（Hz），从 nidq.meta 读取，**禁止硬编码** |
 | `min_signal_variance` | `config.sync.pd_min_signal_variance` | 无信号判定阈值，默认 `1e-6` |
@@ -262,19 +293,20 @@ def calibrate_photodiode(
 | `test_returns_calibrated_onsets_dataclass` | 单 trial，正常阶跃信号 | 返回类型是 `CalibratedOnsets` |
 | `test_good_trial_quality_flag_zero` | 干净阶跃信号，阶跃在 trigger 后 20ms | `quality_flags[0] == 0` |
 | `test_onset_latency_detected_correctly` | 信号在 trigger 后 20ms 阶跃，monitor_delay_ms=0 | `onset_latency_ms[0] ≈ 20.0`（±1ms） |
-| `test_monitor_delay_applied` | 阶跃在 20ms，`monitor_delay_ms=-5` | `onset_latency_ms[0] ≈ 25.0`（latency_raw - delay = 20 - (-5) = 25） |
+| `test_monitor_delay_applied` | 阶跃在 20ms，`monitor_delay_ms=-5` | `onset_latency_ms[0] ≈ 15.0`（corrected = latency_raw + delay = 20 + (-5) = 15，MATLAB 等价 `onset - 5`） |
 | `test_stim_onset_nidq_updated` | trigger 在 1.0s，20ms 阶跃，monitor_delay=0 | `stim_onset_nidq_s[0] ≈ 1.020` |
 | `test_multiple_trials_all_good` | 5 trials，各有干净阶跃，latency 10-50ms | 所有 `quality_flags == 0` |
 | `test_n_suspicious_zero_when_all_good` | 5 trials 全部 good | `n_suspicious == 0` |
 | `test_int16_to_voltage_conversion` | 已知 int16 值和 voltage_range | 转换结果与手动公式 `signal * (range/32768)` 一致 |
 
-### 重采样
+### 采样率处理（原始采样域，不重采样）
 
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
-| `test_resample_to_1ms` | `sample_rate_hz=30000.0`，1 秒信号 | 重采样后长度 ≈ 1000 个样本 |
-| `test_resample_preserves_step_location` | 已知采样率，已知阶跃样本位置 | 重采样后阶跃时刻误差 < 1ms |
-| `test_resample_ratio_from_sample_rate` | `sample_rate_hz=25000.0` | `up=1000, down=25000` 的约分比率正确 |
+| `test_runs_at_30khz` | `sample_rate_hz=30000.0`，已知阶跃样本位置 | 正常返回 `CalibratedOnsets`，不调用 `resample_poly` |
+| `test_step_location_preserved_at_30khz` | 30 kHz，trigger+20ms 阶跃 | `onset_latency_ms[0]` 误差 < 1 ms |
+| `test_step_location_preserved_at_25khz` | 25 kHz，trigger+30ms 阶跃 | `onset_latency_ms[0]` 误差 < 1 ms |
+| `test_non_integer_sample_rate_no_drift` | `sample_rate_hz=25000.487`，30 分钟信号里散布 n=20 个 trial，每 trial latency=20 ms | 逐 trial latency 与真值误差 < 1 ms（验证去重采样后不再有随时间增长的漂移） |
 
 ### 质量标志位
 
@@ -294,6 +326,7 @@ def calibrate_photodiode(
 |---|---|---|
 | `test_global_threshold_formula` | 已知 baseline_mean 和 stim_period_mean | `threshold == 0.1 * baseline + 0.9 * stim` |
 | `test_threshold_is_global_not_per_trial` | 两 trial 信号不同，但阈值应为全局 | 两 trial 使用相同 `global_threshold` |
+| `test_threshold_uses_hignline_window_not_full_post` | 构造信号前 50 ms 过渡 + 60-80 ms 稳态平台，把整 post 区均值拉低 | 阈值由稳态段主导，检测到的 latency 落在 50 ms 附近稳态入口而非过渡早期 |
 
 ### 全局信号质量
 
@@ -327,7 +360,6 @@ def calibrate_photodiode(
 | 依赖 | 类型 | 说明 |
 |---|---|---|
 | `numpy` | 必选 | int16→float 转换、数组运算、z-score、NaN 处理 |
-| `scipy.signal.resample_poly` | 必选 | 精确整数比率重采样到 1ms 分辨率 |
 | `dataclasses.dataclass` | 标准库 | `CalibratedOnsets` 定义 |
 | `pynpxpipe.core.errors.SyncError` | 项目内部 | 信号质量失败时抛出 |
 
@@ -359,5 +391,6 @@ def calibrate_photodiode(
 | Monitor delay 从 config 读取而非硬编码 | MATLAB 硬编码 -5ms（仅适用 60Hz）；Python 支持不同刷新率 |
 | 阈值窗口可配 | MATLAB 硬编码 `before=10, after=50/100`；Python 从 config 读取 |
 | Python 增加 `quality_flags` 系统 | MATLAB 无逐 trial 质量标记，失败 trial 静默跳过 |
-| 重采样使用 `scipy.signal.resample_poly` | MATLAB 直接在 1kHz AIN 上操作（NIDQ 已是 1kHz 采样），Python 需处理不同采样率 |
+| **不做 1 kHz 重采样** | MATLAB 的 AIN 在 step #1 以 `rat(1000/niSampRate)` 精确比率重采到 1 kHz。Python 若用 `int(round(niSampRate))` 会引入 ppm 级漂移；干脆直接在原始 NIDQ 采样域切窗，精度更高、和 `plots/sync.py:_build_pd_trial_matrix` 语义完全一致 |
+| `monitor_delay_ms` 语义：`corrected = latency_raw + monitor_delay_ms` | 与 MATLAB `onset - 5` 等价（config 值本身是带符号的 -5）。历史 bug 用减号，实为把 latency 多加 5 ms |
 | Python stim_onset_times_s 由调用方传入 | MATLAB 内部从 NIDQ bit 6 提取；Python 解耦，由 synchronize stage 组装传入 |

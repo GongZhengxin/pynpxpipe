@@ -4,7 +4,7 @@
 
 实现 pipeline 第六个 stage：**后处理（Postprocess）**。
 
-对每个 probe 的 curated sorting 结果运行完整的 SortingAnalyzer 扩展流程（waveforms → templates → unit_locations → template_similarity），计算每个单元的 SLAY（Stimulus-Locked Activity Yield）分数，并执行眼动有效性验证（可选）。保存 SortingAnalyzer 到 `{output_dir}/postprocessed/{probe_id}/`，供 export stage 使用。
+对每个 probe 的 curated sorting 结果运行完整的 SortingAnalyzer 扩展流程（waveforms → templates → unit_locations → template_similarity），计算每个单元的 SLAY（Stimulus-Locked Activity Yield）分数，并执行眼动有效性验证（可选）。保存 SortingAnalyzer 到 `{output_dir}/06_06_postprocessed/{probe_id}/`，供 export stage 使用。
 
 **内存管理**：waveform 提取可能 OOM；遇到 `MemoryError` 时将 `chunk_duration` 减半，重试一次。若仍失败 → raise `PostprocessError`。
 
@@ -23,20 +23,20 @@
 
 | 配置键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `config.pipeline.n_jobs` | `int` | `1` | SpikeInterface job 数 |
-| `config.pipeline.chunk_duration` | `str` | `"1s"` | 初始分块时间窗；OOM 时减半 |
-| `config.pipeline.postprocess.slay_pre_s` | `float` | `0.05` | SLAY 预刺激窗口（秒） |
-| `config.pipeline.postprocess.slay_post_s` | `float` | `0.30` | SLAY 刺激后窗口（秒） |
-| `config.pipeline.postprocess.eye_validation.enabled` | `bool` | `True` | 是否执行眼动验证 |
-| `config.pipeline.postprocess.eye_validation.eye_threshold` | `float` | `0.999` | 注视比例阈值（cf. MATLAB `eye_thres=0.999`） |
+| `config.postprocess.slay_pre_s` | `float` | `0.05` | SLAY 预刺激窗口（秒），fallback 默认值；若 behavior_events 含 onset_time_ms/offset_time_ms 则动态计算覆盖 |
+| `config.postprocess.slay_post_s` | `float` | `0.30` | SLAY 刺激后窗口（秒），fallback 默认值；同上 |
+| `config.postprocess.pre_onset_ms` | `float` | `50.0` | 动态 SLAY 窗口的 pre-stimulus（ms），`pre_s = pre_onset_ms / 1000` |
+| `config.postprocess.eye_validation.enabled` | `bool` | `True` | 是否执行眼动验证 |
+| `config.postprocess.eye_validation.eye_threshold` | `float` | `0.999` | 注视比例阈值（cf. MATLAB `eye_thres=0.999`） |
+| `config.resources.chunk_duration` | `str` | `"1s"` | 初始分块时间窗；OOM 时减半 |
 
 ### 外部数据依赖
 
 | 文件 | 路径 | 说明 |
 |---|---|---|
-| behavior_events.parquet | `{output_dir}/sync/behavior_events.parquet` | 由 synchronize stage 写出，含 `stim_onset_nidq_s`、`stim_onset_imec_s` |
-| curated sorting | `{output_dir}/curated/{probe_id}/` | 由 curate stage 写出 |
-| preprocessed recording | `{output_dir}/preprocessed/{probe_id}/` | 由 preprocess stage 写出（Zarr） |
+| behavior_events.parquet | `{output_dir}/04_sync/behavior_events.parquet` | 由 synchronize stage 写出，含 `stim_onset_nidq_s`、`stim_onset_imec_s` |
+| curated sorting | `{output_dir}/05_05_curated/{probe_id}/` | 由 curate stage 写出 |
+| preprocessed recording | `{output_dir}/01_01_preprocessed/{probe_id}/` | 由 preprocess stage 写出（Zarr） |
 
 ---
 
@@ -46,8 +46,9 @@
 
 | 输出 | 路径 | 说明 |
 |---|---|---|
-| SortingAnalyzer | `{output_dir}/postprocessed/{probe_id}/` | binary_folder 格式，含所有扩展 |
-| SLAY 分数 | `{output_dir}/postprocessed/{probe_id}/slay_scores.json` | 每个 unit_id → SLAY float |
+| SortingAnalyzer | `{output_dir}/06_06_postprocessed/{probe_id}/` | binary_folder 格式，含所有扩展 |
+| SLAY 分数 | `{output_dir}/06_06_postprocessed/{probe_id}/slay_scores.json` | 每个 unit_id → SLAY float |
+| 诊断图（可选） | `{output_dir}/figs/postprocess_eye_density.png` | 眼位空间密度热图（见§4 诊断图） |
 | per-probe checkpoint | `{output_dir}/checkpoints/postprocess_{probe_id}.json` | 含 unit 数量和 SLAY 统计 |
 
 ### behavior_events.parquet 更新（眼动验证）
@@ -101,14 +102,26 @@
    - `templates`
    - `unit_locations`
    - `template_similarity`
-6. **SLAY 计算**：对每个 unit，调用 `_compute_slay(spike_times, stim_onset_times, pre_s, post_s)` → `slay_score`；收集为 dict `{unit_id: float}`；写到 `slay_scores.json`
-7. **写 per-probe checkpoint**
-8. **释放内存**：`del analyzer, sorting, recording; import gc; gc.collect()`
+6. **动态 SLAY 窗口解析**：
+   ```python
+   if "onset_time_ms" in behavior_events_df.columns and "offset_time_ms" in behavior_events_df.columns:
+       pre_s = config.postprocess.pre_onset_ms / 1000
+       post_s = (behavior_events_df["onset_time_ms"].median() + behavior_events_df["offset_time_ms"].median()) / 1000
+   else:
+       pre_s = config.postprocess.slay_pre_s
+       post_s = config.postprocess.slay_post_s
+   ```
+7. **SLAY + ranksum 计算**：对每个 unit：
+   - 调用 `_compute_slay(spike_times, stim_onset_times, pre_s, post_s)` → `slay_score`
+   - 调用 `_compute_ranksum(spike_times, stim_onset_times, pre_s, post_s)` → `is_visual`
+   - 收集为 dict `{unit_id: {"slay_score": float, "is_visual": bool}}`；写到 `slay_scores.json`
+8. **写 per-probe checkpoint**
+9. **释放内存**：`del analyzer, sorting, recording; import gc; gc.collect()`
 
 #### OOM 重试逻辑（waveforms 计算）
 
 ```python
-chunk_duration = config.pipeline.chunk_duration
+chunk_duration = config.resources.chunk_duration
 try:
     analyzer.compute("waveforms", chunk_duration=chunk_duration, n_jobs=n_jobs)
 except MemoryError:
@@ -167,6 +180,70 @@ SLAY（Stimulus-Locked Activity Yield）：计算该 unit 响应的 trial-to-tri
 
 **为什么用 Spearman 而非 Pearson**：低发放率时 spike count 分布非正态，Spearman 更稳健，不受极端值影响。
 
+#### 度量语义与命名（重要澄清）
+
+本 pipeline 的 `slay_score` 字段**不是** SpikeInterface `sortingcomponents.merging.slay` 的 GNN auto-merge quality score，尽管共用"SLAY"缩写。两者无算法关系：
+
+| 维度 | 本 pipeline 的 `slay_score` | SpikeInterface SLAy (auto-merger) |
+|---|---|---|
+| 用途 | 单 unit 响应一致性度量 | 跨 unit 合并候选评估 |
+| 算法 | trial-to-trial Spearman 均值（所有 trial 混合） | GNN + 多特征 |
+| 输出范围 | [0, 1]（通常 0.01-0.2） | 合并建议对 |
+
+**"所有 trial 混合"的后果**：对 V4/IT 的图像选择性细胞，pair 数中 within-image 只占 ~0.4%（`C(5,2)·180 / C(900,2)`），跨 image pair 相关 ≈ 0，混合期望 ≈ 0.001-0.01。**低均值（~0.05）不表示 unit 差**，而是"刺激选择性 + 混合计算"的数学必然。对"群体稳态响应"强的细胞（onset-burst 型非选择性），该值偏高。
+
+**未来改进方向**（非紧急）：
+- 重命名 `slay_score` → `response_consistency_score`，避免与 SI SLAy 混淆。
+- 新增可选 `within_stim_reliability`：按 `stim_index` 分组，仅在同图 trial 间算 Spearman，更直接反映图像选择性稳定性。
+- 评估集成真正的 SpikeInterface SLAy 到 auto-merge 流程。
+
+### Unit 定位算法选择（V.1 补充）
+
+`analyzer.compute("unit_locations")` 默认使用 SpikeInterface 的 `monopolar_triangulation`（电流偶极子拟合，输出连续 xy 坐标）。本 pipeline 采纳这一默认，**不使用** legacy Bombcell 的 `ksPeakChan_xy`（峰值通道离散 xy）。
+
+**理由**：
+1. **精度更高**：monopolar 在通道间插值，典型误差 < 5µm；ksPeakChan_xy 被通道几何（20µm 间距）量化。
+2. **可复现**：同 template 产出相同 xy，不依赖 KS 的 channel 标注。
+3. **与 SI 生态一致**：下游 `unit_location` 可直接喂 `plot_unit_locations`、`compute_drift_estimates` 等。
+
+**与 legacy 参考 pipeline 的对比**：
+- 参考 pipeline 的 `UnitProp.csv` `unitpos` 列来自 Bombcell，x 仅 {0, 103}（两列通道几何）。
+- 本 pipeline 输出连续 x（范围 -50 到 +130 µm 左右）。
+- **不要**按 `ks_id` 逐行比较两边的 `unitpos`：KS `ks_id` 在两次独立 sorting 之间**不保证**对应同一物理 unit，逐行比较无意义。要配对需走 template 相似度 + location 距离（见 `tools/diag_unit_pairing.py`，V.8）。
+
+**切换到 `center_of_mass`**：若需要和参考 pipeline 做同算法对比，在 `config/sorting.yaml` 设：
+```yaml
+analyzer:
+  unit_locations_method: center_of_mass
+```
+但注意 `stages/postprocess.py::_postprocess_probe` 当前调用 `analyzer.compute("unit_locations")` 不传 `method`（SI 默认也是 monopolar），配置不会生效；需先把 `method=self.session.config.sorting.analyzer.unit_locations_method` 传进去（遗留 TODO，非本轮任务）。
+
+### `_compute_ranksum(spike_times, stim_onset_times, pre_s, post_s) -> bool`
+
+Mann-Whitney U 检验判断 unit 是否有视觉响应。与遗留 `data_integrator.py:635-643` 的 `_statistical_test` 一致。
+
+**算法**：
+1. **过滤有效 stim onset**：`valid_onsets = stim_onset_times[~np.isnan(stim_onset_times)]`
+2. **检查最小 trial 数**：若 `len(valid_onsets) < 5` → return `False`
+3. **逐 trial 计算 spike count**：
+   ```python
+   baseline_counts = []
+   response_counts = []
+   for onset in valid_onsets:
+       baseline = spike_times[(spike_times >= onset - pre_s) & (spike_times < onset)]
+       response = spike_times[(spike_times >= onset) & (spike_times < onset + post_s)]
+       baseline_counts.append(len(baseline))
+       response_counts.append(len(response))
+   ```
+4. **Mann-Whitney U 检验**：
+   ```python
+   from scipy.stats import mannwhitneyu
+   stat, p = mannwhitneyu(baseline_counts, response_counts, alternative="less")
+   ```
+5. **判定**：`is_visual = (mean(response_counts) > mean(baseline_counts)) and (p < 0.001)`
+
+**返回值**：`bool`（True = 视觉响应显著，False = 无显著响应或数据不足）
+
 ### `_run_eye_validation(behavior_events_df) -> pd.DataFrame`
 
 （若 `eye_validation.enabled=False`，跳过此方法）
@@ -183,6 +260,22 @@ SLAY（Stimulus-Locked Activity Yield）：计算该 unit 响应的 trial-to-tri
 - **MATLAB**：`trial_valid_idx` 存储的是 image index（有效 trial 的图像编号），无效 trial 的 image index=0（零值作为"无效"标记）
 - **Python**：`trial_valid` 列存储 1.0（有效）/ 0.0（无效）/ NaN（未验证），是布尔语义而非图像编号
 - **兼容策略**：export stage 生成 NWB 时需根据 `trial_valid + condition_id` 重建有效图像列表。Python 不直接存储 image index，而是让 export 按需查询 `behavior_events_df[trial_valid == 1.0].condition_id`。两种方式在最终结果（哪些图像有足够有效 trial）上等价，但中间表示不同。
+
+### 诊断图（可选，`{output_dir}/figs/`）
+
+若 `config.sync.generate_plots == True` 且 matplotlib 可用，在 `_run_eye_validation()` 完成后生成眼位诊断图。
+
+**文件名**: `postprocess_eye_density.png`
+
+| 图表类型 | 数据来源 | QC 检查要点 | MATLAB 对照 |
+|---------|---------|------------|------------|
+| 热图 (imagesc) | 每 onset 的平均眼位 (x, y)，按 [-8,8]×[-8,8] 度网格 bin 计数 | 密度应集中在注视点 (0,0) 附近；若存在系统性偏移说明眼动校准有问题 | #5 |
+
+**实现要点**：
+- 使用 `BHV2Parser.get_analog_data("Eye")` 逐 trial 读取眼位
+- 对每个有效 stimulus onset 取 onset 窗口内眼位均值 → 得到 (x, y) 坐标对
+- 将坐标按 0.5° 步长 bin 到 [-8, 8] 网格，生成 density matrix
+- 使用 `plt.imshow()` + colorbar 绘制，sgtitle 包含 session 路径
 
 ---
 
@@ -252,17 +345,31 @@ class PostprocessStage(BaseStage):
         Returns:
             Float in [0,1], or np.nan if fewer than 5 valid trials.
         """
+
+    def _compute_ranksum(
+        self,
+        spike_times: np.ndarray,
+        stim_onset_times: np.ndarray,
+        pre_s: float = 0.05,
+        post_s: float = 0.30,
+    ) -> bool:
+        """Mann-Whitney U test for visual responsiveness.
+
+        Returns:
+            True if response > baseline AND p < 0.001.
+        """
 ```
 
 ### 可配参数
 
 | 参数 | 配置键 | 默认 | 说明 |
 |---|---|---|---|
-| `slay_pre_s` | `config.pipeline.postprocess.slay_pre_s` | `0.05` | **禁止硬编码** |
-| `slay_post_s` | `config.pipeline.postprocess.slay_post_s` | `0.30` | **禁止硬编码** |
-| `eye_validation_enabled` | `config.pipeline.postprocess.eye_validation.enabled` | `True` | 眼动验证开关 |
-| `eye_threshold` | `config.pipeline.postprocess.eye_validation.eye_threshold` | `0.999` | 注视比例阈值，**禁止硬编码** |
-| `chunk_duration` | `config.pipeline.chunk_duration` | `"1s"` | 初始分块；OOM 时减半 |
+| `slay_pre_s` | `config.postprocess.slay_pre_s` | `0.05` | fallback 默认值，**禁止硬编码** |
+| `slay_post_s` | `config.postprocess.slay_post_s` | `0.30` | fallback 默认值，**禁止硬编码** |
+| `pre_onset_ms` | `config.postprocess.pre_onset_ms` | `50.0` | 动态 SLAY 窗口 pre-stimulus（ms），**禁止硬编码** |
+| `eye_validation_enabled` | `config.postprocess.eye_validation.enabled` | `True` | 眼动验证开关 |
+| `eye_threshold` | `config.postprocess.eye_validation.eye_threshold` | `0.999` | 注视比例阈值，**禁止硬编码** |
+| `chunk_duration` | `config.resources.chunk_duration` | `"1s"` | 初始分块；OOM 时减半 |
 
 ---
 
@@ -335,7 +442,7 @@ class PostprocessStage(BaseStage):
 | `pynpxpipe.stages.base.BaseStage` | 项目内部 | 基类 |
 | `pynpxpipe.core.errors.PostprocessError` | 项目内部 | 后处理失败时抛出 |
 | `pynpxpipe.io.bhv.BHV2Parser` | 项目内部 | 眼动数据读取（分 trial 块） |
-| `spikeinterface.core` | 第三方 | `create_sorting_analyzer`、`load_extractor` |
+| `spikeinterface.core` | 第三方 | `create_sorting_analyzer`、`load`（SI ≥0.101） |
 | `numpy` | 必选 | SLAY 计算 |
 | `scipy.stats` | 必选 | Spearman 相关系数计算（`spearmanr`） |
 | `pandas` | 必选 | behavior_events DataFrame |

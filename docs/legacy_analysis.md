@@ -160,7 +160,7 @@
 
 **关键问题**：
 
-1. **phase_shift 位置错误**：相位校正应在高通滤波之前执行（先校正因 IMEC ADC 多路转换引入的采样时间偏移，再滤波），legacy 两种模式均将 phase_shift 置于高通滤波之后，属次优顺序。pynpxpipe 新设计：`phase_shift` → `bandpass_filter` → `bad_channel_detection` → `common_reference`。
+1. **phase_shift 位置（已撤销"错误"定性）**：原断言 legacy 把 phase_shift 放在 highpass 之后为"错误"是过强结论。phase_shift 与 bandpass/highpass 的相对位置 LTI 可交换（见 ADR-003），硬约束只是"phase_shift 必须在 CMR 之前"。legacy 的 `highpass → detect_bad → phase_shift → CMR` 顺序与 SpikeInterface 官方教程、MATLAB REF (`Analysis_Fast.ipynb`) 一致，本身正确。pynpxpipe 当前设计 `phase_shift → bandpass_filter → bad_channel_detection → common_reference` 同样正确；两种顺序数值等价，Round VIII E4 实验拟真数据验证。
 
 2. **仅高通滤波，无上限截止频率**：legacy 只设 `freq_min=300 Hz`，不设 `freq_max`。神经尖峰信号有效频段约 300–6000 Hz，缺少低通滤波会保留高频噪声，对 Kilosort4 的模板匹配质量有影响。pynpxpipe 新设计改用带通滤波器（300–6000 Hz）。
 
@@ -561,7 +561,7 @@ Subject:
 
 | 特性 | Legacy (pyneuralpipe) | pynpxpipe 新设计 | 迁移理由 |
 |------|-----------------------|------------------|----------|
-| **Phase shift 位置** | highpass_filter 之后执行 | bandpass_filter 之前执行 | ADC 采样时间偏移应在任何滤波前校正，否则滤波会引入额外相位失真 |
+| **Phase shift 位置** | highpass_filter 之后执行 | bandpass_filter 之前执行 | 两种顺序 LTI 等价（ADR-003），硬约束只是必须在 CMR 之前；pynpxpipe 选择 phase_shift 先行仅作为与 legacy 的视觉标记 |
 | **滤波类型** | 仅高通 300 Hz，无上限截止 | 带通 300–6000 Hz | 神经尖峰有效频段为 300–6000 Hz；保留高频噪声降低 KS4 模板匹配质量 |
 | **运动校正** | 完全缺失 | DREDge via `si.correct_motion`（与 KS4 `nblocks` 互斥） | 长时程录制中电极漂移可达数十微米，运动校正显著提升 spike sorting 质量 |
 | **单元位置估计** | `center_of_mass` | `monopolar_triangulation` | 对线性多通道探针，monopolar_triangulation 空间精度更高，对深层单元误差更小 |

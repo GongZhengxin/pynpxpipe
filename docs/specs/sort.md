@@ -41,7 +41,7 @@
 
 | 输出 | 路径 | 说明 |
 |---|---|---|
-| Sorting 结果 | `{output_dir}/sorted/{probe_id}/` | SpikeInterface Sorting 对象，保存为 binary_folder 格式 |
+| Sorting 结果 | `{output_dir}/02_sorted/{probe_id}/` | SpikeInterface Sorting 对象，保存为 binary_folder 格式 |
 | per-probe checkpoint | `{output_dir}/checkpoints/sort_{probe_id}.json` | 含 sorting 摘要 |
 
 ### per-probe checkpoint payload
@@ -78,7 +78,11 @@
 ### `_sort_probe_local(probe_id)`
 
 1. 检查 per-probe checkpoint；若已完成 → return
-2. **加载预处理录制**：从 `{output_dir}/preprocessed/{probe_id}/` 读取 Zarr recording（`si.load(zarr_path)`）
+2. **加载预处理录制**：从 `{output_dir}/01_preprocessed/{probe_id}.zarr` 读取 Zarr recording（`si.load(zarr_path)`）
+2a. **CUDA guard**：调用 `pynpxpipe.core.torch_env.resolve_device(torch_device, has_physical_gpu=…)` 解析最终 device：
+   - `"cpu"` → 始终用 cpu
+   - `"auto"` → 无 GPU / torch 是 CPU 构建 → cpu（CPU 构建时发 WARNING）；有 GPU + CUDA torch → cuda
+   - `"cuda"` → 硬件/torch 任一不满足 → 抛 `TorchEnvError`，提示用户跑 `tools/install_sort_stack.py`
 3. **运行 sorter**：
    ```python
    sorting = si.run_sorter(
@@ -89,7 +93,7 @@
    )
    ```
 4. **验证结果**：`n_units = len(sorting.get_unit_ids())`；若 `n_units == 0` → 记录 WARNING（不 raise）
-5. **保存 sorting**：`sorting.save(folder=output_dir / "sorted" / probe_id, format="binary_folder")`
+5. **保存 sorting**：`sorting.save(folder=output_dir / "02_sorted" / probe_id, format="binary_folder")`
 6. **写 checkpoint** + `del sorting, recording; gc.collect()`
 
 若 `si.run_sorter` raise（CUDA OOM、sorter 未安装等）→ raise `SortError` 包装原始异常。
@@ -256,6 +260,7 @@ class SortStage(BaseStage):
 | `pynpxpipe.core.errors.SortError` | 项目内部 | 排序失败时抛出 |
 | `spikeinterface.sorters` | 第三方 | `run_sorter` |
 | `spikeinterface.core` | 第三方 | `read_sorter_folder`、`read_phy`、`load`（SI ≥0.101） |
+| `kilosort` (+ `torch`) | 第三方（optional，`[sort]` extra） | 仅 `mode="local"` 且 `sorter.name="kilosort4"` 时需要；SI 在 `run_sorter("kilosort4", ...)` 内部动态 import。`pynpxpipe[sort]` extra 声明 `kilosort>=4.0`，`kilosort` 的 pypi 元数据把 `torch` 作为直接依赖，因此装 `[sort]` 等价于同时装 `kilosort + torch`。缺失时运行期会抛 `ModuleNotFoundError: No module named 'kilosort'` 或 `torch`。仅 `mode="import"` 时无需安装。 |
 | `gc` | 标准库 | 显式内存释放 |
 | `pathlib.Path` | 标准库 | 路径操作 |
 

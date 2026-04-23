@@ -116,7 +116,10 @@ pynpxpipe：神经电生理数据预处理工具包。
 - numpy, scipy, pandas
 - click（CLI）, pyyaml（配置）, structlog（日志）, psutil（资源探测）
 - panel >= 1.0（Web UI，optional `[ui]`）
-- uv（包管理，pyproject.toml 为唯一依赖声明）
+- **kilosort >= 4.0 + torch**（**不在 pyproject.toml**，由 `tools/install_sort_stack.py` 一次性安装）— torch 的 CUDA wheel 必须从 pytorch.org 专用 index 下载，而 `uv sync` 会把 pypi 的 CPU wheel 固化回 lock；为此把 torch / kilosort 从 pyproject 剥离，安装脚本根据用户 GPU+驱动选轮子，`uv sync` 不会再回滚。详见 `getting_started.md` § Install
+- uv（包管理，pyproject.toml 为唯一依赖声明，torch/kilosort 除外）
+
+> **Optional extras 总览**：`[sort]` (保留占位，真正的 torch + kilosort 用 `tools/install_sort_stack.py` 装) · `[ui]` (Panel) · `[gpu]` (NVML VRAM 探测) · `[plots]` (matplotlib 诊断图) · `[chat]` (LLM Help 助手) · `[matlab]` (legacy MATLAB Engine BHV2 后端)。完整 pipeline 的推荐组合：`uv sync --extra ui --extra gpu --extra plots` + `uv run python tools/install_sort_stack.py`。
 
 ## 目录结构
 
@@ -268,6 +271,35 @@ uv run pytest --nbmake tutorials/      # 自动执行 notebook（CI）
 
 **禁止**：`pip install`（uv 管理依赖）、`python -m pytest`（绕过 venv）、`pip install -e .`
 
+### `uv sync` 硬规矩（CC 必须遵守）
+
+**任何时候跑 `uv sync`，必须带 `--inexact`。** 这是不可协商的项目规矩。
+
+```bash
+# ✅ 正确
+uv sync --inexact                                              # 最小同步
+uv sync --inexact --extra ui --extra gpu --extra plots         # 常用组合
+uv sync --inexact --all-groups                                 # dev group
+uv sync --inexact --extra ui --extra gpu --extra plots --extra chat  # 含 LLM help
+
+# ❌ 禁止（不带 --inexact）
+uv sync
+uv sync --extra ui
+uv sync --all-groups
+```
+
+原因：`torch` 和 `kilosort` **不在 `pyproject.toml`**（CUDA wheel 不能写进 lock，写进去每次 sync 都会被拉回 pypi 的 CPU wheel）。它们由 `tools/install_sort_stack.py` 按用户 GPU 单独装，位于 `uv.lock` 之外。`uv sync` 默认严格模式会清掉所有 lock 外的包，直接把用户的 CUDA torch 换成 CPU 版，导致 sort stage 无声退回 CPU 运算（典型症状：`torch.cuda.is_available()=False`，`.venv/.gpu_stack_lock.json` 与实际 torch 版本撕裂）。`--inexact` 告诉 uv 放过 lock 外的包。
+
+**CC 在任何 session 触发 `uv sync` 前，自检 checklist：**
+
+- [ ] 命令里有 `--inexact` 吗？没有 → 加上再跑。
+- [ ] 这次 sync 真的必要吗？（改 `pyproject.toml` / 改 extra 组合才需要 sync；单纯跑测试不用 sync。）
+- [ ] 如果用户手动跑了 `uv sync`（无 `--inexact`），立即提醒用户 torch/kilosort 可能已被清掉，让用户再跑 `uv run python tools/install_sort_stack.py` 恢复。
+
+对应排障：`uv run python tools/verify_gpu.py` 报 `MISMATCH: lock says cuXXX but torch.cuda.is_available()=False` 就是被 `uv sync` 清过。脚本 v2 会自动检测到这种撕裂并在下次运行时强制 `--reinstall-package`，但前提是用户愿意再跑一次 installer。
+
+> 背景参考见 `getting_started.md` § Keeping torch installed across future syncs 与 `tools/install_sort_stack.py` 头部 docstring。
+
 ## 版本控制
 
 ### 分支策略
@@ -355,7 +387,7 @@ CI 在 PR 和 push to main 时触发：
 
 - 旧代码所有硬编码值（采样率、探针名 imec0、事件码 64 等）全部参数化
 - 用 SpikeInterface 公开 API 替代私有属性（`neo_reader.signals_info_dict` 等）
-- 预处理链顺序：phase_shift **必须在** bandpass_filter 之前（旧代码顺序错误）
+- 预处理链顺序：phase_shift 必须在 CMR 之前（LTI 论证），相对 bandpass 的位置本身不敏感；当前项目约定 phase_shift 先行以与 legacy 区分，SI 官方 / MATLAB REF 的 `highpass → detect_bad → phase_shift → CMR` 顺序也正确。见 `docs/adr/003-phase-shift-positioning.md`
 - Photodiode 校准必须包含极性校正（旧 Python 代码缺失，MATLAB 有）
 - IMEC↔NIDQ 对齐必须包含丢脉冲修复逻辑（旧 Python 代码缺失，MATLAB 有）
 - DREDge 运动校正与 KS4 内部 nblocks 互斥，二选一

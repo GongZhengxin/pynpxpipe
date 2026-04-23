@@ -28,17 +28,19 @@
 
 | 配置键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `config.sync.sync_bit` | `int` | `6` | AP/NIDQ 数字通道中 sync 脉冲的 bit 位，**禁止硬编码** |
-| `config.sync.event_bits` | `list[int]` | `[0,1,2,3,4,5,6,7]` | NIDQ 数字通道中用于事件码解码的 bit 列表 |
+| `config.sync.imec_sync_bit` | `int` | `6` | IMEC AP 数字通道中 sync 脉冲的 bit 位（Neuropixels 硬件标准 bit 6），**禁止硬编码** |
+| `config.sync.nidq_sync_bit` | `int` | `0` | NIDQ 数字通道中 sync 脉冲的 bit 位（取决于接线，通常 bit 0），**禁止硬编码** |
+| `config.sync.event_bits` | `list[int]` | `[1,2,3,4,5,6,7]` | NIDQ 数字通道中用于事件码解码的 bit 列表 |
 | `config.sync.max_time_error_ms` | `float` | `17.0` | 对齐误差上限（ms） |
 | `config.sync.trial_count_tolerance` | `int` | `2` | BHV2/NIDQ trial 数量允许差异 |
-| `config.sync.stim_onset_code` | `int` | — | Stimulus onset 事件码值，**禁止硬编码** |
+| `config.sync.stim_onset_code` | `int` | `64` | Stimulus onset 事件码值，**禁止硬编码** |
 | `config.sync.trial_start_bit` | `int \| None` | `None` | trial start 的 NIDQ bit；None 时自动检测 |
-| `config.sync.photodiode_channel_index` | `int` | — | NIDQ 模拟通道中 photodiode 的通道索引，**禁止硬编码** |
-| `config.sync.monitor_delay_ms` | `float` | `0.0` | 显示器延迟校正量（ms），**禁止硬编码** |
+| `config.sync.photodiode_channel_index` | `int` | `0` | NIDQ 模拟通道中 photodiode 的通道索引，**禁止硬编码** |
+| `config.sync.monitor_delay_ms` | `float` | `-5.0` | 显示器延迟校正量（ms，60 Hz ≈ -5），**禁止硬编码** |
 | `config.sync.gap_threshold_ms` | `float \| None` | `1200.0` | 丢脉冲检测阈值（ms），传递给 `align_imec_to_nidq`。`None` 禁用修复。 |
 | `config.sync.pd_window_pre_ms` | `float` | `10.0` | Photodiode 基线窗口（ms） |
 | `config.sync.pd_window_post_ms` | `float` | `100.0` | Photodiode 检测窗口（ms） |
+| `config.sync.pd_min_signal_variance` | `float` | `1e-6` | Photodiode 信号方差下限，低于此值 raise SyncError |
 | `config.sync.generate_plots` | `bool` | `True` | 是否生成诊断图 |
 
 ---
@@ -49,9 +51,10 @@
 
 | 输出 | 路径 | 说明 |
 |---|---|---|
-| 同步参数表 | `{output_dir}/sync/sync_tables.json` | 每个 probe 的线性对齐参数 |
-| 行为事件表 | `{output_dir}/sync/behavior_events.parquet` | 统一 NIDQ 时钟的逐 trial 事件 |
-| 诊断图（可选） | `{output_dir}/sync/figures/` | 6 张 PNG，由 `io/sync_plots.py` 生成 |
+| 同步参数表（合并） | `{output_dir}/04_sync/sync_tables.json` | 每个 probe 的线性对齐参数 + bhv_metadata |
+| 同步参数表（per-probe） | `{output_dir}/04_sync/{probe_id}_imec_nidq.json` | 一个 probe 一份 `{a, b, residual_ms, n_repaired}`；供 `NWBWriter.add_sync_tables` 写入 NWB scratch |
+| 行为事件表 | `{output_dir}/04_sync/behavior_events.parquet` | 统一 NIDQ 时钟的逐 trial 事件 |
+| 诊断图（可选） | `{output_dir}/figs/sync_*.png` | 12 张 PNG，由 `io/sync_plots.generate_all_plots()` 生成（见§4 诊断图清单） |
 | stage checkpoint | `{output_dir}/checkpoints/synchronize.json` | 单一 stage 级 |
 
 ### `sync_tables.json` 结构
@@ -77,7 +80,12 @@
 | `stim_onset_nidq_s` | `float` | stimulus onset（数字码），NIDQ 时钟秒 |
 | `stim_onset_imec_s` | `str` (JSON) | 每个 probe 的 IMEC 时钟 onset，格式 `{"imec0": 1.023, "imec1": 1.021}` |
 | `condition_id` | `int` | 刺激条件编号 |
+| `stim_index` | `int` | 刺激序号（RSVP 扩展后的 stimulus index，1-based） |
 | `trial_valid` | `float` | NaN（占位，postprocess 阶段填写） |
+| `onset_time_ms` | `float` | 刺激 ON 持续时间（ms），来自 BHV2 VariableChanges |
+| `offset_time_ms` | `float` | 刺激间隔（ISI）时间（ms），来自 BHV2 VariableChanges |
+| `fixation_window` | `float` | 注视窗口半径（度），来自 BHV2 VariableChanges |
+| `stim_onset_bhv_ms` | `float` | BHV2 trial 内相对 stimulus onset 时间（ms），用于眼动验证 |
 | `onset_latency_ms` | `float` | Photodiode 检测到的延迟（ms），NaN 表示跳过 |
 | `quality_flag` | `int` | Photodiode 质量标志（0=good, 1=negative, 2=bounds, 3=low_signal） |
 | `dataset_name` | `str` | BHV2 DatasetName（每行相同） |
@@ -102,7 +110,7 @@
 
 1. 检查 stage 级 checkpoint；若完成 → return
 2. `_report_progress("Starting synchronize", 0.0)`
-3. **提取 NIDQ sync 脉冲时间**：`SpikeGLXLoader.load_nidq(session)` → lazy NIDQ recording；从 NIDQ 数字通道按 `config.sync.sync_bit` 提取上升沿时间 → `nidq_sync_times`
+3. **提取 NIDQ sync 脉冲时间**：`SpikeGLXLoader.load_nidq(session)` → lazy NIDQ recording；从 NIDQ 数字通道按 `config.sync.nidq_sync_bit` 提取上升沿时间 → `nidq_sync_times`
 4. **第一级：逐 probe 对齐**：对每个 probe 调用 `_align_probe_to_nidq(probe_id, nidq_sync_times)` → 收集 `sync_results` dict；`_report_progress("Level 1 complete", 0.33)`
 5. **解码 NIDQ 事件码**：调用 `_decode_nidq_events(nidq_recording, event_bits, sample_rate)` → `(nidq_event_times, nidq_event_codes)`
 6. **第二级：BHV2↔NIDQ 对齐**：调用 `_align_bhv2_to_nidq(nidq_event_times, nidq_event_codes)` → `TrialAlignment`；`_report_progress("Level 2 complete", 0.55)`
@@ -113,18 +121,38 @@
    - `_report_progress("Level 3 complete", 0.75)`
 8. **将 IMEC 时钟 onset 写入 stim_onset_imec_s**：对每个 probe，用 `sync_result.a, sync_result.b` 将 `stim_onset_nidq_s` 转换为 IMEC 时钟；序列化为 JSON 字符串（每个 trial 一行）
 9. **构建 behavior_events DataFrame**：合并 trial 表 + photodiode 校准结果
-10. **写 `sync_tables.json`**：JSON dump，`mkdir(parents=True, exist_ok=True)`
+10. **写 `sync_tables.json` + per-probe `{probe_id}_imec_nidq.json`**：JSON dump，`mkdir(parents=True, exist_ok=True)`；per-probe 文件每 probe 一份 `{a, b, residual_ms, n_repaired}`，供 NWB sync_tables scratch 读取
 11. **写 `behavior_events.parquet`**：`df.to_parquet(..., engine="pyarrow")`
-12. **生成诊断图（可选）**：若 `config.sync.generate_plots`，调用 `generate_all_plots(...)` 传入各级结果；函数内 matplotlib 缺失时静默返回
+12. **生成诊断图（可选）**：若 `config.sync.generate_plots`，调用 `generate_all_plots(...)` 传入各级结果，输出到 `{output_dir}/figs/`；函数内 matplotlib 缺失时静默返回。共 12 张 PNG，详见下方诊断图清单。
 13. **写 stage checkpoint**
 14. `_report_progress("Synchronize complete", 1.0)`
 
 若任何步骤 raise `SyncError`：`_write_failed_checkpoint(error)` 后 re-raise。
 
+### 诊断图清单（`generate_all_plots` 输出，`{output_dir}/figs/`）
+
+每张 PNG 的 sgtitle 包含 session 路径，便于识别来源（对应 MATLAB 图表 #14）。
+
+| 文件名 | 图表类型 | 数据来源 | QC 检查要点 | MATLAB 对照 |
+|--------|---------|---------|------------|------------|
+| `sync_imec_pulse_intervals.png` | 折线图 | `diff(ap_sync_times)` 每个 probe | 间隔应稳定 ~1000ms，检测丢脉冲 | #1 |
+| `sync_nidq_pulse_intervals.png` | 折线图 | `diff(nidq_sync_times)` | 间隔应稳定 ~1000ms，对称检查 NIDQ 端 | #2 |
+| `sync_clock_drift.png` | 折线图 | `nidq_sync_times[i] - ap_sync_times[i]` | 时钟偏移应在 ±10s 以内，无跳变 | #3 |
+| `sync_trial_onset_consistency.png` | 散点图 | ML onset count/trial vs SGLX onset count/trial | 点应落在 y=x 对角线上，title 显示 MaxErr | #4 |
+| `sync_pd_raw_heatmap.png` | 热图 (trial × time) | photodiode raw signal, zscore, [-10,+100]ms window | onset 处应有一致的信号跳变 | #6 |
+| `sync_pd_diff_heatmap.png` | 热图 (trial × time) | `diff(photodiode)` | 变化点应清晰集中在 onset 附近 | #7 |
+| `sync_pd_diff_abs_heatmap.png` | 热图 (trial × time) | `abs(diff(photodiode))` | 极性无关的变化幅度 | #8 |
+| `sync_pd_corrected_heatmap.png` | 热图 (trial × time) | 极性校正后 photodiode 信号 | 校正后所有 trial 应在 onset 处上升 | #9 |
+| `sync_pd_before_calibration.png` | mean±std 折线 | 所有 trial 的 photodiode 均值±std + 阈值线 | 校准前 onset 响应形状 | #10 |
+| `sync_onset_delay_histogram.png` | 直方图 + 垂直线 | `onset_latency` 每 trial 的 PD onset 延迟 (ms) | 分布应集中，xline 标出 min/max | #11 |
+| `sync_pd_after_calibration.png` | mean±std 折线 | 校准后重新对齐的 photodiode 均值 | time=0 处应更尖锐对齐 | #12 |
+| `sync_pd_valid_trials_only.png` | mean±std 折线 | 仅 `dataset_valid_idx > 0` 的 trial | 排除非注视 trial 后信号质量应更好 | #13 |
+| `sync_trial_coverage_per_image.png` | 折线图 | 每张图片的有效 trial 数 | 各图片覆盖应均匀，无明显缺失 | #15 |
+
 ### `_align_probe_to_nidq(probe_id, nidq_sync_times)`
 
-1. 从 `{output_dir}/preprocessed/{probe_id}/` 加载 Zarr recording（或直接从原始 AP 文件）
-2. 从 AP 数字通道按 `config.sync.sync_bit` 提取上升沿 → `ap_sync_times`（用 `SpikeGLXLoader.extract_sync_edges` 或 `np.diff` 方法）
+1. 从 `{output_dir}/01_01_preprocessed/{probe_id}/` 加载 Zarr recording（或直接从原始 AP 文件）
+2. 从 AP 数字通道按 `config.sync.imec_sync_bit` 提取上升沿 → `ap_sync_times`（用 `SpikeGLXLoader.extract_sync_edges` 或 `np.diff` 方法）
 3. 调用 `align_imec_to_nidq(probe_id, ap_sync_times, nidq_sync_times, max_time_error_ms=config.sync.max_time_error_ms, gap_threshold_ms=config.sync.gap_threshold_ms)` → `SyncResult`
 4. 返回 `(ap_sync_times, SyncResult)`（ap_sync_times 供诊断图使用）
 
@@ -392,7 +420,26 @@ class SynchronizeStage(BaseStage):
 
 ---
 
-## 9. MATLAB 对照
+## 9. Pipeline 时钟基准（IMEC 为锚）
+
+**决策**：本 pipeline 所有 trial 级时间戳（`trials.start_time`、`trials.stop_time`、spike times）统一使用**目标 probe 的 IMEC AP 时钟**，不使用 NIDQ 时钟。
+
+**理由**：
+1. **Spike time 在 IMEC 采样空间最精确**：`SortingExtractor` 直接输出 IMEC samples，转 IMEC seconds 是无误差的整除；若转到 NIDQ 时钟则每次查询都要过一次线性回归，累积浮点误差。
+2. **NWB 内部自洽**：NWB 单一 `timestamps_reference_time`，所有 TimeSeries 共享一根时间轴。选 IMEC 后，`units`、`trials`、`behavior` 在同一坐标系，无需在下游分析代码中再做时钟换算。
+3. **DANDI 共享便利**：spike time 不依赖外部辅助硬件（NIDQ PXIe-6341）的采样率精度。
+
+**后果与已观察现象**：
+- 与以 NIDQ 为基准的 pipeline（例如 MATLAB 参考 pipeline）逐 trial 对比 `start_time` 时会观察到**线性漂移**，典型值 ~20 ppm（两个自由运行晶振之间），如 322 s session 末端累积 ~6 ms 差距。这是**物理现象不是 bug**，两侧内部各自自洽（同一 trial 的 `stop_time - start_time` 完全一致）。
+- 多 probe session 的 `stim_onset_imec_s` 是**每 probe 一份**（JSON 列），因为每个 probe 有独立的 `{a, b}` 回归，各自对齐到 NIDQ 后再映射回 IMEC 本身。
+- 跨 session / 跨日合并数据时若需要"挂表"对齐，应以每 session 的 NIDQ 对齐参数为纽带，不要直接把 IMEC seconds 视为绝对时间。
+
+**不做的事**：
+- 不提供"切换到 NIDQ 时钟"的开关。需要 NIDQ 时钟的下游分析应读 `behavior_events.parquet` 的 `stim_onset_nidq_s` 列 + `sync_tables.json` 的 `{a, b}` 自行换算，而不是污染主输出的语义。
+
+---
+
+## 10. MATLAB 对照
 
 | 项目 | 说明 |
 |------|------|

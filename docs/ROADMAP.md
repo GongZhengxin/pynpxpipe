@@ -40,6 +40,19 @@
 
 ---
 
+### 工作轨道 C：生产环境验证
+
+#### C1 — Check and debug for app in production environment
+
+| 任务 | 说明 | 产出 |
+|------|------|------|
+| C1.1 UI 端到端验证 | 在真实数据上运行 `pynpxpipe-ui`，验证 Configure → Execute → Review 全流程 | 测试报告 |
+| C1.2 CLI 端到端验证 | 用 `pynpxpipe run` 命令在真实数据上跑完整 pipeline，检查 checkpoint/日志/NWB 输出 | 测试报告 |
+| C1.3 Bug 修复 | 修复 C1.1/C1.2 中发现的所有阻塞性问题 | 代码修复 + 测试 |
+| C1.4 文档校验 | 按 `docs/getting_started.md` 教程从零操作，修复文档与实际行为不一致之处 | 文档更新 |
+
+---
+
 ### 工作轨道 A：Panel Web UI（主分支）
 
 #### A1 — 基础设施搭建
@@ -141,11 +154,16 @@
       │
       └── feat/pure-python-bhv2 分支
 
-两条轨道完全独立，可以穿插进行。
-建议优先级：A1-A2 → B1-B2 → A3-A4 → B3 → A5
+轨道 C（生产环境验证）─────────────────────────────────────────────────
+  C1 真实数据端到端验证 + Bug 修复 + 文档校验
+      │
+      └── 依赖 A5 + B3 完成
+
+轨道 A/B 完全独立，可以穿插进行。轨道 C 在 A+B 完成后执行。
+建议优先级：A1-A2 → B1-B2 → A3-A4 → B3 → A5 → C1
 ```
 
-**预计工作量**：A 轨道 ~6-8 个 session，B 轨道 ~4-5 个 session
+**预计工作量**：A 轨道 ~6-8 个 session，B 轨道 ~4-5 个 session，C 轨道 ~2-3 个 session
 
 ---
 

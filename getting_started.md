@@ -16,24 +16,41 @@ You have two installation modes depending on your use case.
 
 ### Mode A — Consume as a dependency (most users)
 
-Add it to your own uv project:
+Step 1 — add pynpxpipe to your own uv project:
 
 ```bash
-# Core only
-uv add git+https://github.com/GongZhengxin/pynpxpipe.git
-
-# Web UI + GPU detection + diagnostic plots
+# Recommended: full pipeline (Web UI + GPU detection + plots)
 uv add "pynpxpipe[ui,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
 
-# Web UI + LLM help assistant
-uv add "pynpxpipe[ui,chat] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
+# Add the LLM help assistant on top
+uv add "pynpxpipe[ui,gpu,plots,chat] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
+
+# Core only (no UI, no plots)
+uv add git+https://github.com/GongZhengxin/pynpxpipe.git
 ```
 
-Or with plain pip in a venv:
+Step 2 — install the sort stack (**once**, not repeated on every update):
 
 ```bash
-pip install "pynpxpipe[ui,gpu] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
+# Grab install_sort_stack.py from the repo (skip if you cloned in Mode B)
+curl -O https://raw.githubusercontent.com/GongZhengxin/pynpxpipe/main/tools/install_sort_stack.py
+curl -O https://raw.githubusercontent.com/GongZhengxin/pynpxpipe/main/tools/cuda_matrix.yaml
+mkdir -p tools && mv install_sort_stack.py cuda_matrix.yaml tools/
+
+# Interactive install — auto-detects your GPU + driver, recommends a CUDA wheel
+uv run python tools/install_sort_stack.py
 ```
+
+> **Why a separate step?** `torch` and `kilosort` are intentionally NOT listed
+> in `pyproject.toml`. If they were, every `uv sync` would revert a CUDA build
+> of torch back to the pypi CPU wheel, and you'd silently run on CPU again.
+> Keeping them out of pyproject means the wheel you pick sticks across
+> updates, and each user installs the wheel matching their own CUDA version.
+>
+> The installer reads `tools/cuda_matrix.yaml` to pick the right wheel for
+> your driver. It always shows the recommendation first, then lets you
+> confirm or override. Re-running it is idempotent (a lock file at
+> `.venv/.gpu_stack_lock.json` records what was installed).
 
 ### Mode B — Clone for development / contribution
 
@@ -41,6 +58,38 @@ pip install "pynpxpipe[ui,gpu] @ git+https://github.com/GongZhengxin/pynpxpipe.g
 git clone https://github.com/GongZhengxin/pynpxpipe.git
 cd pynpxpipe
 uv sync --all-groups
+
+# One-time sort stack install (see Mode A step 2 for why)
+uv run python tools/install_sort_stack.py
+```
+
+To confirm the install at any later time:
+
+```bash
+uv run python tools/verify_gpu.py
+```
+
+### Keeping torch installed across future syncs
+
+After the installer runs, **always pass `--inexact` when re-syncing**:
+
+```bash
+uv sync --inexact --extra ui --extra gpu --extra plots         # preserves torch/kilosort
+uv sync --extra ui --extra gpu --extra plots                   # ✗ DON'T — removes torch
+```
+
+Why: `uv sync` defaults to strict mode and uninstalls anything not in `uv.lock`.
+Since `torch` / `kilosort` live outside the lock (that's how CUDA builds stay
+put per-user), strict sync nukes them. `--inexact` tells uv to leave
+out-of-lock packages alone. As of uv 0.8 there is no environment-variable
+equivalent, so you must pass the flag explicitly (or bake it into a shell
+alias / Makefile).
+
+If you see `ModuleNotFoundError: No module named 'torch'` after a `uv sync`,
+you forgot `--inexact` — just re-run the installer (`--force` to skip prompts):
+
+```bash
+uv run python tools/install_sort_stack.py --yes --force
 ```
 
 ### Verify the installation
@@ -337,6 +386,11 @@ Subject:
 | Problem | Solution |
 |---------|----------|
 | `ModuleNotFoundError: No module named 'panel'` | Install UI extra: `uv sync --extra ui` |
+| `ModuleNotFoundError: No module named 'torch'` | Run `uv run python tools/install_sort_stack.py` (torch lives outside pyproject; see install guide) |
+| `The dredge method require torch: pip install torch` | Same — run the sort stack installer; DREDge needs `torch` |
+| `ModuleNotFoundError: No module named 'kilosort'` | Same — run the sort stack installer |
+| `TorchEnvError: torch_device='cuda' was requested ... CPU-only build` | Your torch is the CPU wheel. Run `uv run python tools/install_sort_stack.py --force` and pick a CUDA wheel matching your driver |
+| `TorchEnvError: torch_device='cuda' was requested but no NVIDIA GPU` | Set `torch_device: cpu` (or `auto`) in `config/sorting.yaml` |
 | `pynpxpipe-ui` command not found | Run via `uv run pynpxpipe-ui` or install with `uv sync` |
 | UI doesn't open in browser | Navigate manually to `http://localhost:5006` |
 | Out of memory during preprocess | Reduce `chunk_duration` (e.g., `"0.5s"`) or lower `n_jobs` in `pipeline.yaml` |

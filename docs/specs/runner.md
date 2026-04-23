@@ -4,7 +4,7 @@
 
 实现 pipeline 编排层：`PipelineRunner`。
 
-按照 `STAGE_ORDER` 定义的顺序（discover → preprocess → sort → synchronize → curate → postprocess → export）调度各 stage 执行。核心功能：
+按照 `STAGE_ORDER` 定义的顺序（discover → preprocess → sort → merge → synchronize → curate → postprocess → export）调度各 stage 执行。核心功能：
 
 1. **断点续跑**：检查每个 stage 的 checkpoint，已完成的自动跳过
 2. **资源配置**：若 config 中有 `"auto"` 值，启动 ResourceDetector 自动解析为具体数值
@@ -47,6 +47,7 @@
   "discover":    "completed",      # stage checkpoint exists, status=completed
   "preprocess":  "partial (1/2)",  # per-probe stages: partial if some probes done
   "sort":        "completed",
+  "merge":       "skipped",        # config.merge.enabled=False → skipped
   "synchronize": "pending",        # no checkpoint yet
   "curate":      "pending",
   "postprocess": "pending",
@@ -59,6 +60,7 @@
 - `"failed"` — stage 级 checkpoint 存在且 status=failed
 - `"partial (N/M probes)"` — per-probe 阶段，部分 probe 完成（只用于 preprocess/sort/curate/postprocess）
 - `"pending"` — 无 checkpoint
+- `"skipped"` — stage 被配置禁用（如 `config.merge.enabled=False`）
 
 ---
 
@@ -95,12 +97,15 @@ STAGE_CLASS_MAP = {
     "discover":     DiscoverStage,
     "preprocess":   PreprocessStage,
     "sort":         SortStage,
+    "merge":        MergeStage,
     "synchronize":  SynchronizeStage,
     "curate":       CurateStage,
     "postprocess":  PostprocessStage,
     "export":       ExportStage,
 }
 ```
+
+**merge stage 特殊处理**：`run_stage("merge")` 在实例化 `MergeStage` 之前先检查 `config.merge.enabled`；若为 `False`（默认值），立即 return 跳过该 stage，不写 checkpoint。
 
 （SortStage 内部已保证串行，runner 无需额外处理）
 
@@ -121,6 +126,10 @@ STAGE_CLASS_MAP = {
 - stage 级 failed → `"failed"`
 - 无 checkpoint → `"pending"`
 
+**Optional stages**（merge）：
+- `config.merge.enabled=False` → `"skipped"`
+- 否则按 per-probe stages 逻辑处理
+
 ---
 
 ## 5. 公开 API
@@ -140,6 +149,7 @@ STAGE_ORDER: list[str] = [
     "discover",
     "preprocess",
     "sort",
+    "merge",          # NEW — optional, default OFF
     "synchronize",
     "curate",
     "postprocess",
@@ -211,7 +221,7 @@ class PipelineRunner:
 
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
-| `test_run_executes_all_stages_in_order` | stages=None | 7 个 stage 按 STAGE_ORDER 调用 |
+| `test_run_executes_all_stages_in_order` | stages=None | 8 个 stage 按 STAGE_ORDER 调用（merge 默认 skipped） |
 | `test_run_subset_of_stages` | stages=["sort", "curate"] | 仅 2 个 stage 被调用，顺序按 STAGE_ORDER |
 | `test_run_subset_maintains_order` | stages=["export", "discover"] | 按 discover→export 顺序（不按输入顺序） |
 | `test_run_stage_by_name` | `run_stage("sort")` | SortStage.run() 被调用一次 |
@@ -256,7 +266,8 @@ class PipelineRunner:
 |---|---|---|
 | `pynpxpipe.core.checkpoint.CheckpointManager` | 项目内部 | checkpoint 状态查询 |
 | `pynpxpipe.core.resources.ResourceDetector` | 项目内部 | "auto" 值解析 |
-| `pynpxpipe.stages.*` (all 7 stage classes) | 项目内部 | stage 实例化 |
+| `pynpxpipe.stages.*` (all 8 stage classes) | 项目内部 | stage 实例化 |
+| `pynpxpipe.stages.merge.MergeStage` | 项目内部 | merge stage（optional, default OFF） |
 | `pynpxpipe.core.config.PipelineConfig` | 项目内部 | TYPE_CHECKING |
 | `pynpxpipe.core.config.SortingConfig` | 项目内部 | TYPE_CHECKING |
 | `pynpxpipe.core.session.Session` | 项目内部 | TYPE_CHECKING |

@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-生成同步流程的六张诊断 PNG 图表，保存到 `{output_dir}/sync/figures/` 目录。图表用于人工验证各级对齐质量，不参与数据处理逻辑，属于纯 IO 层辅助模块。
+生成同步流程的六张诊断 PNG 图表，保存到 `{output_dir}/04_sync/figures/` 目录。图表用于人工验证各级对齐质量，不参与数据处理逻辑，属于纯 IO 层辅助模块。
 
 matplotlib 是**可选依赖**：若未安装，所有公开函数静默返回 `None`（不 raise，不影响 pipeline 主流程）。诊断图生成逻辑完全隔离在本模块，stages 层不 import matplotlib。
 
@@ -24,7 +24,7 @@ matplotlib 是**可选依赖**：若未安装，所有公开函数静默返回 `
 | `calibrated_onsets` | `CalibratedOnsets` | 第三级 photodiode 校准结果，含 `onset_latency_ms, quality_flags` |
 | `nidq_recording` | `si.BaseRecording` | 懒加载的 NIDQ SpikeInterface Recording 对象，用于提取 photodiode 模拟信号 |
 | `config` | 配置对象 | 含 `config.sync.photodiode_channel_index`、`config.sync.pd_window_pre_ms`、`config.sync.pd_window_post_ms` |
-| `output_dir` | `Path` | pipeline session 的输出根目录；图表保存在 `{output_dir}/sync/figures/` |
+| `output_dir` | `Path` | pipeline session 的输出根目录；图表保存在 `{output_dir}/04_sync/figures/` |
 
 ### 各子函数专属参数
 
@@ -52,7 +52,7 @@ matplotlib 是**可选依赖**：若未安装，所有公开函数静默返回 `
 | `plot_photodiode_mean_signal` | `photodiode_mean_signal.png` | 校准前 vs 校准后平均 photodiode 信号叠加对比 |
 | `plot_sync_pulse_interval` | `sync_pulse_interval.png` | 相邻 sync 脉冲间隔 vs 期望间隔散点图（检测时钟不稳定性） |
 
-所有输出均保存在 `{output_dir}/sync/figures/`，该目录由各函数负责创建（`mkdir(parents=True, exist_ok=True)`）。
+所有输出均保存在 `{output_dir}/04_sync/figures/`，该目录由各函数负责创建（`mkdir(parents=True, exist_ok=True)`）。
 
 ---
 
@@ -211,7 +211,7 @@ def generate_all_plots(
         config: Pipeline config object; uses config.sync.photodiode_channel_index,
             config.sync.pd_window_pre_ms, config.sync.pd_window_post_ms.
         output_dir: Session output root directory. Figures saved to
-            {output_dir}/sync/figures/.
+            {output_dir}/04_sync/figures/.
 
     Returns:
         List of Path objects for successfully saved PNG files. Empty list if
@@ -228,7 +228,7 @@ def plot_sync_drift(
 ) -> Path | None:
     """Scatter plot of IMEC vs NIDQ sync pulse times with linear fit overlay.
 
-    Saves sync_drift_{probe_id}.png to {output_dir}/sync/figures/.
+    Saves sync_drift_{probe_id}.png to {output_dir}/04_sync/figures/.
 
     Returns:
         Path to saved PNG, or None if matplotlib is unavailable.
@@ -241,7 +241,7 @@ def plot_event_alignment(
 ) -> Path | None:
     """Scatter plot of trial_id vs onset_nidq_s for alignment quality check.
 
-    Saves event_alignment.png to {output_dir}/sync/figures/.
+    Saves event_alignment.png to {output_dir}/04_sync/figures/.
 
     Returns:
         Path to saved PNG, or None if matplotlib is unavailable.
@@ -256,7 +256,7 @@ def plot_photodiode_heatmap(
 ) -> Path | None:
     """Heatmap of per-trial photodiode z-score signals (trials × time).
 
-    Saves photodiode_heatmap.png to {output_dir}/sync/figures/.
+    Saves photodiode_heatmap.png to {output_dir}/04_sync/figures/.
     Extracts photodiode signal from nidq_recording in per-trial chunks
     (does not load the full analog channel into memory).
 
@@ -271,7 +271,7 @@ def plot_onset_latency_histogram(
 ) -> Path | None:
     """Histogram of per-trial photodiode onset latencies for good trials.
 
-    Saves onset_latency_histogram.png to {output_dir}/sync/figures/.
+    Saves onset_latency_histogram.png to {output_dir}/04_sync/figures/.
     Only includes trials where quality_flag == 0.
 
     Returns:
@@ -288,7 +288,7 @@ def plot_photodiode_mean_signal(
 ) -> Path | None:
     """Mean photodiode signal before vs after calibration alignment.
 
-    Saves photodiode_mean_signal.png to {output_dir}/sync/figures/.
+    Saves photodiode_mean_signal.png to {output_dir}/04_sync/figures/.
 
     Returns:
         Path to saved PNG, or None if matplotlib is unavailable.
@@ -302,7 +302,7 @@ def plot_sync_pulse_interval(
 ) -> Path | None:
     """Scatter plot of consecutive AP sync pulse intervals.
 
-    Saves sync_pulse_interval.png to {output_dir}/sync/figures/.
+    Saves sync_pulse_interval.png to {output_dir}/04_sync/figures/.
     Useful for detecting clock instability or missed sync pulses.
 
     Returns:
