@@ -9,7 +9,6 @@ from __future__ import annotations
 import dataclasses
 import gc
 import os
-import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,6 +25,7 @@ import spikeinterface.sorters as ss
 from pynpxpipe.core.config import SortingConfig
 from pynpxpipe.core.errors import SortError
 from pynpxpipe.core.resources import ResourceDetector
+from pynpxpipe.core.torch_env import resolve_device
 from pynpxpipe.stages.base import BaseStage
 
 if TYPE_CHECKING:
@@ -131,22 +131,23 @@ class SortStage(BaseStage):
             self._report_progress(f"Skipping already sorted probe {probe_id}", 0.0)
             return
 
-        zarr_path = self.session.output_dir / "preprocessed" / f"{probe_id}.zarr"
+        zarr_path = self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
         recording = si.load(zarr_path)
 
-        sorter_output = self.session.output_dir / "sorter_output" / probe_id
+        sorter_output = self.session.output_dir / "02_sorter_output_KS4" / probe_id
         params = dataclasses.asdict(self.sorting_config.sorter.params)
 
-        # --- CUDA guard: warn and fall back to cpu if no GPU detected ---
-        if params.get("torch_device") == "cuda":
+        # --- CUDA guard: resolve torch_device against real hardware + torch build ---
+        # Raises TorchEnvError when the user explicitly requested 'cuda' but either
+        # no GPU is present or torch is a CPU build (the silent-failure mode).
+        # For 'auto' this falls back to cpu with a warning when torch is CPU-only.
+        requested_device = params.get("torch_device", "auto")
+        if requested_device in {"auto", "cuda"}:
             profile = ResourceDetector(self.session.session_dir, self.session.output_dir).detect()
-            if profile.primary_gpu is None:
-                warnings.warn(
-                    "torch_device='cuda' requested but no GPU detected; falling back to 'cpu'",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                params["torch_device"] = "cpu"
+            params["torch_device"] = resolve_device(
+                requested_device,
+                has_physical_gpu=profile.primary_gpu is not None,
+            )
 
         try:
             sorting = ss.run_sorter(
@@ -192,7 +193,7 @@ class SortStage(BaseStage):
         if n_units == 0:
             self.logger.warning("Zero units after sorting", probe_id=probe_id)
 
-        save_path = self.session.output_dir / "sorted" / probe_id
+        save_path = self.session.output_dir / "02_sorted" / probe_id
         sorting.save(folder=save_path, overwrite=True)
 
         self._write_checkpoint(
@@ -243,7 +244,7 @@ class SortStage(BaseStage):
         if n_units == 0:
             self.logger.warning("Zero units after import", probe_id=probe_id)
 
-        save_path = self.session.output_dir / "sorted" / probe_id
+        save_path = self.session.output_dir / "02_sorted" / probe_id
         sorting.save(folder=save_path, overwrite=True)
 
         self._write_checkpoint(

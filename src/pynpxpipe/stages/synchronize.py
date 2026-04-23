@@ -5,9 +5,12 @@ Level 2 — BHV2 ↔ NIDQ: MonkeyLogic event codes matched to BHV2 trials.
 Level 3 — Photodiode: calibrates stim onset times from the analog signal.
 
 Outputs:
-- ``{output_dir}/sync/sync_tables.json``   — per-probe linear correction params
-- ``{output_dir}/sync/behavior_events.parquet`` — unified behavioral events
-- ``{output_dir}/sync/figures/``           — optional diagnostic PNGs
+- ``{output_dir}/04_sync/sync_tables.json``   — per-probe linear correction params
+- ``{output_dir}/04_sync/{probe_id}_imec_nidq.json`` — per-probe fit (one file per
+  probe; consumed by ``NWBWriter.add_sync_tables`` to populate the NWB scratch
+  ``sync_tables`` block)
+- ``{output_dir}/04_sync/behavior_events.parquet`` — unified behavioral events
+- ``{output_dir}/04_sync/figures/``           — optional diagnostic PNGs
 
 No UI dependencies (no click, no print, no sys.exit).
 """
@@ -28,11 +31,6 @@ from pynpxpipe.io.sync.bhv_nidq_align import align_bhv2_to_nidq
 from pynpxpipe.io.sync.imec_nidq_align import SyncResult, align_imec_to_nidq
 from pynpxpipe.io.sync.photodiode_calibrate import calibrate_photodiode
 from pynpxpipe.stages.base import BaseStage
-
-try:
-    from pynpxpipe.io.sync_plots import generate_all_plots
-except ImportError:
-    generate_all_plots = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from pynpxpipe.core.session import Session
@@ -112,7 +110,9 @@ class SynchronizeStage(BaseStage):
             nidq_recording = SpikeGLXLoader.load_nidq(nidq_bin, nidq_meta)
             sync = self.session.config.sync
             nidq_sync_times = np.array(
-                SpikeGLXLoader.extract_sync_edges(nidq_recording, sync.sync_bit, nidq_sample_rate)
+                SpikeGLXLoader.extract_sync_edges(
+                    nidq_recording, sync.nidq_sync_bit, nidq_sample_rate
+                )
             )
 
             # Step 4: Level 1 — per-probe alignment
@@ -152,6 +152,8 @@ class SynchronizeStage(BaseStage):
                 monitor_delay_ms=sync.monitor_delay_ms,
                 pd_window_pre_ms=sync.pd_window_pre_ms,
                 pd_window_post_ms=sync.pd_window_post_ms,
+                pd_hignline_skip_ms=sync.pd_hignline_skip_ms,
+                pd_hignline_width_ms=sync.pd_hignline_width_ms,
                 min_signal_variance=sync.pd_min_signal_variance,
             )
             self._report_progress("Level 3 complete", 0.75)
@@ -174,7 +176,7 @@ class SynchronizeStage(BaseStage):
             df["dataset_name"] = trial_alignment.dataset_name
 
             # Step 10: Write sync_tables.json
-            sync_dir = self.session.output_dir / "sync"
+            sync_dir = self.session.output_dir / "04_sync"
             sync_dir.mkdir(parents=True, exist_ok=True)
 
             sync_tables = {
@@ -195,21 +197,57 @@ class SynchronizeStage(BaseStage):
                 json.dumps(sync_tables, indent=2), encoding="utf-8"
             )
 
+            # Per-probe {probe_id}_imec_nidq.json consumed by
+            # NWBWriter.add_sync_tables — one file per probe preserves the raw
+            # inputs needed to re-derive imec_i↔imec0 alignment via NIDQ as
+            # bridge, which the consolidated sync_tables.json also carries but
+            # under a different key path.
+            for pid, sr in sync_results.items():
+                (sync_dir / f"{pid}_imec_nidq.json").write_text(
+                    json.dumps(
+                        {
+                            "a": sr.a,
+                            "b": sr.b,
+                            "residual_ms": sr.residual_ms,
+                            "n_repaired": sr.n_repaired,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
             # Step 11: Write behavior_events.parquet
             df.to_parquet(sync_dir / "behavior_events.parquet", engine="pyarrow")
 
             # Step 12: Optional diagnostic plots
-            if sync.generate_plots and generate_all_plots is not None:
-                figures_dir = sync_dir / "figures"
-                figures_dir.mkdir(exist_ok=True)
-                generate_all_plots(
-                    sync_results=sync_results,
-                    ap_sync_times_map=ap_sync_times_map,
-                    nidq_sync_times=nidq_sync_times,
-                    trial_alignment=trial_alignment,
-                    calibrated_onsets=calibrated,
-                    output_dir=figures_dir,
-                )
+            if sync.generate_plots:
+                eye_points = self._collect_eye_points()
+                try:
+                    from pynpxpipe.plots.sync import emit_all as _emit_sync_plots
+
+                    figures_dir = sync_dir / "figures"
+                    figures_dir.mkdir(parents=True, exist_ok=True)
+                    _emit_sync_plots(
+                        sync_results=sync_results,
+                        ap_sync_times_map=ap_sync_times_map,
+                        nidq_sync_times=nidq_sync_times,
+                        trial_alignment=trial_alignment,
+                        calibrated=calibrated,
+                        output_dir=figures_dir,
+                        pd_signal=pd_signal,
+                        nidq_sample_rate=nidq_sample_rate,
+                        voltage_range=voltage_range,
+                        monitor_delay_ms=sync.monitor_delay_ms,
+                        pre_ms=sync.pd_window_pre_ms,
+                        post_ms=sync.pd_window_post_ms,
+                        session_label=self.session.session_dir.name,
+                        eye_points=eye_points,
+                    )
+                except ImportError:
+                    # matplotlib not installed — sync still succeeded.
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("sync figure generation failed: %s", exc)
 
             # Step 13: Write stage checkpoint
             self._write_checkpoint(
@@ -248,10 +286,10 @@ class SynchronizeStage(BaseStage):
             SyncError: If residual exceeds max_time_error_ms.
         """
         probe = next(p for p in self.session.probes if p.probe_id == probe_id)
-        ap_recording = SpikeGLXLoader.load_ap(probe)
+        ap_recording = SpikeGLXLoader.load_ap(probe, load_sync_channel=True)
         ap_sync_times = np.array(
             SpikeGLXLoader.extract_sync_edges(
-                ap_recording, self.session.config.sync.sync_bit, probe.sample_rate
+                ap_recording, self.session.config.sync.imec_sync_bit, probe.sample_rate
             )
         )
         sync = self.session.config.sync
@@ -292,9 +330,42 @@ class SynchronizeStage(BaseStage):
             nidq_event_codes,
             stim_onset_code=sync.stim_onset_code,
             trial_start_bit=sync.trial_start_bit,
+            stim_onset_bit=sync.stim_onset_bit,
             max_time_error_ms=sync.max_time_error_ms,
             trial_count_tolerance=sync.trial_count_tolerance,
+            stim_count_tolerance=sync.stim_count_tolerance,
         )
+
+    def _collect_eye_points(self) -> np.ndarray | None:
+        """Concatenate per-trial analog ``Eye`` samples into an ``(N, 2)`` array.
+
+        Reads ``AnalogData["Eye"]`` from every BHV2 trial via
+        :meth:`BHV2Parser.get_analog_data`, keeps rows with at least two
+        columns (x, y), and stacks them for the eye-density heat-map
+        (``eye_density.png`` in MATLAB reference plot #5).
+
+        Returns:
+            ``(N, 2) float64`` ndarray of gaze samples, or ``None`` if the
+            parser raises, no trial carries an ``Eye`` channel, or the data
+            is malformed. Failures are logged as warnings — they do not
+            abort the stage since the eye plot is a diagnostic, not a
+            pipeline invariant.
+        """
+        try:
+            parser = BHV2Parser(self.session.bhv_file)
+            eye_data = parser.get_analog_data("Eye")
+        except Exception as exc:  # noqa: BLE001 - diagnostic, never abort sync
+            logger.warning("eye data extraction failed: %s", exc)
+            return None
+
+        blocks: list[np.ndarray] = []
+        for arr in eye_data.values():
+            a = np.asarray(arr)
+            if a.ndim == 2 and a.shape[1] >= 2 and a.shape[0] > 0:
+                blocks.append(a[:, :2].astype(np.float64))
+        if not blocks:
+            return None
+        return np.vstack(blocks)
 
     def _decode_nidq_events(
         self,
@@ -317,7 +388,8 @@ class SynchronizeStage(BaseStage):
             (event_times_s, event_codes) as float64 and int32 numpy arrays.
         """
         raw = nidq_recording.get_traces()
-        digital = raw[:, 0].astype(np.uint16) if raw.ndim > 1 else raw.astype(np.uint16)
+        # Digital word is the last saved channel (after analog channels)
+        digital = raw[:, -1].astype(np.uint16) if raw.ndim > 1 else raw.astype(np.uint16)
 
         n_samples = len(digital)
         code_values = np.zeros(n_samples, dtype=np.uint32)

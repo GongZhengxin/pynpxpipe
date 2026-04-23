@@ -23,12 +23,14 @@ if TYPE_CHECKING:
 class PreprocessStage(BaseStage):
     """Applies preprocessing pipeline to each probe's AP recording.
 
-    Processing order per probe (phase_shift MUST be first):
+    Processing order per probe:
         phase_shift → bandpass_filter → detect_bad_channels →
         remove_bad_channels → CMR → motion_correction (optional) → Zarr save.
 
     Phase shift corrects Neuropixels time-division multiplexed ADC offsets;
-    it must precede any filtering to avoid degrading CMR effectiveness.
+    it must precede CMR so per-channel sub-sample offsets do not leak into the
+    spatial median. Its position relative to bandpass_filter is LTI-equivalent
+    (see ADR-003); this pipeline keeps phase_shift first by convention.
     Each probe processed serially. Memory released between probes (del + gc.collect).
     AP recordings are never fully loaded into memory (SpikeInterface lazy).
 
@@ -66,7 +68,7 @@ class PreprocessStage(BaseStage):
         4. Detect and remove bad channels (on filtered data).
         5. Common median reference.
         6. Motion correction if config.preprocess.motion_correction.method not None.
-        7. Save to Zarr at {output_dir}/preprocessed/{probe_id}/.
+        7. Save to Zarr at {output_dir}/01_01_preprocessed/{probe_id}/.
         8. Write per-probe checkpoint; del recording + gc.collect().
 
         Raises:
@@ -114,8 +116,11 @@ class PreprocessStage(BaseStage):
 
         # Step 1: lazy load AP recording (no data read yet)
         recording = SpikeGLXLoader.load_ap(probe)
+        # Keep a handle on the unprocessed recording for diagnostic plots.
+        raw_recording = recording
 
-        # Step 2: phase shift — MUST be first (Neuropixels ADC timing correction)
+        # Step 2: phase shift — TDM-ADC per-channel sub-sample offset correction.
+        # Must precede CMR; LTI-equivalent to placing it after bandpass (ADR-003).
         recording = spp.phase_shift(recording)
 
         # Step 3: bandpass filter
@@ -150,7 +155,7 @@ class PreprocessStage(BaseStage):
             )
 
         # Step 8: save as Zarr
-        zarr_path = self.session.output_dir / "preprocessed" / f"{probe_id}.zarr"
+        zarr_path = self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
         try:
             recording.save(
                 folder=zarr_path,
@@ -160,6 +165,41 @@ class PreprocessStage(BaseStage):
             err = PreprocessError(f"Failed to save Zarr for {probe_id}: {exc}")
             self._write_failed_checkpoint(err, probe_id=probe_id)
             raise err from exc
+
+        # Step 8.5: emit diagnostic PNG figures (never blocks main path).
+        try:
+            from pynpxpipe.plots.preprocess import emit_all as _emit_pp_plots
+
+            figures_dir = self.session.output_dir / "01_preprocessed" / probe_id / "figures"
+            motion_info = None
+            if cfg.preprocess.motion_correction.method is not None:
+                # SI 0.104 correct_motion attaches motion info to the recording.
+                try:
+                    motion_obj = getattr(recording, "motion", None)
+                    if motion_obj is not None:
+                        motion_info = {
+                            "displacement": getattr(motion_obj, "displacement", None),
+                            "temporal_bins": getattr(motion_obj, "temporal_bins_s", None),
+                            "spatial_bins": getattr(motion_obj, "spatial_bins_um", None),
+                        }
+                        if motion_info["displacement"] is None:
+                            motion_info = None
+                except Exception:
+                    motion_info = None
+
+            _emit_pp_plots(
+                recording_raw=raw_recording,
+                recording_processed=recording,
+                bad_channel_ids=list(bad_channel_ids) if bad_channel_ids is not None else [],
+                probe_id=probe_id,
+                output_dir=figures_dir,
+                session_label=self.session.session_id.canonical(),
+                motion_info=motion_info,
+            )
+        except ImportError:
+            pass
+        except Exception as exc:  # noqa: BLE001 - diagnostic plots never block pipeline
+            self.logger.warning("preprocess figure generation failed: %s", exc)
 
         # Step 9: write per-probe checkpoint
         self._write_checkpoint(

@@ -41,6 +41,7 @@ def _make_probe(probe_id: str, base: Path, has_lf: bool = True) -> ProbeInfo:
     ap_meta = base / f"{probe_id}.ap.meta"
     lf_bin = base / f"{probe_id}.lf.bin" if has_lf else None
     lf_meta = base / f"{probe_id}.lf.meta" if has_lf else None
+    target_area = "V4" if probe_id == "imec0" else "IT"
     return ProbeInfo(
         probe_id=probe_id,
         ap_bin=ap_bin,
@@ -51,6 +52,7 @@ def _make_probe(probe_id: str, base: Path, has_lf: bool = True) -> ProbeInfo:
         n_channels=385,
         serial_number="test_sn",
         probe_type="NP1010",
+        target_area=target_area,
     )
 
 
@@ -62,7 +64,15 @@ def session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(BHV2_MAGIC + b"\x00" * 50)
     output_dir = tmp_path / "output"
-    return SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    return SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
 
 
 @pytest.fixture
@@ -152,6 +162,7 @@ class TestNormalFlow:
 
     def test_lf_found_false_does_not_raise(self, session, tmp_path):
         probes_no_lf = [_make_probe("imec0", tmp_path, has_lf=False)]
+        session.probe_plan = {"imec0": "V4"}  # single-probe plan to match
         with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
             _patch_discovery(mock_cls, probes_no_lf, nidq=_fake_nidq(session))
             DiscoverStage(session).run()  # Must not raise
@@ -186,14 +197,16 @@ class TestCheckpointSkip:
             encoding="utf-8",
         )
 
-    def test_run_skips_if_checkpoint_complete(self, session):
+    def test_run_skips_if_checkpoint_complete(self, session, two_probes):
         self._write_completed_checkpoint(session)
+        session.probes = two_probes  # pre-populated so restore is a no-op
         with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
             DiscoverStage(session).run()
             mock_cls.assert_not_called()
 
-    def test_run_still_returns_none_on_skip(self, session):
+    def test_run_still_returns_none_on_skip(self, session, two_probes):
         self._write_completed_checkpoint(session)
+        session.probes = two_probes
         result = DiscoverStage(session).run()
         assert result is None
 
@@ -266,3 +279,82 @@ class TestProgressCallback:
         calls = self._run_with_callback(session, two_probes)
         fractions = [f for _, f in calls]
         assert 1.0 in fractions
+
+
+# ---------------------------------------------------------------------------
+# Group E — probe_plan validation + target_area injection (S2)
+# ---------------------------------------------------------------------------
+
+
+def _make_probe_placeholder(probe_id: str, base: Path) -> ProbeInfo:
+    """Return a ProbeInfo with target_area='' as SpikeGLXDiscovery yields it."""
+    return ProbeInfo(
+        probe_id=probe_id,
+        ap_bin=base / f"{probe_id}.ap.bin",
+        ap_meta=base / f"{probe_id}.ap.meta",
+        lf_bin=base / f"{probe_id}.lf.bin",
+        lf_meta=base / f"{probe_id}.lf.meta",
+        sample_rate=30000.0,
+        n_channels=385,
+        serial_number="sn",
+        probe_type="NP1010",
+        target_area="",
+    )
+
+
+class TestProbePlanValidation:
+    def test_empty_probe_plan_raises(self, session):
+        session.probe_plan = {}
+        with pytest.raises(DiscoverError, match="probe_plan is empty"):
+            DiscoverStage(session).run()
+
+    def test_target_area_injected_from_probe_plan(self, session, tmp_path):
+        """DiscoverStage must overwrite target_area with probe_plan values."""
+        from pynpxpipe.core.errors import ProbeDeclarationMismatchError  # noqa: F401
+
+        placeholders = [
+            _make_probe_placeholder("imec0", tmp_path),
+            _make_probe_placeholder("imec1", tmp_path),
+        ]
+        with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
+            _patch_discovery(mock_cls, placeholders, nidq=_fake_nidq(session))
+            DiscoverStage(session).run()
+
+        assert session.probes[0].target_area == "V4"
+        assert session.probes[1].target_area == "IT"
+
+    def test_declared_not_on_disk_raises_mismatch(self, session, tmp_path):
+        from pynpxpipe.core.errors import ProbeDeclarationMismatchError
+
+        only_imec0 = [_make_probe_placeholder("imec0", tmp_path)]
+        with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
+            _patch_discovery(mock_cls, only_imec0, nidq=_fake_nidq(session))
+            with pytest.raises(ProbeDeclarationMismatchError) as exc_info:
+                DiscoverStage(session).run()
+        assert exc_info.value.missing_on_disk == {"imec1"}
+
+    def test_extra_on_disk_raises_mismatch(self, session, tmp_path):
+        from pynpxpipe.core.errors import ProbeDeclarationMismatchError
+
+        session.probe_plan = {"imec0": "V4"}
+        two = [
+            _make_probe_placeholder("imec0", tmp_path),
+            _make_probe_placeholder("imec1", tmp_path),
+        ]
+        with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
+            _patch_discovery(mock_cls, two, nidq=_fake_nidq(session))
+            with pytest.raises(ProbeDeclarationMismatchError) as exc_info:
+                DiscoverStage(session).run()
+        assert exc_info.value.unexpected_on_disk == {"imec1"}
+
+    def test_session_info_json_contains_target_areas(self, session, tmp_path):
+        placeholders = [
+            _make_probe_placeholder("imec0", tmp_path),
+            _make_probe_placeholder("imec1", tmp_path),
+        ]
+        with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
+            _patch_discovery(mock_cls, placeholders, nidq=_fake_nidq(session))
+            DiscoverStage(session).run()
+
+        data = json.loads((session.output_dir / "session_info.json").read_text(encoding="utf-8"))
+        assert data["probe_target_areas"] == {"imec0": "V4", "imec1": "IT"}

@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from pynpxpipe.core.config import (
     ImportConfig,
@@ -54,6 +55,7 @@ def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
         n_channels=384,
         serial_number="SN_TEST",
         probe_type="NP1010",
+        target_area="V4" if probe_id == "imec0" else "IT",
     )
 
 
@@ -92,7 +94,15 @@ def session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
     s.probes = [
         _make_probe("imec0", tmp_path),
         _make_probe("imec1", tmp_path),
@@ -108,7 +118,15 @@ def single_session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path)]
     return s
 
@@ -159,7 +177,7 @@ class TestLocalMode:
             1
         ].get("folder")
         assert folder is not None
-        assert "sorted" in str(folder)
+        assert "02_sorted" in str(folder)
         assert "imec0" in str(folder)
 
     def test_local_mode_writes_probe_checkpoint(self, single_session: Session) -> None:
@@ -457,7 +475,15 @@ def _make_mock_sort_session(
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path)]
     # Store requested params on the session so callers can build SortingConfig
     s._test_torch_device = torch_device  # type: ignore[attr-defined]
@@ -466,10 +492,16 @@ def _make_mock_sort_session(
     return s
 
 
-def test_sort_warns_and_falls_back_when_cuda_requested_but_unavailable(
-    tmp_path: Path,
-) -> None:
-    """When torch_device='cuda' but no GPU, warn and switch to cpu before running."""
+def test_sort_raises_when_cuda_requested_but_no_gpu(tmp_path: Path) -> None:
+    """torch_device='cuda' on a no-GPU machine must be a loud error, not a silent fallback.
+
+    Silent fallback was the bug that kept hiding dependency problems — the user
+    saw 'success' but actually ran CPU. New contract: explicit 'cuda' + no GPU
+    raises TorchEnvError. Users without a GPU should set torch_device='cpu' or
+    'auto' (the default).
+    """
+    from pynpxpipe.core.torch_env import TorchEnvError
+
     session = _make_mock_sort_session(tmp_path, torch_device="cuda", mode="local")
     sorting_cfg = _make_sorting_config(mode="local")
     sorting_cfg.sorter.params.torch_device = "cuda"
@@ -480,15 +512,31 @@ def test_sort_warns_and_falls_back_when_cuda_requested_but_unavailable(
         patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
     ):
         mock_rd.return_value.detect.return_value.primary_gpu = None  # no GPU
+
+        with pytest.raises(TorchEnvError, match="no NVIDIA GPU"):
+            SortStage(session, sorting_cfg)._sort_probe_local("imec0")
+
+    # Sorter must never have been invoked.
+    mock_ss.run_sorter.assert_not_called()
+
+
+def test_sort_auto_falls_back_to_cpu_when_no_gpu(tmp_path: Path) -> None:
+    """torch_device='auto' on a no-GPU machine silently uses cpu (no warn, no error)."""
+    session = _make_mock_sort_session(tmp_path, torch_device="auto", mode="local")
+    sorting_cfg = _make_sorting_config(mode="local")
+    sorting_cfg.sorter.params.torch_device = "auto"
+
+    with (
+        patch("pynpxpipe.stages.sort.ResourceDetector") as mock_rd,
+        patch("pynpxpipe.stages.sort.ss") as mock_ss,
+        patch("pynpxpipe.stages.sort.si.load", return_value=MagicMock()),
+    ):
+        mock_rd.return_value.detect.return_value.primary_gpu = None
         mock_ss.run_sorter.return_value = _make_mock_sorting()
 
-        with pytest.warns(UserWarning, match="torch_device.*cuda.*no GPU"):
-            stage = SortStage(session, sorting_cfg)
-            stage._sort_probe_local("imec0")
+        SortStage(session, sorting_cfg)._sort_probe_local("imec0")
 
-    # Verify the sorter was called with cpu, not cuda
-    call_kwargs = mock_ss.run_sorter.call_args[1]
-    assert call_kwargs.get("torch_device") == "cpu"
+    assert mock_ss.run_sorter.call_args[1].get("torch_device") == "cpu"
 
 
 def test_sort_retries_with_lower_batch_size_on_cuda_oom(tmp_path: Path) -> None:
@@ -513,3 +561,36 @@ def test_sort_retries_with_lower_batch_size_on_cuda_oom(tmp_path: Path) -> None:
     first_call_params = mock_ss.run_sorter.call_args_list[0][1]
     second_call_params = mock_ss.run_sorter.call_args_list[1][1]
     assert second_call_params["batch_size"] < first_call_params["batch_size"]
+
+
+# ---------------------------------------------------------------------------
+# Regression guard — KS4 library-default drift
+# ---------------------------------------------------------------------------
+
+
+def test_ks4_critical_params_explicit():
+    """Regression guard: four KS4 params must be explicitly pinned in sorting.yaml.
+
+    KS4 upstream silently changed `cluster_downsampling` default from 1 (4.1.0-4.1.2)
+    to 20 (4.1.3+), reducing yield ~29% vs the reference pipeline. We pin these four
+    params so future library upgrades cannot silently regress unit yield. See
+    docs/todo.md §IV.8 for the full audit trail and rationale.
+    """
+    yaml_path = Path(__file__).resolve().parents[2] / "config" / "sorting.yaml"
+    cfg = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    params = cfg["sorter"]["params"]
+
+    expected = {
+        "Th_learned": 8.0,
+        "Th_universal": 9.0,
+        "cluster_downsampling": 1,
+        "max_cluster_subset": 25000,
+    }
+    for key, value in expected.items():
+        assert key in params, (
+            f"sorting.yaml missing pinned KS4 param '{key}' — see docs/todo.md §IV.8"
+        )
+        assert params[key] == value, (
+            f"sorting.yaml sorter.params.{key}={params[key]!r} but expected {value!r} "
+            f"(pinned to prevent KS4 library-default regression; see docs/todo.md §IV.8)"
+        )

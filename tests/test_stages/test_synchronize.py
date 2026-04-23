@@ -52,6 +52,7 @@ def _make_subject() -> SubjectConfig:
 
 
 def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
+    target_area = "V4" if probe_id == "imec0" else "IT"
     return ProbeInfo(
         probe_id=probe_id,
         ap_bin=base / f"{probe_id}.ap.bin",
@@ -62,6 +63,7 @@ def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
         n_channels=385,
         probe_type="NP1010",
         serial_number="12345",
+        target_area=target_area,
     )
 
 
@@ -77,6 +79,10 @@ def _make_trial_alignment(n: int = N_TRIALS, dataset_name: str = "exp_20260101")
             "stim_onset_nidq_s": [float(i) + 0.1 for i in range(1, n + 1)],
             "condition_id": [1] * n,
             "trial_valid": [float("nan")] * n,
+            "onset_time_ms": [150.0] * n,
+            "offset_time_ms": [150.0] * n,
+            "fixation_window": [5.0] * n,
+            "stim_onset_bhv_ms": [100.0] * n,
         }
     )
     return TrialAlignment(
@@ -138,8 +144,8 @@ def _patch_run(session: Session, n_probes: int = 2):  # type: ignore[return]
         patch("pynpxpipe.stages.synchronize.align_imec_to_nidq") as mock_align_imec,
         patch("pynpxpipe.stages.synchronize.align_bhv2_to_nidq") as mock_align_bhv,
         patch("pynpxpipe.stages.synchronize.calibrate_photodiode") as mock_pd,
-        patch("pynpxpipe.stages.synchronize.BHV2Parser"),
-        patch("pynpxpipe.stages.synchronize.generate_all_plots") as mock_plots,
+        patch("pynpxpipe.stages.synchronize.BHV2Parser") as mock_bhv_parser_cls,
+        patch("pynpxpipe.plots.sync.emit_all") as mock_plots,
     ):
         mock_disc_cls.return_value = disc_inst
         mock_loader_cls.load_nidq.return_value = mock_nidq_rec
@@ -149,12 +155,20 @@ def _patch_run(session: Session, n_probes: int = 2):  # type: ignore[return]
         mock_align_bhv.return_value = trial_aln
         mock_pd.return_value = calibrated
 
+        mock_parser_inst = MagicMock()
+        mock_parser_inst.get_analog_data.return_value = {
+            1: np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]], dtype=np.float64),
+            2: np.array([[-0.1, 0.0], [0.2, 0.3]], dtype=np.float64),
+        }
+        mock_bhv_parser_cls.return_value = mock_parser_inst
+
         yield {
             "mock_disc_cls": mock_disc_cls,
             "mock_loader_cls": mock_loader_cls,
             "mock_align_imec": mock_align_imec,
             "mock_align_bhv": mock_align_bhv,
             "mock_pd": mock_pd,
+            "mock_bhv_parser_cls": mock_bhv_parser_cls,
             "mock_plots": mock_plots,
             "trial_aln": trial_aln,
             "calibrated": calibrated,
@@ -169,7 +183,7 @@ def _patch_run(session: Session, n_probes: int = 2):  # type: ignore[return]
 @pytest.fixture
 def sync_config() -> SyncConfig:
     return SyncConfig(
-        sync_bit=0,
+        imec_sync_bit=0,
         event_bits=[0, 1, 2],
         max_time_error_ms=17.0,
         trial_count_tolerance=2,
@@ -193,7 +207,15 @@ def session(tmp_path: Path, sync_config: SyncConfig) -> Session:
     bhv_file.write_bytes(b"\x00" * 50)
     config = PipelineConfig()
     config.sync = sync_config
-    sess = SessionManager.create(session_dir, bhv_file, _make_subject(), tmp_path / "output")
+    sess = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        tmp_path / "output",
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
     sess.config = config
     sess.probes = [_make_probe("imec0", tmp_path), _make_probe("imec1", tmp_path)]
     return sess
@@ -214,7 +236,7 @@ class TestNormalFlow:
         with _patch_run(session):
             stage.run()
 
-        sync_json = session.output_dir / "sync" / "sync_tables.json"
+        sync_json = session.output_dir / "04_sync" / "sync_tables.json"
         assert sync_json.exists()
         data = json.loads(sync_json.read_text(encoding="utf-8"))
         assert "probes" in data
@@ -224,13 +246,42 @@ class TestNormalFlow:
         assert "b" in data["probes"]["imec0"]
         assert "residual_ms" in data["probes"]["imec0"]
 
+    def test_run_writes_per_probe_imec_nidq_json(
+        self, stage: SynchronizeStage, session: Session
+    ) -> None:
+        """Per-probe ``{probe_id}_imec_nidq.json`` is written for NWB sync_tables scratch."""
+        with _patch_run(session):
+            stage.run()
+
+        sync_dir = session.output_dir / "04_sync"
+        for pid in ["imec0", "imec1"]:
+            per_probe = sync_dir / f"{pid}_imec_nidq.json"
+            assert per_probe.exists(), f"missing {per_probe.name}"
+            data = json.loads(per_probe.read_text(encoding="utf-8"))
+            assert {"a", "b", "residual_ms", "n_repaired"}.issubset(data.keys())
+
+    def test_per_probe_json_consumable_by_add_sync_tables(
+        self, stage: SynchronizeStage, session: Session
+    ) -> None:
+        """NWBWriter._collect_imec_nidq_fits must accept synchronize's output verbatim."""
+        from pynpxpipe.io.nwb_writer import _collect_imec_nidq_fits
+
+        with _patch_run(session):
+            stage.run()
+
+        fits = _collect_imec_nidq_fits(session.output_dir / "04_sync")
+        assert "_missing" not in fits
+        assert set(fits.keys()) == {"imec0", "imec1"}
+        for entry in fits.values():
+            assert "a" in entry and "b" in entry
+
     def test_run_writes_behavior_events_parquet(
         self, stage: SynchronizeStage, session: Session
     ) -> None:
         with _patch_run(session):
             stage.run()
 
-        parquet = session.output_dir / "sync" / "behavior_events.parquet"
+        parquet = session.output_dir / "04_sync" / "behavior_events.parquet"
         assert parquet.exists()
         df = pd.read_parquet(parquet)
         assert len(df) == N_TRIALS
@@ -239,7 +290,7 @@ class TestNormalFlow:
         with _patch_run(session):
             stage.run()
 
-        df = pd.read_parquet(session.output_dir / "sync" / "behavior_events.parquet")
+        df = pd.read_parquet(session.output_dir / "04_sync" / "behavior_events.parquet")
         required = {
             "trial_id",
             "onset_nidq_s",
@@ -260,7 +311,7 @@ class TestNormalFlow:
         with _patch_run(session):
             stage.run()
 
-        df = pd.read_parquet(session.output_dir / "sync" / "behavior_events.parquet")
+        df = pd.read_parquet(session.output_dir / "04_sync" / "behavior_events.parquet")
         for raw_val, nidq_val in zip(df["stim_onset_imec_s"], df["stim_onset_nidq_s"], strict=True):
             per_probe = json.loads(raw_val)
             assert "imec0" in per_probe
@@ -295,6 +346,40 @@ class TestNormalFlow:
         with _patch_run(session) as ctx:
             stage.run()
         ctx["mock_plots"].assert_not_called()
+
+    def test_generate_plots_passes_eye_points(
+        self, session: Session, sync_config: SyncConfig
+    ) -> None:
+        """emit_all must receive a concatenated ``(N, 2)`` eye_points array
+        assembled from ``BHV2Parser.get_analog_data("Eye")`` so the eye-density
+        plot (MATLAB #5) gets rendered. Regression guard for the case where the
+        kwarg was omitted entirely and the plot silently skipped."""
+        sync_config.generate_plots = True
+        stage = SynchronizeStage(session)
+        with _patch_run(session) as ctx:
+            stage.run()
+        call = ctx["mock_plots"].call_args
+        eye = call.kwargs.get("eye_points")
+        assert eye is not None, "emit_all was called without eye_points kwarg"
+        assert isinstance(eye, np.ndarray)
+        assert eye.ndim == 2 and eye.shape[1] == 2
+        # Mock returned 3+2 rows across two trials → 5 total.
+        assert eye.shape[0] == 5
+
+    def test_generate_plots_eye_points_none_when_read_fails(
+        self, session: Session, sync_config: SyncConfig
+    ) -> None:
+        """A BHV2 read failure must degrade gracefully to eye_points=None, not
+        abort the synchronize stage."""
+        sync_config.generate_plots = True
+        stage = SynchronizeStage(session)
+        with _patch_run(session) as ctx:
+            ctx["mock_bhv_parser_cls"].return_value.get_analog_data.side_effect = RuntimeError(
+                "boom"
+            )
+            stage.run()
+        call = ctx["mock_plots"].call_args
+        assert call.kwargs.get("eye_points") is None
 
 
 # ---------------------------------------------------------------------------
@@ -447,14 +532,14 @@ class TestParquetContent:
         with _patch_run(session):
             stage.run()
 
-        df = pd.read_parquet(session.output_dir / "sync" / "behavior_events.parquet")
+        df = pd.read_parquet(session.output_dir / "04_sync" / "behavior_events.parquet")
         assert df["trial_valid"].isna().all()
 
     def test_dataset_name_in_every_row(self, stage: SynchronizeStage, session: Session) -> None:
         with _patch_run(session):
             stage.run()
 
-        df = pd.read_parquet(session.output_dir / "sync" / "behavior_events.parquet")
+        df = pd.read_parquet(session.output_dir / "04_sync" / "behavior_events.parquet")
         assert (df["dataset_name"] == "exp_20260101").all()
 
     def test_quality_flag_from_calibration(self, stage: SynchronizeStage, session: Session) -> None:
@@ -469,6 +554,6 @@ class TestParquetContent:
             ctx["mock_pd"].return_value = ctx["calibrated"]
             stage.run()
 
-        df = pd.read_parquet(session.output_dir / "sync" / "behavior_events.parquet")
+        df = pd.read_parquet(session.output_dir / "04_sync" / "behavior_events.parquet")
         assert int(df["quality_flag"].iloc[0]) == 2
         assert int(df["quality_flag"].iloc[1]) == 0

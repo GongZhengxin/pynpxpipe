@@ -39,7 +39,15 @@ def _make_session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.touch()
     output_dir = tmp_path / "output"
-    return SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    return SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
 
 
 class ConcreteStage(BaseStage):
@@ -101,7 +109,7 @@ class TestReportProgress:
             progress_callback=lambda m, f: calls.append((m, f)),
         )
         stage._report_progress("half done", 0.5)
-        assert calls == [("half done", 0.5)]
+        assert calls == [("test_stage:half done", 0.5)]
 
     def test_multiple_calls_all_forwarded(self, tmp_path):
         calls: list[tuple[str, float]] = []
@@ -112,7 +120,7 @@ class TestReportProgress:
         stage._report_progress("start", 0.0)
         stage._report_progress("end", 1.0)
         assert len(calls) == 2
-        assert calls[1] == ("end", 1.0)
+        assert calls[1] == ("test_stage:end", 1.0)
 
     def test_no_callback_does_not_raise(self, tmp_path):
         stage = ConcreteStage(_make_session(tmp_path))

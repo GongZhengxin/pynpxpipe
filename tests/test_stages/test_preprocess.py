@@ -43,6 +43,7 @@ def _make_subject() -> SubjectConfig:
 
 
 def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
+    target_area = "V4" if probe_id == "imec0" else "IT"
     return ProbeInfo(
         probe_id=probe_id,
         ap_bin=base / f"{probe_id}.ap.bin",
@@ -53,6 +54,7 @@ def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
         n_channels=384,
         serial_number="SN_TEST",
         probe_type="NP1010",
+        target_area=target_area,
     )
 
 
@@ -87,7 +89,15 @@ def session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
     s.probes = [
         _make_probe("imec0", tmp_path),
         _make_probe("imec1", tmp_path),
@@ -103,7 +113,15 @@ def single_session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path)]
     return s
 
@@ -189,7 +207,7 @@ class TestNormalFlow:
         assert cp1.exists()
 
     def test_zarr_saved_to_correct_path(self, single_session: Session) -> None:
-        """Zarr is saved to {output_dir}/preprocessed/imec0."""
+        """Zarr is saved to {output_dir}/01_preprocessed/imec0."""
         mock_rec = _make_mock_recording()
         config = _make_config()
 
@@ -209,7 +227,7 @@ class TestNormalFlow:
             "folder"
         )
         assert folder is not None
-        assert "preprocessed" in str(folder)
+        assert "01_preprocessed" in str(folder)
         assert "imec0" in str(folder)
 
     def test_bad_channels_removed(self, single_session: Session) -> None:
@@ -515,7 +533,11 @@ class TestConfigParams:
         assert call_kwargs.get("freq_max") == 5000.0
 
     def test_n_jobs_passed_to_save(self, single_session: Session) -> None:
-        """recording.save is called with n_jobs from config.resources."""
+        """n_jobs from config.resources is set via si.set_global_job_kwargs.
+
+        SpikeInterface uses global job kwargs so recording.save() inherits
+        n_jobs automatically — we verify the global setter was called correctly.
+        """
         mock_rec = _make_mock_recording()
         config = _make_config(n_jobs=8)
 
@@ -523,6 +545,7 @@ class TestConfigParams:
             patch("pynpxpipe.stages.preprocess.SpikeGLXLoader.load_ap", return_value=mock_rec),
             patch("pynpxpipe.stages.preprocess.spp") as mock_spp,
             patch("pynpxpipe.stages.preprocess.gc"),
+            patch("pynpxpipe.stages.base.si") as mock_si,
         ):
             mock_spp.phase_shift.return_value = mock_rec
             mock_spp.bandpass_filter.return_value = mock_rec
@@ -531,5 +554,7 @@ class TestConfigParams:
 
             PreprocessStage(single_session, config).run()
 
-        call_kwargs = mock_rec.save.call_args.kwargs
-        assert call_kwargs.get("n_jobs") == 8
+        # n_jobs is set globally via si.set_global_job_kwargs, not per-call
+        mock_si.set_global_job_kwargs.assert_called_once()
+        global_kwargs = mock_si.set_global_job_kwargs.call_args
+        assert global_kwargs.kwargs.get("n_jobs") == 8

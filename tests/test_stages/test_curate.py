@@ -50,6 +50,7 @@ def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
         n_channels=384,
         serial_number="SN_TEST",
         probe_type="NP1010",
+        target_area="V4" if probe_id == "imec0" else "IT",
     )
 
 
@@ -116,7 +117,15 @@ def session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path), _make_probe("imec1", tmp_path)]
     s.config = _make_pipeline_config()
     return s
@@ -130,7 +139,15 @@ def single_session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path)]
     s.config = _make_pipeline_config()
     return s
@@ -208,7 +225,7 @@ class TestNormalFlow:
         ):
             CurateStage(single_session).run()
 
-        csv_path = single_session.output_dir / "curated" / "imec0" / "quality_metrics.csv"
+        csv_path = single_session.output_dir / "05_curated" / "imec0" / "quality_metrics.csv"
         assert csv_path.exists()
 
     def test_curated_sorting_saved(self, single_session: Session) -> None:
@@ -235,7 +252,7 @@ class TestNormalFlow:
             1
         ].get("folder")
         assert folder is not None
-        assert "curated" in str(folder)
+        assert "05_curated" in str(folder)
         assert "imec0" in str(folder)
 
     def test_probe_checkpoint_written(self, single_session: Session) -> None:
@@ -476,7 +493,13 @@ class TestAnalyzerConstruction:
         assert kwargs.get("format") == "memory"
 
     def test_extension_order_correct(self, single_session: Session) -> None:
-        """Extensions computed in required order: random_spikes→waveforms→templates→noise_levels→spike_amplitudes→quality_metrics."""
+        """Extensions computed in required order when use_bombcell=True (default).
+
+        Order: random_spikes → waveforms → templates → noise_levels →
+        spike_amplitudes → spike_locations → template_metrics → quality_metrics.
+        spike_locations + template_metrics added because bombcell needs them
+        (drift metric + non-somatic waveform shape classification).
+        """
         unit_ids = ["u0"]
         mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
 
@@ -500,6 +523,8 @@ class TestAnalyzerConstruction:
             "templates",
             "noise_levels",
             "spike_amplitudes",
+            "spike_locations",
+            "template_metrics",
             "quality_metrics",
         ]
         assert compute_calls == expected_order
@@ -604,7 +629,7 @@ class TestCsvContent:
         ):
             CurateStage(single_session).run()
 
-        csv_path = single_session.output_dir / "curated" / "imec0" / "quality_metrics.csv"
+        csv_path = single_session.output_dir / "05_curated" / "imec0" / "quality_metrics.csv"
         written_df = pd.read_csv(csv_path, index_col=0)
         assert len(written_df) == 8
 
@@ -629,7 +654,7 @@ class TestCsvContent:
         ):
             CurateStage(single_session).run()
 
-        csv_path = single_session.output_dir / "curated" / "imec0" / "quality_metrics.csv"
+        csv_path = single_session.output_dir / "05_curated" / "imec0" / "quality_metrics.csv"
         written_df = pd.read_csv(csv_path, index_col=0)
         for col in ["isi_violations_ratio", "amplitude_cutoff", "presence_ratio", "snr"]:
             assert col in written_df.columns
@@ -647,7 +672,15 @@ def test_amplitude_cutoff_is_computed_and_applied(tmp_path: Path) -> None:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path)]
     s.config = _make_pipeline_config(amp_max=0.1)
 
@@ -681,3 +714,393 @@ def test_amplitude_cutoff_is_computed_and_applied(tmp_path: Path) -> None:
     good_ids = mock_sorting.select_units.call_args[0][0]
     assert "unit0" in good_ids
     assert "unit1" not in good_ids
+
+
+# ---------------------------------------------------------------------------
+# Group G — Bombcell metric set + extension gating (regression for fallback WARN)
+# ---------------------------------------------------------------------------
+
+
+def _find_compute_call(mock_analyzer: MagicMock, name: str):
+    """Return the call object for analyzer.compute(name, ...) or None."""
+    for c in mock_analyzer.compute.call_args_list:
+        if c.args and c.args[0] == name:
+            return c
+    return None
+
+
+class TestBombcellMetricSet:
+    def test_metric_names_include_bombcell_set_when_use_bombcell(
+        self, single_session: Session
+    ) -> None:
+        """metric_names passed to compute('quality_metrics') includes the 4 bombcell keys.
+
+        Bombcell reads {amplitude_median, num_spikes, rp_contamination, drift_ptp}
+        from the quality_metrics DataFrame. These require metric_names to contain
+        {amplitude_median, num_spikes, rp_violation, drift} (rp_violation →
+        rp_contamination, drift → drift_ptp).
+        """
+        unit_ids = ["u0"]
+        mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
+
+        with (
+            patch(
+                "pynpxpipe.stages.curate.si.load",
+                side_effect=[mock_sorting, mock_recording],
+            ),
+            patch(
+                "pynpxpipe.stages.curate.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.curate.gc"),
+        ):
+            CurateStage(single_session)._curate_probe("imec0")
+
+        qm_call = _find_compute_call(mock_analyzer, "quality_metrics")
+        assert qm_call is not None
+        names = set(qm_call.kwargs.get("metric_names", []))
+        required = {"amplitude_median", "num_spikes", "rp_violation", "drift"}
+        assert required.issubset(names), f"missing: {required - names}"
+
+    def test_metric_names_minimal_when_use_bombcell_false(self, single_session: Session) -> None:
+        """Manual (fallback) path only computes 4 default metrics — no extra cost."""
+        single_session.config.curation.use_bombcell = False
+        unit_ids = ["u0"]
+        mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
+
+        with (
+            patch(
+                "pynpxpipe.stages.curate.si.load",
+                side_effect=[mock_sorting, mock_recording],
+            ),
+            patch(
+                "pynpxpipe.stages.curate.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.curate.gc"),
+        ):
+            CurateStage(single_session)._curate_probe("imec0")
+
+        qm_call = _find_compute_call(mock_analyzer, "quality_metrics")
+        assert qm_call is not None
+        names = set(qm_call.kwargs.get("metric_names", []))
+        assert names == {"isi_violation", "amplitude_cutoff", "presence_ratio", "snr"}
+
+    def test_spike_locations_computed_when_use_bombcell(self, single_session: Session) -> None:
+        """spike_locations extension computed for bombcell drift metric."""
+        unit_ids = ["u0"]
+        mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
+
+        with (
+            patch(
+                "pynpxpipe.stages.curate.si.load",
+                side_effect=[mock_sorting, mock_recording],
+            ),
+            patch(
+                "pynpxpipe.stages.curate.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.curate.gc"),
+        ):
+            CurateStage(single_session)._curate_probe("imec0")
+
+        assert _find_compute_call(mock_analyzer, "spike_locations") is not None
+
+    def test_spike_locations_skipped_when_use_bombcell_false(self, single_session: Session) -> None:
+        """Manual (fallback) path skips spike_locations — it is minutes-slow and unused."""
+        single_session.config.curation.use_bombcell = False
+        unit_ids = ["u0"]
+        mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
+
+        with (
+            patch(
+                "pynpxpipe.stages.curate.si.load",
+                side_effect=[mock_sorting, mock_recording],
+            ),
+            patch(
+                "pynpxpipe.stages.curate.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.curate.gc"),
+        ):
+            CurateStage(single_session)._curate_probe("imec0")
+
+        assert _find_compute_call(mock_analyzer, "spike_locations") is None
+
+
+# ---------------------------------------------------------------------------
+# Group H — _classify_bombcell column-name fix and return contract
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyBombcellContract:
+    def test_reads_bombcell_label_column(self, single_session: Session) -> None:
+        """_classify_bombcell reads labels_df['bombcell_label'] (SI ≥0.104 column)."""
+        unit_ids = ["u0", "u1", "u2"]
+        qm_df = _make_qm_df(unit_ids)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        labels_df = pd.DataFrame(
+            {"bombcell_label": ["good", "mua", "noise"]},
+            index=unit_ids,
+        )
+        fake_defaults = {"noise": {}, "mua": {}, "non-somatic": {}}
+
+        with (
+            patch(
+                "spikeinterface.curation.bombcell_label_units",
+                return_value=labels_df,
+            ),
+            patch(
+                "spikeinterface.curation.bombcell_get_default_thresholds",
+                return_value=fake_defaults,
+            ),
+        ):
+            stage = CurateStage(single_session)
+            result = stage._classify_bombcell(mock_analyzer, qm_df)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        unittype_map, returned_labels_df, returned_thresholds = result
+        assert unittype_map == {"u0": "SUA", "u1": "MUA", "u2": "NOISE"}
+        assert returned_labels_df is labels_df
+        # Returned thresholds are the *merged* dict used for classification
+        # (diagnostic plots need the actual thresholds, not the pristine SI
+        # defaults). Identity with fake_defaults is no longer required.
+        assert returned_thresholds is not None
+        assert returned_thresholds["mua"]["presence_ratio"]["greater"] == 0.2
+
+    def test_fallback_returns_nones(self, single_session: Session) -> None:
+        """When bombcell raises, _classify_bombcell returns (manual_map, None, None)."""
+        unit_ids = ["u0", "u1"]
+        qm_df = _make_qm_df(unit_ids, n_pass=1)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        with patch(
+            "spikeinterface.curation.bombcell_label_units",
+            side_effect=RuntimeError("missing metric XYZ"),
+        ):
+            stage = CurateStage(single_session)
+            result = stage._classify_bombcell(mock_analyzer, qm_df)
+
+        assert isinstance(result, tuple) and len(result) == 3
+        _, labels_df, thresholds = result
+        assert labels_df is None
+        assert thresholds is None
+
+
+# ---------------------------------------------------------------------------
+# Group I — Bombcell plot emission wired into _curate_probe
+# ---------------------------------------------------------------------------
+
+
+class TestBombcellThresholdsWiring:
+    """_classify_bombcell must construct merged thresholds + pass flags to SI."""
+
+    def _fake_default_thresholds(self) -> dict:
+        """Mirror SI bombcell_get_default_thresholds() shape — 3 layers."""
+        return {
+            "noise": {
+                "num_positive_peaks": {"less": 2},
+                "waveform_baseline_flatness": {"less": 0.5},
+            },
+            "mua": {
+                "amplitude_median": {"greater": 30.0, "abs": True},
+                "num_spikes": {"greater": 300},
+                "presence_ratio": {"greater": 0.7},
+                "snr": {"greater": 5.0},
+                "amplitude_cutoff": {"less": 0.2},
+                "rp_contamination": {"less": 0.1},
+                "drift_ptp": {"less": 100.0},
+            },
+            "non-somatic": {
+                "peak_to_trough_ratio": {"less": 0.5},
+            },
+        }
+
+    def test_passes_merged_thresholds_with_matlab_defaults(self, single_session: Session) -> None:
+        """Default BombcellConfig overrides SI mua layer toward MATLAB values."""
+        unit_ids = ["u0"]
+        qm_df = _make_qm_df(unit_ids)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        labels_df = pd.DataFrame({"bombcell_label": ["good"]}, index=unit_ids)
+
+        with (
+            patch(
+                "spikeinterface.curation.bombcell_label_units",
+                return_value=labels_df,
+            ) as mock_label,
+            patch(
+                "spikeinterface.curation.bombcell_get_default_thresholds",
+                return_value=self._fake_default_thresholds(),
+            ),
+        ):
+            stage = CurateStage(single_session)
+            stage._classify_bombcell(mock_analyzer, qm_df)
+
+        kwargs = mock_label.call_args.kwargs
+        merged = kwargs.get("thresholds")
+        assert merged is not None, "thresholds= must be passed"
+        # mua layer overridden toward MATLAB defaults
+        assert merged["mua"]["presence_ratio"]["greater"] == 0.2
+        assert merged["mua"]["num_spikes"]["greater"] == 50
+        assert merged["mua"]["snr"]["greater"] == 3.0
+        assert merged["mua"]["amplitude_median"]["greater"] == 20.0
+        # abs flag preserved under the same metric
+        assert merged["mua"]["amplitude_median"].get("abs") is True
+        # noise layer untouched
+        assert merged["noise"]["waveform_baseline_flatness"]["less"] == 0.5
+
+    def test_passes_label_non_somatic_flag(self, single_session: Session) -> None:
+        """Default label_non_somatic=True, split_non_somatic_good_mua=False."""
+        unit_ids = ["u0"]
+        qm_df = _make_qm_df(unit_ids)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        labels_df = pd.DataFrame({"bombcell_label": ["good"]}, index=unit_ids)
+
+        with (
+            patch(
+                "spikeinterface.curation.bombcell_label_units",
+                return_value=labels_df,
+            ) as mock_label,
+            patch(
+                "spikeinterface.curation.bombcell_get_default_thresholds",
+                return_value=self._fake_default_thresholds(),
+            ),
+        ):
+            stage = CurateStage(single_session)
+            stage._classify_bombcell(mock_analyzer, qm_df)
+
+        kwargs = mock_label.call_args.kwargs
+        assert kwargs.get("label_non_somatic") is True
+        assert kwargs.get("split_non_somatic_good_mua") is False
+
+    def test_custom_label_non_somatic_passthrough(self, single_session: Session) -> None:
+        """User override label_non_somatic=False propagates to SI call."""
+        single_session.config.curation.bombcell.label_non_somatic = False
+        single_session.config.curation.bombcell.split_non_somatic_good_mua = True
+
+        unit_ids = ["u0"]
+        qm_df = _make_qm_df(unit_ids)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        labels_df = pd.DataFrame({"bombcell_label": ["good"]}, index=unit_ids)
+
+        with (
+            patch(
+                "spikeinterface.curation.bombcell_label_units",
+                return_value=labels_df,
+            ) as mock_label,
+            patch(
+                "spikeinterface.curation.bombcell_get_default_thresholds",
+                return_value=self._fake_default_thresholds(),
+            ),
+        ):
+            stage = CurateStage(single_session)
+            stage._classify_bombcell(mock_analyzer, qm_df)
+
+        kwargs = mock_label.call_args.kwargs
+        assert kwargs.get("label_non_somatic") is False
+        assert kwargs.get("split_non_somatic_good_mua") is True
+
+    def test_extra_overrides_deep_merged(self, single_session: Session) -> None:
+        """extra_overrides merges into thresholds, preserving untouched keys."""
+        single_session.config.curation.bombcell.extra_overrides = {
+            "noise": {"waveform_baseline_flatness": {"less": 0.9}},
+        }
+
+        unit_ids = ["u0"]
+        qm_df = _make_qm_df(unit_ids)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        labels_df = pd.DataFrame({"bombcell_label": ["good"]}, index=unit_ids)
+
+        with (
+            patch(
+                "spikeinterface.curation.bombcell_label_units",
+                return_value=labels_df,
+            ) as mock_label,
+            patch(
+                "spikeinterface.curation.bombcell_get_default_thresholds",
+                return_value=self._fake_default_thresholds(),
+            ),
+        ):
+            stage = CurateStage(single_session)
+            stage._classify_bombcell(mock_analyzer, qm_df)
+
+        merged = mock_label.call_args.kwargs["thresholds"]
+        # overridden
+        assert merged["noise"]["waveform_baseline_flatness"]["less"] == 0.9
+        # sibling noise-layer key preserved
+        assert merged["noise"]["num_positive_peaks"]["less"] == 2
+        # mua MATLAB override still in place
+        assert merged["mua"]["presence_ratio"]["greater"] == 0.2
+
+    def test_defaults_copy_not_mutated(self, single_session: Session) -> None:
+        """Calling _classify_bombcell twice must not accumulate mutations."""
+        unit_ids = ["u0"]
+        qm_df = _make_qm_df(unit_ids)
+        mock_analyzer = _make_mock_analyzer(qm_df)
+        mock_analyzer.has_extension.return_value = True
+
+        labels_df = pd.DataFrame({"bombcell_label": ["good"]}, index=unit_ids)
+        shared_defaults = self._fake_default_thresholds()
+        pristine_mua_pr = shared_defaults["mua"]["presence_ratio"]["greater"]
+
+        with (
+            patch(
+                "spikeinterface.curation.bombcell_label_units",
+                return_value=labels_df,
+            ),
+            patch(
+                "spikeinterface.curation.bombcell_get_default_thresholds",
+                return_value=shared_defaults,
+            ),
+        ):
+            stage = CurateStage(single_session)
+            stage._classify_bombcell(mock_analyzer, qm_df)
+            stage._classify_bombcell(mock_analyzer, qm_df)
+
+        # Defaults dict returned by SI must not be mutated by our override logic
+        assert shared_defaults["mua"]["presence_ratio"]["greater"] == pristine_mua_pr
+
+
+class TestBombcellPlotWiring:
+    def test_emit_bombcell_plots_invoked(self, single_session: Session) -> None:
+        """_curate_probe calls pynpxpipe.plots.bombcell.emit_bombcell_plots."""
+        unit_ids = ["u0"]
+        mock_sorting, mock_recording, mock_analyzer, _ = _patch_curate(unit_ids)
+
+        with (
+            patch(
+                "pynpxpipe.stages.curate.si.load",
+                side_effect=[mock_sorting, mock_recording],
+            ),
+            patch(
+                "pynpxpipe.stages.curate.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.curate.gc"),
+            patch(
+                "pynpxpipe.plots.bombcell.emit_bombcell_plots",
+                return_value=[],
+            ) as mock_emit,
+        ):
+            CurateStage(single_session)._curate_probe("imec0")
+
+        assert mock_emit.called
+        kwargs = mock_emit.call_args.kwargs
+        # figures_dir must live under 05_curated/imec0/figures
+        out_dir = kwargs.get("output_dir")
+        assert out_dir is not None
+        assert "05_curated" in str(out_dir)
+        assert "figures" in str(out_dir)
+        assert "imec0" in str(out_dir)

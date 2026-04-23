@@ -47,6 +47,7 @@ def _make_subject() -> SubjectConfig:
 
 
 def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
+    target_area = "V4" if probe_id == "imec0" else "IT"
     return ProbeInfo(
         probe_id=probe_id,
         ap_bin=base / f"{probe_id}.ap.bin",
@@ -57,6 +58,7 @@ def _make_probe(probe_id: str, base: Path) -> ProbeInfo:
         n_channels=384,
         serial_number="SN_TEST",
         probe_type="NP1010",
+        target_area=target_area,
     )
 
 
@@ -75,7 +77,7 @@ def _make_behavior_events(output_dir: Path, probe_id: str = "imec0", n_trials: i
             "trial_valid": [1.0] * n_trials,
         }
     )
-    sync_dir = output_dir / "sync"
+    sync_dir = output_dir / "04_sync"
     sync_dir.mkdir(parents=True, exist_ok=True)
     parquet_path = sync_dir / "behavior_events.parquet"
     df.to_parquet(parquet_path)
@@ -125,6 +127,18 @@ def _make_mock_analyzer(unit_ids: list[str]) -> MagicMock:
     return mock
 
 
+def _mock_si_load(unit_ids: list[str]):
+    """Return a side_effect for si.load that gives a proper sorting mock for curated paths."""
+    mock_sorting = _make_mock_sorting(unit_ids)
+
+    def _load(path):
+        if "05_curated" in str(path):
+            return mock_sorting
+        return MagicMock()
+
+    return _load
+
+
 @pytest.fixture
 def session(tmp_path: Path) -> Session:
     """Session with two probes and behavior_events.parquet written."""
@@ -133,7 +147,15 @@ def session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4", "imec1": "IT"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path), _make_probe("imec1", tmp_path)]
     s.config = _make_config()
     _make_behavior_events(output_dir, probe_id="imec0")
@@ -148,7 +170,15 @@ def single_session(tmp_path: Path) -> Session:
     bhv_file = tmp_path / "test.bhv2"
     bhv_file.write_bytes(b"\x00" * 30)
     output_dir = tmp_path / "output"
-    s = SessionManager.create(session_dir, bhv_file, _make_subject(), output_dir)
+    s = SessionManager.create(
+        session_dir,
+        bhv_file,
+        _make_subject(),
+        output_dir,
+        experiment="nsd1w",
+        probe_plan={"imec0": "V4"},
+        date="240101",
+    )
     s.probes = [_make_probe("imec0", tmp_path)]
     s.config = _make_config()
     _make_behavior_events(output_dir, probe_id="imec0")
@@ -255,6 +285,27 @@ class TestComputeSlay:
         assert not math.isnan(result)
         assert result < 1.0
 
+    def test_slay_no_constant_input_warning(self, stage: PostprocessStage) -> None:
+        """Mixing silent trials with active ones must not emit ConstantInputWarning.
+
+        The vectorised implementation drops zero-variance rows before calling
+        np.corrcoef; scipy's ConstantInputWarning should never reach the user.
+        """
+        import warnings as _warnings
+
+        onsets = np.arange(1.0, 11.0, 1.0)
+        # Trials 0, 2, 4 silent; trials 1, 3, 5, 6, 7, 8, 9 have a spike.
+        spike_times = np.array([o + 0.1 for i, o in enumerate(onsets) if i % 2 == 1])
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            result = stage._compute_slay(spike_times, onsets, pre_s=0.05, post_s=0.30)
+
+        messages = [str(w.message) for w in caught]
+        assert not any("constant" in m.lower() for m in messages), messages
+        # Should still produce a defined score from the non-constant rows.
+        assert not math.isnan(result)
+
 
 # ---------------------------------------------------------------------------
 # Group B — Normal flow
@@ -268,7 +319,10 @@ class TestNormalFlow:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch(
+                "pynpxpipe.stages.postprocess.si.load",
+                side_effect=_mock_si_load(unit_ids),
+            ),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -285,7 +339,7 @@ class TestNormalFlow:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -303,10 +357,10 @@ class TestNormalFlow:
         unit_ids = ["u0", "u1"]
         mock_analyzer = _make_mock_analyzer(unit_ids)
         # Ensure postprocessed dir is created for slay json
-        postprocessed_dir = single_session.output_dir / "postprocessed" / "imec0"
+        postprocessed_dir = single_session.output_dir / "06_postprocessed" / "imec0"
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -324,7 +378,7 @@ class TestNormalFlow:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -344,7 +398,7 @@ class TestNormalFlow:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -369,7 +423,7 @@ class TestNormalFlow:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -386,7 +440,7 @@ class TestNormalFlow:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -419,7 +473,7 @@ class TestOomRetry:
         mock_analyzer.compute.side_effect = compute_side_effect
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -450,7 +504,7 @@ class TestOomRetry:
         mock_analyzer.compute.side_effect = compute_side_effect
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -475,7 +529,7 @@ class TestOomRetry:
         mock_analyzer.compute.side_effect = compute_side_effect
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -499,7 +553,7 @@ class TestCheckpointSkip:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -519,6 +573,140 @@ class TestCheckpointSkip:
             PostprocessStage(single_session).run()
 
         mock_load.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Group D2 — Fine-grained checkpoint resume (reuse analyzer + slay_scores)
+# ---------------------------------------------------------------------------
+
+
+def _seed_complete_analyzer_dir(output_dir: Path, probe_id: str) -> Path:
+    """Create a fake '06_postprocessed/{probe_id}/extensions/...' layout.
+
+    Just the directory shell — real loading is patched via si.load_sorting_analyzer.
+    Mimics what a crashed-after-extensions run would leave behind.
+    """
+    d = output_dir / "06_postprocessed" / probe_id / "extensions"
+    for ext in (
+        "random_spikes",
+        "waveforms",
+        "templates",
+        "unit_locations",
+        "template_similarity",
+    ):
+        (d / ext).mkdir(parents=True, exist_ok=True)
+    return d.parent
+
+
+class TestCheckpointResume:
+    def test_reuses_existing_analyzer_on_disk(self, single_session: Session) -> None:
+        """All 5 extension folders present → load_sorting_analyzer, not create."""
+        unit_ids = ["u0"]
+        _seed_complete_analyzer_dir(single_session.output_dir, "imec0")
+        mock_analyzer = _make_mock_analyzer(unit_ids)
+
+        with (
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
+            patch(
+                "pynpxpipe.stages.postprocess.si.load_sorting_analyzer",
+                return_value=mock_analyzer,
+            ) as mock_load_sa,
+            patch(
+                "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
+            ) as mock_create,
+            patch("pynpxpipe.stages.postprocess.gc"),
+        ):
+            PostprocessStage(single_session).run()
+
+        mock_load_sa.assert_called_once()
+        mock_create.assert_not_called()
+        # Extensions must NOT be recomputed when analyzer is reused.
+        mock_analyzer.compute.assert_not_called()
+
+    def test_creates_analyzer_when_extensions_incomplete(self, single_session: Session) -> None:
+        """Only 4 of 5 extension folders → fall back to create_sorting_analyzer."""
+        unit_ids = ["u0"]
+        base = single_session.output_dir / "06_postprocessed" / "imec0" / "extensions"
+        for ext in ("random_spikes", "waveforms", "templates", "unit_locations"):
+            (base / ext).mkdir(parents=True, exist_ok=True)
+        # intentionally missing: template_similarity
+        mock_analyzer = _make_mock_analyzer(unit_ids)
+
+        with (
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
+            patch(
+                "pynpxpipe.stages.postprocess.si.load_sorting_analyzer",
+            ) as mock_load_sa,
+            patch(
+                "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ) as mock_create,
+            patch("pynpxpipe.stages.postprocess.gc"),
+        ):
+            PostprocessStage(single_session).run()
+
+        mock_load_sa.assert_not_called()
+        mock_create.assert_called_once()
+
+    def test_reuses_existing_slay_json_when_unit_ids_match(self, single_session: Session) -> None:
+        """slay_scores.json matches analyzer unit_ids → SLAY loop skipped."""
+        unit_ids = ["u0", "u1"]
+        _seed_complete_analyzer_dir(single_session.output_dir, "imec0")
+        postprocessed_dir = single_session.output_dir / "06_postprocessed" / "imec0"
+        # Pre-seed scores that a fresh run could never reproduce from the
+        # mock (which has a single spike at t=0.1s → response==baseline==nan).
+        preseeded = {
+            "u0": {"slay_score": 0.42, "is_visual": True},
+            "u1": {"slay_score": None, "is_visual": False},
+        }
+        postprocessed_dir.mkdir(parents=True, exist_ok=True)
+        (postprocessed_dir / "slay_scores.json").write_text(json.dumps(preseeded), encoding="utf-8")
+
+        mock_analyzer = _make_mock_analyzer(unit_ids)
+
+        with (
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
+            patch(
+                "pynpxpipe.stages.postprocess.si.load_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.postprocess.gc"),
+        ):
+            PostprocessStage(single_session).run()
+
+        # After run, the pre-seeded scores survive untouched — a fresh SLAY
+        # compute from the mock (single spike at t=0.1s, no stim response)
+        # would produce entirely different values, so equality here is
+        # proof the hot loop was skipped.
+        roundtrip = json.loads((postprocessed_dir / "slay_scores.json").read_text(encoding="utf-8"))
+        assert roundtrip == preseeded
+
+    def test_recomputes_slay_when_unit_ids_mismatch(self, single_session: Session) -> None:
+        """Stale slay_scores.json (different unit_ids) → recompute."""
+        unit_ids = ["u0", "u1"]
+        _seed_complete_analyzer_dir(single_session.output_dir, "imec0")
+        postprocessed_dir = single_session.output_dir / "06_postprocessed" / "imec0"
+        postprocessed_dir.mkdir(parents=True, exist_ok=True)
+        stale = {"old_unit_A": {"slay_score": 0.99, "is_visual": True}}
+        (postprocessed_dir / "slay_scores.json").write_text(json.dumps(stale), encoding="utf-8")
+
+        mock_analyzer = _make_mock_analyzer(unit_ids)
+
+        with (
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
+            patch(
+                "pynpxpipe.stages.postprocess.si.load_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.postprocess.gc"),
+        ):
+            PostprocessStage(single_session).run()
+
+        # Stale contents overwritten with fresh scores keyed by the current
+        # unit ids — proves recompute ran (old 'old_unit_A' key is gone).
+        final = json.loads((postprocessed_dir / "slay_scores.json").read_text(encoding="utf-8"))
+        assert set(final.keys()) == set(unit_ids)
+        assert "old_unit_A" not in final
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +732,7 @@ class TestEyeValidation:
         mock_parser.get_analog_data.return_value = eye_data
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -563,7 +751,7 @@ class TestEyeValidation:
         mock_analyzer = _make_mock_analyzer(unit_ids)
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -586,10 +774,10 @@ class TestSlayJsonContent:
         """slay_scores.json keys match the unit IDs from the analyzer."""
         unit_ids = ["u0", "u1", "u2"]
         mock_analyzer = _make_mock_analyzer(unit_ids)
-        postprocessed_dir = single_session.output_dir / "postprocessed" / "imec0"
+        postprocessed_dir = single_session.output_dir / "06_postprocessed" / "imec0"
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -606,10 +794,10 @@ class TestSlayJsonContent:
         """slay_scores.json values are floats (or null for nan)."""
         unit_ids = ["u0"]
         mock_analyzer = _make_mock_analyzer(unit_ids)
-        postprocessed_dir = single_session.output_dir / "postprocessed" / "imec0"
+        postprocessed_dir = single_session.output_dir / "06_postprocessed" / "imec0"
 
         with (
-            patch("pynpxpipe.stages.postprocess.si.load", return_value=MagicMock()),
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
             patch(
                 "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
                 return_value=mock_analyzer,
@@ -621,4 +809,8 @@ class TestSlayJsonContent:
         slay_path = postprocessed_dir / "slay_scores.json"
         data = json.loads(slay_path.read_text(encoding="utf-8"))
         for val in data.values():
-            assert val is None or isinstance(val, float)
+            # New format: {slay_score: float|None, is_visual: bool}
+            assert isinstance(val, dict)
+            assert "slay_score" in val
+            assert "is_visual" in val
+            assert val["slay_score"] is None or isinstance(val["slay_score"], float)
