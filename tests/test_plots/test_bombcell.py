@@ -16,10 +16,12 @@ matplotlib.use("Agg")
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
+from matplotlib import pyplot as plt
 
-from pynpxpipe.plots.bombcell import emit_bombcell_plots
+from pynpxpipe.plots.bombcell import _sanitize_text_positions, emit_bombcell_plots
 
 
 @pytest.fixture
@@ -183,6 +185,36 @@ class TestFailOpen:
         assert "bombcell_unit_labels.png" in names
         assert "bombcell_labels_upset.png" in names
         assert "bombcell_metric_histograms.png" not in names
+
+
+class TestSanitizeTextPositions:
+    """Workaround for upsetplot 0.9.0 + numpy 2 — see _sanitize_text_positions."""
+
+    def test_savefig_survives_1d_ndarray_text_position(self, tmp_path: Path) -> None:
+        """Fig with Text at ndarray[1]-valued x/y must render after sanitize.
+
+        Reproduces: upsetplot's ``np.diff(ax.get_xlim())`` produces a
+        shape-(1,) ndarray margin that propagates into ``ax.text`` positions;
+        matplotlib's ``float(ndarray[1])`` conversion is rejected by numpy 2.
+        """
+        fig, ax = plt.subplots()
+        ax.text(np.array([1.0]), 0.5, "x-is-array")
+        ax.text(0.3, np.array([0.4]), "y-is-array")
+
+        _sanitize_text_positions(fig)
+
+        fig.savefig(tmp_path / "ok.png")
+        plt.close(fig)
+
+    def test_scalar_positions_unchanged(self) -> None:
+        """Scalar-positioned Text artists are left alone."""
+        fig, ax = plt.subplots()
+        t = ax.text(1.5, 2.5, "scalar")
+
+        _sanitize_text_positions(fig)
+
+        assert t.get_position() == (1.5, 2.5)
+        plt.close(fig)
 
 
 class TestMatplotlibMissing:

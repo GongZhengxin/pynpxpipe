@@ -156,6 +156,7 @@ def emit_bombcell_plots(
             )
             fig = _extract_figure(widget)
             if fig is not None:
+                _sanitize_text_positions(fig)
                 title = f"Bombcell labels upset | {probe_id}"
                 paths.append(
                     savefig(
@@ -200,6 +201,27 @@ def _resolve_unit_labels(
         "NOISE": "noise",
     }
     return np.asarray([back_map.get(unittype_map.get(uid, "NOISE"), "noise") for uid in unit_ids])
+
+
+def _sanitize_text_positions(fig: Any) -> None:
+    """Convert 1-element ndarray positions on ``Text`` artists to scalars.
+
+    Works around ``upsetplot`` 0.9.0 + numpy ≥ 2 incompatibility: the
+    library uses ``np.diff(ax.get_xlim())`` (shape ``(1,)``) as a text
+    margin, producing ``Text`` artists whose ``x``/``y`` become 1-element
+    ndarrays; matplotlib's renderer then calls ``float(array([v]))`` which
+    numpy 2 rejects with ``TypeError: only 0-dimensional arrays can be
+    converted to Python scalars``. Called only on the upset figure — other
+    widget outputs don't exhibit this pattern.
+    """
+    from matplotlib.text import Text
+
+    for text in fig.findobj(match=Text):
+        x, y = text.get_position()
+        nx = x.item() if isinstance(x, np.ndarray) and x.size == 1 else x
+        ny = y.item() if isinstance(y, np.ndarray) and y.size == 1 else y
+        if nx is not x or ny is not y:
+            text.set_position((nx, ny))
 
 
 def _extract_figure(widget: Any) -> Any:
