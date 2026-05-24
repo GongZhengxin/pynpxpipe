@@ -271,6 +271,51 @@ class TestExportTrialRecord:
         loaded = pd.read_csv(out)
         assert list(loaded["id"]) == list(range(len(df)))
 
+    def test_missing_stim_name_falls_back_to_empty_string(self, tmp_path):
+        """When stim_map was not resolvable upstream, NWB trials lacks stim_name.
+
+        export_trial_record must still write the file with an empty stim_name
+        column rather than raising KeyError — mirrors the contract documented
+        in stages/export.py:227 ('should yield an empty stim_name column
+        without aborting the rest of export').
+        """
+        df = pd.DataFrame(
+            {
+                "start_time": [0.0, 1.0],
+                "stop_time": [0.5, 1.5],
+                "stim_index": [0, 1],
+                # NB: no 'stim_name' column
+                "trial_valid": [True, False],
+            }
+        )
+        out = tmp_path / "t_no_stim_name.csv"
+        export_trial_record(df, out)
+        loaded = pd.read_csv(out, dtype={"stim_name": str}, keep_default_na=False)
+        assert list(loaded.columns) == [
+            "id",
+            "start_time",
+            "stop_time",
+            "stim_index",
+            "stim_name",
+            "fix_success",
+        ]
+        assert list(loaded["stim_name"]) == ["", ""]
+
+    def test_missing_stim_index_falls_back_too(self, tmp_path):
+        """Same contract for stim_index — defensive: if both columns missing, still write."""
+        df = pd.DataFrame(
+            {
+                "start_time": [0.0],
+                "stop_time": [0.5],
+                "trial_valid": [True],
+            }
+        )
+        out = tmp_path / "t_no_stim_either.csv"
+        export_trial_record(df, out)
+        loaded = pd.read_csv(out, keep_default_na=False)
+        assert len(loaded) == 1
+        assert str(loaded["stim_name"].iloc[0]) == ""
+
 
 # ────────────────────────────────────────────────────────────────────────
 # resolve_post_onset_ms
@@ -315,3 +360,243 @@ class TestResolvePostOnsetMs:
             _FakeTrial({"onset_time": 200, "offset_time": 100}),  # 300
         ]
         assert resolve_post_onset_ms(_FakeParser(trials)) == 300.0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# split_units_by_probe
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestSplitUnitsByProbe:
+    def test_uses_probe_id_column_when_present(self):
+        from pynpxpipe.io.derivatives import split_units_by_probe
+
+        df = pd.DataFrame(
+            {
+                "probe_id": ["imec0", "imec0", "imec1"],
+                "ks_id": [10, 11, 20],
+            }
+        )
+        out = split_units_by_probe(df)
+        assert set(out.keys()) == {"imec0", "imec1"}
+        assert len(out["imec0"]) == 2
+        assert len(out["imec1"]) == 1
+
+    def test_falls_back_to_electrode_group_name(self):
+        from pynpxpipe.io.derivatives import split_units_by_probe
+
+        df = pd.DataFrame(
+            {
+                "electrode_group_name": ["imec0", "imec1", "imec1"],
+                "ks_id": [1, 2, 3],
+            }
+        )
+        out = split_units_by_probe(df)
+        assert set(out.keys()) == {"imec0", "imec1"}
+        assert len(out["imec1"]) == 2
+
+    def test_prefers_probe_id_over_electrode_group_name(self):
+        from pynpxpipe.io.derivatives import split_units_by_probe
+
+        df = pd.DataFrame(
+            {
+                "probe_id": ["A", "A", "B"],
+                "electrode_group_name": ["X", "Y", "Z"],
+            }
+        )
+        out = split_units_by_probe(df)
+        assert set(out.keys()) == {"A", "B"}
+
+    def test_raises_when_neither_column_present(self):
+        from pynpxpipe.io.derivatives import split_units_by_probe
+
+        df = pd.DataFrame({"ks_id": [1, 2, 3]})
+        try:
+            split_units_by_probe(df)
+        except RuntimeError as exc:
+            msg = str(exc)
+            assert "probe_id" in msg
+            assert "electrode_group_name" in msg
+        else:  # pragma: no cover
+            raise AssertionError("expected RuntimeError")
+
+    def test_empty_dataframe_returns_empty_dict(self):
+        from pynpxpipe.io.derivatives import split_units_by_probe
+
+        # Even empty df, the contract requires the columns to be declared.
+        df = pd.DataFrame({"probe_id": pd.Series(dtype=object), "ks_id": pd.Series(dtype=int)})
+        assert split_units_by_probe(df) == {}
+
+    def test_preserves_row_order_within_probe(self):
+        from pynpxpipe.io.derivatives import split_units_by_probe
+
+        df = pd.DataFrame(
+            {
+                "probe_id": ["imec0", "imec1", "imec0", "imec1"],
+                "ks_id": [10, 20, 11, 21],
+            }
+        )
+        out = split_units_by_probe(df)
+        assert list(out["imec0"]["ks_id"]) == [10, 11]
+        assert list(out["imec1"]["ks_id"]) == [20, 21]
+
+
+# ────────────────────────────────────────────────────────────────────────
+# export_phase2_derivatives — multi-probe orchestrator
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _write_minimal_nwb_with_units_and_trials(
+    nwb_path: Path,
+    *,
+    n_units_per_probe: dict[str, int],
+    n_trials: int = 3,
+    session_id: str | None = "TEST_SES_v4-it",
+) -> Path:
+    """Construct a tiny NWB file with a units table containing probe_id +
+    spike_times, plus a minimal trials table. Used to drive
+    export_phase2_derivatives end-to-end without mocking pynwb."""
+    from datetime import UTC, datetime
+
+    import pynwb
+
+    nwb_path.parent.mkdir(parents=True, exist_ok=True)
+    nwbfile = pynwb.NWBFile(
+        session_description="phase2 helper test",
+        identifier="phase2-test",
+        session_start_time=datetime(2026, 4, 29, 10, 0, 0, tzinfo=UTC),
+        session_id=session_id,
+    )
+    # trials
+    nwbfile.add_trial_column(name="trial_valid", description="pass/fail")
+    nwbfile.add_trial_column(name="stim_index", description="stim id")
+    for i in range(n_trials):
+        nwbfile.add_trial(
+            start_time=float(i), stop_time=float(i) + 0.5, trial_valid=True, stim_index=i
+        )
+
+    # units (require probe_id + standard NWB cols). NWB cannot serialise an
+    # empty units table because it can't infer column dtypes — only declare
+    # columns + add rows when at least one unit is requested. The
+    # zero-units case exercises the ``nwbfile.units is None`` branch in
+    # export_phase2_derivatives.
+    total_units = sum(n_units_per_probe.values())
+    if total_units > 0:
+        nwbfile.add_unit_column(name="probe_id", description="probe identifier")
+        nwbfile.add_unit_column(name="ks_id", description="kilosort id")
+        nwbfile.add_unit_column(name="unit_location", description="xyz µm")
+        nwbfile.add_unit_column(name="unittype_string", description="SUA/MUA/...")
+        ks = 0
+        for probe, n_units in n_units_per_probe.items():
+            for _ in range(n_units):
+                nwbfile.add_unit(
+                    spike_times=np.array([0.05, 0.10, 0.15], dtype=np.float64),
+                    probe_id=probe,
+                    ks_id=ks,
+                    unit_location=np.array([0.0, ks * 10.0, 0.0]),
+                    unittype_string="SUA",
+                )
+                ks += 1
+
+    with pynwb.NWBHDF5IO(str(nwb_path), "w") as io:
+        io.write(nwbfile)
+    return nwb_path
+
+
+class TestExportPhase2Derivatives:
+    def test_writes_one_trial_record_per_session(self, tmp_path):
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb = _write_minimal_nwb_with_units_and_trials(
+            tmp_path / "x.nwb",
+            n_units_per_probe={"imec0": 2, "imec1": 1},
+        )
+        out_dir = tmp_path / "07_derivatives"
+        export_phase2_derivatives(nwb, out_dir, post_onset_ms=200.0)
+        records = list(out_dir.glob("TrialRecord_*.csv"))
+        assert len(records) == 1
+
+    def test_writes_per_probe_unit_prop(self, tmp_path):
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb = _write_minimal_nwb_with_units_and_trials(
+            tmp_path / "x.nwb",
+            n_units_per_probe={"imec0": 2, "imec1": 1},
+        )
+        out_dir = tmp_path / "07_derivatives"
+        export_phase2_derivatives(nwb, out_dir, post_onset_ms=200.0)
+        names = sorted(p.name for p in out_dir.glob("UnitProp_*.csv"))
+        assert any("_imec0.csv" in n for n in names)
+        assert any("_imec1.csv" in n for n in names)
+        assert len(names) == 2
+
+    def test_writes_per_probe_trial_raster(self, tmp_path):
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb = _write_minimal_nwb_with_units_and_trials(
+            tmp_path / "x.nwb",
+            n_units_per_probe={"imec0": 2, "imec1": 1},
+        )
+        out_dir = tmp_path / "07_derivatives"
+        export_phase2_derivatives(nwb, out_dir, post_onset_ms=200.0)
+        names = sorted(p.name for p in out_dir.glob("TrialRaster_*.h5"))
+        assert any("_imec0.h5" in n for n in names)
+        assert any("_imec1.h5" in n for n in names)
+        assert len(names) == 2
+
+    def test_skips_probe_with_zero_units_after_split(self, tmp_path):
+        """Empty probe contributes nothing — no UnitProp/TrialRaster file with
+        that probe_id suffix."""
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb = _write_minimal_nwb_with_units_and_trials(
+            tmp_path / "x.nwb",
+            n_units_per_probe={"imec0": 2},  # only one probe present
+        )
+        out_dir = tmp_path / "07_derivatives"
+        export_phase2_derivatives(nwb, out_dir, post_onset_ms=200.0)
+        unit_props = list(out_dir.glob("UnitProp_*.csv"))
+        rasters = list(out_dir.glob("TrialRaster_*.h5"))
+        assert len(unit_props) == 1
+        assert "_imec0.csv" in unit_props[0].name
+        assert len(rasters) == 1
+        assert "_imec0.h5" in rasters[0].name
+
+    def test_session_id_falls_back_to_nwb_stem_when_attr_missing(self, tmp_path):
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb_path = tmp_path / "fallback_stem.nwb"
+        _write_minimal_nwb_with_units_and_trials(
+            nwb_path,
+            n_units_per_probe={"imec0": 1},
+            session_id=None,
+        )
+        out_dir = tmp_path / "07_derivatives"
+        export_phase2_derivatives(nwb_path, out_dir, post_onset_ms=200.0)
+        assert (out_dir / "TrialRecord_fallback_stem.csv").exists()
+        assert (out_dir / "UnitProp_fallback_stem_imec0.csv").exists()
+
+    def test_returns_out_dir(self, tmp_path):
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb = _write_minimal_nwb_with_units_and_trials(
+            tmp_path / "x.nwb",
+            n_units_per_probe={"imec0": 1},
+        )
+        out_dir = tmp_path / "07_derivatives"
+        result = export_phase2_derivatives(nwb, out_dir, post_onset_ms=200.0)
+        assert result == out_dir
+
+    def test_skips_raster_when_units_empty(self, tmp_path):
+        """An NWB with no units must still write TrialRecord, no Raster files."""
+        from pynpxpipe.io.derivatives import export_phase2_derivatives
+
+        nwb = _write_minimal_nwb_with_units_and_trials(
+            tmp_path / "no_units.nwb",
+            n_units_per_probe={},  # zero units
+        )
+        out_dir = tmp_path / "07_derivatives"
+        export_phase2_derivatives(nwb, out_dir, post_onset_ms=200.0)
+        assert list(out_dir.glob("TrialRecord_*.csv"))
+        assert not list(out_dir.glob("TrialRaster_*.h5"))
+        assert not list(out_dir.glob("UnitProp_*.csv"))

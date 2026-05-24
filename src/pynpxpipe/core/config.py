@@ -1204,6 +1204,72 @@ def load_subject_config(yaml_path: Path) -> SubjectConfig:
     )
 
 
+def _yaml_safe(obj):
+    """Recursively coerce Path / non-primitive scalars so PyYAML safe_dump accepts them."""
+    if isinstance(obj, dict):
+        return {k: _yaml_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_yaml_safe(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_yaml_safe(v) for v in obj]
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
+
+
+_PIPELINE_HEADER = (
+    "# Effective pipeline config used for this run.\n"
+    "# Auto-resolved values (resources / parallel) reflect what ResourceDetector\n"
+    "# actually picked. Edit and re-run if you want different parameters next time.\n"
+)
+_SORTING_HEADER = (
+    "# Effective sorting config used for this run.\n"
+    "# 'auto' batch_size has been resolved to a concrete integer by ResourceDetector.\n"
+)
+
+
+def save_pipeline_config(cfg: PipelineConfig, yaml_path: Path) -> None:
+    """Persist a PipelineConfig to YAML for audit/resume.
+
+    Used by PipelineRunner at startup to record the effective config (after
+    'auto' resource resolution) into ``{output_dir}/used_pipeline.yaml``. The
+    output is round-trip compatible with :func:`load_pipeline_config`.
+
+    Args:
+        cfg: A fully-populated PipelineConfig instance.
+        yaml_path: Target file path. Parent directories are created automatically.
+    """
+    yaml_path = Path(yaml_path)
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _yaml_safe(_config_to_dict(cfg))
+    yaml_path.write_text(
+        _PIPELINE_HEADER + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
+def save_sorting_config(cfg: SortingConfig, yaml_path: Path) -> None:
+    """Persist a SortingConfig to YAML for audit/resume.
+
+    Mirrors :func:`load_sorting_config`'s key mapping: the dataclass attribute
+    ``import_cfg`` is written under the YAML key ``import`` (a Python reserved
+    word). All Path values inside ``import_cfg.paths`` are stringified.
+
+    Args:
+        cfg: A fully-populated SortingConfig instance.
+        yaml_path: Target file path. Parent directories are created automatically.
+    """
+    yaml_path = Path(yaml_path)
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _yaml_safe(_config_to_dict(cfg))
+    if "import_cfg" in payload:
+        payload["import"] = payload.pop("import_cfg")
+    yaml_path.write_text(
+        _SORTING_HEADER + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
 def save_subject_config(cfg: SubjectConfig, yaml_path: Path) -> None:
     """Write a SubjectConfig to a YAML file with a top-level ``Subject:`` block.
 

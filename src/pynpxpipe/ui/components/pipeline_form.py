@@ -645,6 +645,100 @@ class PipelineForm:
             ),
         )
 
+    # ── Public API ──
+
+    def apply_pipeline(self, cfg: PipelineConfig) -> None:
+        """Populate every widget from a PipelineConfig dataclass.
+
+        Used by SessionLoader after restoring ``state.pipeline_config`` from
+        ``used_pipeline.yaml``. Only the fields the form actually exposes get
+        propagated; any other dataclass fields rely on the form's _DEFAULTS
+        baseline (mirrors the existing _rebuild_config behaviour).
+        """
+        # Resources
+        self.n_jobs_input.value = str(cfg.resources.n_jobs)
+        self.chunk_duration_input.value = str(cfg.resources.chunk_duration)
+        self.max_memory_input.value = str(cfg.resources.max_memory)
+        # Parallel
+        self.parallel_enabled_checkbox.value = cfg.parallel.enabled
+        self.parallel_max_workers_input.value = str(cfg.parallel.max_workers)
+        # Bandpass
+        self.freq_min_input.value = cfg.preprocess.bandpass.freq_min
+        self.freq_max_input.value = cfg.preprocess.bandpass.freq_max
+        # Bad channel
+        self.bad_channel_method_input.value = cfg.preprocess.bad_channel_detection.method
+        self.dead_channel_threshold_input.value = (
+            cfg.preprocess.bad_channel_detection.dead_channel_threshold
+        )
+        # Common reference
+        self.cmr_reference_select.value = cfg.preprocess.common_reference.reference
+        self.cmr_operator_select.value = cfg.preprocess.common_reference.operator
+        # Motion correction (None method → checkbox disabled, preset preserved)
+        self.motion_enabled_checkbox.value = cfg.preprocess.motion_correction.method is not None
+        self.motion_preset_select.value = cfg.preprocess.motion_correction.preset
+        # Curation
+        cur = cfg.curation
+        self.use_bombcell_checkbox.value = cur.use_bombcell
+        self.isi_max_input.value = cur.isi_violation_ratio_max
+        self.amp_cutoff_input.value = cur.amplitude_cutoff_max
+        self.presence_min_input.value = cur.presence_ratio_min
+        self.snr_min_input.value = cur.snr_min
+        self.good_isi_max_input.value = cur.good_isi_max
+        self.good_snr_min_input.value = cur.good_snr_min
+        # Bombcell thresholds
+        bc = cur.bombcell
+        self.bombcell_amplitude_median_min_input.value = bc.amplitude_median_min
+        self.bombcell_num_spikes_min_input.value = bc.num_spikes_min
+        self.bombcell_presence_ratio_min_input.value = bc.presence_ratio_min
+        self.bombcell_snr_min_input.value = bc.snr_min
+        self.bombcell_amplitude_cutoff_max_input.value = bc.amplitude_cutoff_max
+        self.bombcell_rp_contamination_max_input.value = bc.rp_contamination_max
+        self.bombcell_drift_ptp_max_input.value = bc.drift_ptp_max
+        self.bombcell_label_non_somatic_checkbox.value = bc.label_non_somatic
+        self.bombcell_split_non_somatic_good_mua_checkbox.value = bc.split_non_somatic_good_mua
+        # Sync
+        sync = cfg.sync
+        self.sync_bit_input.value = sync.imec_sync_bit
+        self.nidq_sync_bit_input.value = sync.nidq_sync_bit
+        self.event_bits_input.value = ",".join(str(b) for b in sync.event_bits)
+        self.stim_onset_code_input.value = sync.stim_onset_code
+        self.max_time_error_input.value = sync.max_time_error_ms
+        self.trial_count_tolerance_input.value = sync.trial_count_tolerance
+        self.gap_threshold_enable_checkbox.value = sync.gap_threshold_ms is not None
+        if sync.gap_threshold_ms is not None:
+            self.gap_threshold_input.value = sync.gap_threshold_ms
+        self.trial_start_bit_enable_checkbox.value = sync.trial_start_bit is not None
+        if sync.trial_start_bit is not None:
+            self.trial_start_bit_input.value = sync.trial_start_bit
+        self.stim_onset_bit_enable_checkbox.value = sync.stim_onset_bit is not None
+        if sync.stim_onset_bit is not None:
+            self.stim_onset_bit_input.value = sync.stim_onset_bit
+        self.stim_count_tolerance_input.value = sync.stim_count_tolerance
+        self.photodiode_channel_input.value = sync.photodiode_channel_index
+        self.monitor_delay_input.value = sync.monitor_delay_ms
+        self.pd_window_pre_input.value = sync.pd_window_pre_ms
+        self.pd_window_post_input.value = sync.pd_window_post_ms
+        self.pd_hignline_skip_input.value = sync.pd_hignline_skip_ms
+        self.pd_hignline_width_input.value = sync.pd_hignline_width_ms
+        self.pd_min_variance_input.value = sync.pd_min_signal_variance
+        self.generate_plots_checkbox.value = sync.generate_plots
+        # Postprocess
+        post = cfg.postprocess
+        self.slay_pre_input.value = post.slay_pre_s
+        self.slay_post_input.value = post.slay_post_s
+        self.pre_onset_ms_input.value = post.pre_onset_ms
+        self.eye_enabled_checkbox.value = post.eye_validation.enabled
+        self.eye_threshold_input.value = post.eye_validation.eye_threshold
+        # Merge
+        self.merge_enabled_checkbox.value = cfg.merge.enabled
+        # Export derivatives
+        deriv = cfg.export.derivatives
+        self.derivatives_enabled_checkbox.value = deriv.enabled
+        self.derivatives_pre_onset_ms_input.value = float(deriv.pre_onset_ms)
+        self.derivatives_post_onset_ms_input.value = str(deriv.post_onset_ms)
+        self.derivatives_bin_size_ms_input.value = float(deriv.bin_size_ms)
+        self.derivatives_n_jobs_input.value = int(deriv.n_jobs)
+
     # ── Layout ──
 
     def panel(self) -> pn.viewable.Viewable:

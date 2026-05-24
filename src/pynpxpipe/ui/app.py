@@ -25,6 +25,7 @@ from pynpxpipe.ui.components.log_viewer import LogViewer
 from pynpxpipe.ui.components.pipeline_form import PipelineForm
 from pynpxpipe.ui.components.probe_region_editor import ProbeRegionEditor
 from pynpxpipe.ui.components.progress_view import ProgressView
+from pynpxpipe.ui.components.rerun_derivatives import RerunDerivatives
 from pynpxpipe.ui.components.run_panel import RunPanel
 from pynpxpipe.ui.components.session_form import SessionForm
 from pynpxpipe.ui.components.session_loader import SessionLoader
@@ -219,10 +220,25 @@ def create_app() -> pn.viewable.Viewable:
     chat_help = ChatHelp(state)
 
     def _on_session_loaded() -> None:
+        # Mirror restored AppState into the form widgets so the user sees the
+        # loaded values; otherwise widget watchers can clobber state with the
+        # forms' empty/default inputs on next interaction.
+        if state.subject_config is not None:
+            subject_form.apply_subject(state.subject_config)
+        if state.pipeline_config is not None:
+            pipeline_form.apply_pipeline(state.pipeline_config)
+        if state.sorting_config is not None:
+            sorting_form.apply_sorting(state.sorting_config)
+        session_form.apply_paths(
+            state.session_dir,
+            state.bhv_file,
+            state.output_dir,
+        )
         status_view.load_status()
         figs_viewer.load_figures()
 
     session_loader = SessionLoader(state, on_session_loaded=_on_session_loaded)
+    rerun_derivatives = RerunDerivatives(state)
 
     # ── Sections ──
     configure_left = pn.Column(
@@ -263,6 +279,7 @@ def create_app() -> pn.viewable.Viewable:
         session_loader.panel(),
         status_view.panel(),
         figs_viewer.panel(),
+        rerun_derivatives.panel(),
         sizing_mode="stretch_width",
         visible=False,
     )

@@ -21,6 +21,7 @@ from pynpxpipe.core.config import load_pipeline_config, load_sorting_config, loa
 from pynpxpipe.core.errors import PynpxpipeError
 from pynpxpipe.core.session import SessionManager
 from pynpxpipe.pipelines.runner import STAGE_ORDER, PipelineRunner
+from pynpxpipe.stages.export import ExportStage
 
 _PER_PROBE_STAGES = {"preprocess", "sort", "curate", "postprocess"}
 
@@ -217,6 +218,33 @@ def reset_stage(output_dir: Path, stage: str, yes: bool) -> None:
             probe_cp.unlink(missing_ok=True)
 
     click.echo("Reset complete.")
+
+
+@cli.command("rerun-derivatives")
+@click.argument("output_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def rerun_derivatives(output_dir: Path) -> None:
+    """Re-run Phase 2.5 (07_derivatives/) against an already-written NWB.
+
+    Recovery path for runs whose Phase 2.5 failed (e.g. KeyError 'stim_name'
+    when the BHV2 dataset path was unresolvable). Reads trials/units from the
+    existing NWB and writes ``07_derivatives/`` without redoing Phase 1 or
+    the (potentially multi-day) Phase 3 raw-data append.
+
+    OUTPUT_DIR: The session output directory. Must contain ``session.json``
+    and ``checkpoints/export.json`` from a previous successful Phase 1.
+    """
+    try:
+        session = SessionManager.load(output_dir)
+        used_pipeline = output_dir / "used_pipeline.yaml"
+        pipeline_cfg = load_pipeline_config(used_pipeline if used_pipeline.exists() else None)
+        session.config = pipeline_cfg
+
+        stage = ExportStage(session)
+        stage.rerun_phase2_only()
+        click.echo(f"Phase 2.5 derivatives re-exported to {output_dir / '07_derivatives'}")
+    except PynpxpipeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command("verify-safe-to-delete")

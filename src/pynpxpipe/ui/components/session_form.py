@@ -193,6 +193,25 @@ class SessionForm:
         if self.experiment_input.value != event.new:
             self.experiment_input.value = event.new
 
+    # ── Public API ──
+
+    def apply_paths(
+        self,
+        session_dir: str | Path | None,
+        bhv_file: str | Path | None,
+        output_dir: str | Path | None,
+    ) -> None:
+        """Populate session/BHV/output path widgets after a restore.
+
+        Switches to Advanced mode so the loaded paths are visible. The widget
+        watchers propagate the new values into ``state.session_dir`` /
+        ``state.bhv_file`` / ``state.output_dir``.
+        """
+        self.advanced_toggle.value = True
+        self.session_dir_input.value = str(session_dir) if session_dir else ""
+        self.bhv_file_input.value = str(bhv_file) if bhv_file else ""
+        self.output_dir_input.value = str(output_dir) if output_dir else ""
+
     def _on_state_recording_date(self, event) -> None:
         if self.recording_date_input.value != event.new:
             self.recording_date_input.value = event.new

@@ -515,3 +515,74 @@ def test_subject_config_image_vault_paths_omitted_when_empty_on_save(tmp_path):
     target = tmp_path / "NoVault.yaml"
     save_subject_config(cfg, target)
     assert "image_vault_paths" not in target.read_text(encoding="utf-8")
+
+
+# ===========================================================================
+# save_pipeline_config / save_sorting_config — effective config audit + resume
+# ===========================================================================
+
+
+def test_save_pipeline_config_round_trips_via_load(tmp_path):
+    """save_pipeline_config → load_pipeline_config returns an equal config."""
+    from pynpxpipe.core.config import save_pipeline_config
+
+    target = tmp_path / "used_pipeline.yaml"
+    cfg = load_pipeline_config(None)
+    cfg.resources.n_jobs = 8
+    cfg.resources.chunk_duration = "5s"
+    cfg.preprocess.bandpass.freq_min = 250.0
+    cfg.sync.imec_sync_bit = 6
+    cfg.merge.enabled = True
+
+    save_pipeline_config(cfg, target)
+    assert target.exists()
+    reloaded = load_pipeline_config(target)
+    assert reloaded.resources.n_jobs == 8
+    assert reloaded.resources.chunk_duration == "5s"
+    assert reloaded.preprocess.bandpass.freq_min == 250.0
+    assert reloaded.sync.imec_sync_bit == 6
+    assert reloaded.merge.enabled is True
+
+
+def test_save_sorting_config_round_trips_via_load(tmp_path):
+    """save_sorting_config → load_sorting_config preserves all fields incl. import_cfg."""
+    from pynpxpipe.core.config import save_sorting_config
+
+    target = tmp_path / "used_sorting.yaml"
+    cfg = load_sorting_config(None)
+    cfg.sorter.params.Th_learned = 8.0
+    cfg.sorter.params.batch_size = 30000
+    cfg.import_cfg.paths = {"imec0": Path("/external/ks_imec0")}
+
+    save_sorting_config(cfg, target)
+    raw_text = target.read_text(encoding="utf-8")
+    # YAML key must be 'import' (Python reserved word handled by load_sorting_config)
+    assert "import:" in raw_text
+    # Path must be serialized as plain string, not a YAML python tag
+    assert "imec0" in raw_text
+    assert "!!python" not in raw_text
+
+    reloaded = load_sorting_config(target)
+    assert reloaded.sorter.params.Th_learned == 8.0
+    assert reloaded.sorter.params.batch_size == 30000
+    assert "imec0" in reloaded.import_cfg.paths
+
+
+def test_save_pipeline_config_creates_parent_directories(tmp_path):
+    """save_pipeline_config writes through nonexistent parent dirs."""
+    from pynpxpipe.core.config import save_pipeline_config
+
+    target = tmp_path / "nested" / "dir" / "used_pipeline.yaml"
+    cfg = load_pipeline_config(None)
+    save_pipeline_config(cfg, target)
+    assert target.exists()
+
+
+def test_save_sorting_config_creates_parent_directories(tmp_path):
+    """save_sorting_config writes through nonexistent parent dirs."""
+    from pynpxpipe.core.config import save_sorting_config
+
+    target = tmp_path / "nested" / "dir" / "used_sorting.yaml"
+    cfg = load_sorting_config(None)
+    save_sorting_config(cfg, target)
+    assert target.exists()

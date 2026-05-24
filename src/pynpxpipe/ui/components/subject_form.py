@@ -146,15 +146,23 @@ class SubjectForm:
     def load_from_yaml(self, yaml_path: Path) -> None:
         """Load subject config from a YAML file and fill widget values."""
         cfg = load_subject_config(yaml_path)
+        self.apply_subject(cfg)
+
+    def apply_subject(self, cfg: SubjectConfig) -> None:
+        """Populate every widget from a SubjectConfig dataclass.
+
+        Used by SessionLoader after restoring ``state.subject_config`` so the
+        Subject Form reflects the loaded session. The widget watchers will
+        then rebuild ``state.subject_config`` from the populated values, which
+        is a no-op when the widgets are filled from the same dataclass.
+        """
         self.subject_id_input.value = cfg.subject_id
         self.description_input.value = cfg.description
         self.species_input.value = cfg.species
         self.sex_select.value = cfg.sex
         self.age_input.value = cfg.age
         self.weight_input.value = cfg.weight
-        self.image_vault_paths_input.value = "\n".join(
-            str(p) for p in cfg.image_vault_paths
-        )
+        self.image_vault_paths_input.value = "\n".join(str(p) for p in cfg.image_vault_paths)
 
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(

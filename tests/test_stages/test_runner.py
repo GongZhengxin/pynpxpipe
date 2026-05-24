@@ -391,3 +391,56 @@ class TestGetStatus:
         _write_checkpoint(session, "synchronize", status="failed")
         runner = _make_runner(session)
         assert runner.get_status()["synchronize"] == "failed"
+
+
+class TestRunnerEffectiveConfigDump:
+    """PipelineRunner must persist the effective (resolved) configs to output_dir."""
+
+    def test_init_writes_used_pipeline_yaml(self, session: Session) -> None:
+        from pynpxpipe.core.config import load_pipeline_config
+
+        _make_runner(session, n_jobs=4, chunk_duration="2s", max_workers=2, batch_size=30000)
+
+        target = session.output_dir / "used_pipeline.yaml"
+        assert target.exists()
+        reloaded = load_pipeline_config(target)
+        assert reloaded.resources.n_jobs == 4
+        assert reloaded.resources.chunk_duration == "2s"
+        assert reloaded.parallel.max_workers == 2
+
+    def test_init_writes_used_sorting_yaml(self, session: Session) -> None:
+        from pynpxpipe.core.config import load_sorting_config
+
+        _make_runner(session, batch_size=45000)
+
+        target = session.output_dir / "used_sorting.yaml"
+        assert target.exists()
+        reloaded = load_sorting_config(target)
+        assert reloaded.sorter.params.batch_size == 45000
+
+    def test_init_dumps_resolved_auto_values(self, session: Session) -> None:
+        """Auto fields should be replaced with concrete numbers in the dumped yaml."""
+        from pynpxpipe.core.config import load_pipeline_config, load_sorting_config
+
+        # Use 'auto' so ResourceDetector resolves them.
+        runner = PipelineRunner(
+            session,
+            _make_pipeline_config(n_jobs="auto", chunk_duration="auto", max_workers="auto"),
+            _make_sorting_config(batch_size="auto"),
+        )
+
+        pipeline_target = session.output_dir / "used_pipeline.yaml"
+        sorting_target = session.output_dir / "used_sorting.yaml"
+        reloaded_pipeline = load_pipeline_config(pipeline_target)
+        reloaded_sorting = load_sorting_config(sorting_target)
+
+        # Auto fields must have been resolved to concrete values, not the literal "auto".
+        assert reloaded_pipeline.resources.n_jobs != "auto"
+        assert reloaded_pipeline.parallel.max_workers != "auto"
+        assert reloaded_sorting.sorter.params.batch_size != "auto"
+        # And those values match what runner is actually using.
+        assert reloaded_pipeline.resources.n_jobs == runner.pipeline_config.resources.n_jobs
+        assert (
+            reloaded_sorting.sorter.params.batch_size
+            == runner.sorting_config.sorter.params.batch_size
+        )

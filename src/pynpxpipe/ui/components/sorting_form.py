@@ -204,6 +204,43 @@ class SortingForm:
             ),
         )
 
+    # ── Public API ──
+
+    def apply_sorting(self, cfg: SortingConfig) -> None:
+        """Populate every widget from a SortingConfig dataclass.
+
+        Used by SessionLoader after restoring ``state.sorting_config`` from
+        ``used_sorting.yaml``. Widget watchers will rebuild
+        ``state.sorting_config`` from the new values, which converges on cfg
+        once all widgets are set.
+        """
+        self.sorter_select.value = cfg.sorter.name
+        self.mode_select.value = cfg.mode
+        params = cfg.sorter.params
+        self.nblocks_input.value = params.nblocks
+        self.th_learned_input.value = params.Th_learned
+        self.do_car_checkbox.value = params.do_CAR
+        # batch_size is int | "auto" — stringify so the TextInput shows it verbatim.
+        self.batch_size_input.value = str(params.batch_size)
+        self.n_jobs_input.value = params.n_jobs
+        self.torch_device_select.value = params.torch_device
+
+        # Import path: form has a single TextInput; fill from the first probe entry if any.
+        if cfg.import_cfg.paths:
+            first_path = next(iter(cfg.import_cfg.paths.values()))
+            self.import_path_input.value = str(first_path)
+        else:
+            self.import_path_input.value = ""
+
+        analyzer = cfg.analyzer
+        self.analyzer_max_spikes_input.value = analyzer.random_spikes.max_spikes_per_unit
+        self.analyzer_random_method_select.value = analyzer.random_spikes.method
+        self.analyzer_ms_before_input.value = analyzer.waveforms.ms_before
+        self.analyzer_ms_after_input.value = analyzer.waveforms.ms_after
+        self.analyzer_template_operators_input.value = list(analyzer.template_operators)
+        self.analyzer_unit_locations_select.value = analyzer.unit_locations_method
+        self.analyzer_template_similarity_select.value = analyzer.template_similarity_method
+
     # ── Layout ──
 
     def panel(self) -> pn.viewable.Viewable:

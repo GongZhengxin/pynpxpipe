@@ -10,13 +10,15 @@
 - 跨机器分发（不用传输几百 GB 的 NWB 原始数据段）
 - 与用户已有的 analysis 脚本 (`spike_times_to_raster` / `raster_to_psth`) 对接
 
-三个输出：
+三类输出（多 probe session 总文件数 = `1 + 2 × N_probes`）：
 
-| 文件 | 结构 | 来源 |
-|---|---|---|
-| `TrialRaster_{session_id}.h5` | (n_units, n_trials, n_timebins) uint8 | NWB `units.spike_times` + `trials.start_time` |
-| `UnitProp_{session_id}.csv` | 每行一个 unit，3 列 | NWB `units.to_dataframe()` |
-| `TrialRecord_{session_id}.csv` | 每行一个 trial onset | NWB `trials.to_dataframe()` |
+| 文件 | 粒度 | 结构 | 来源 |
+|---|---|---|---|
+| `TrialRecord_{session_id}.csv` | **session 级**（单文件） | 每行一个 trial onset | NWB `trials.to_dataframe()` |
+| `UnitProp_{session_id}_{probe_id}.csv` | **per-probe** | 每行一个 unit，5 列 | NWB `units.to_dataframe()` 按 probe 切片 |
+| `TrialRaster_{session_id}_{probe_id}.h5` | **per-probe** | (n_units_in_probe, n_trials, n_timebins) uint8 | NWB `units.spike_times` + `trials.start_time` 按 probe 切片 |
+
+**为什么 trials 不切 probe / units 切 probe**：trials 是 session 级事件流，跨 probe 共享同一时间轴；units 在不同 probe 上记录不同脑区，下游分析几乎一定按 probe 分开看。session-level 合并 raster 已被弃用，**不再产出** `UnitProp_{session_id}.csv` / `TrialRaster_{session_id}.h5` 这种无 probe 后缀的旧布局。
 
 插入位置：**ExportStage Phase 2.5**，即 Phase 2 核心 NWB 写完后、Phase 3 原始
 数据压缩之前。同步阻塞执行（相对 Phase 3 的背景线程而言）。
@@ -52,15 +54,15 @@
 
 ## 3. 输出
 
-| 文件 | 路径 |
-|---|---|
-| Raster H5 | `{output_dir}/07_derivatives/TrialRaster_{session_id}.h5` |
-| UnitProp CSV | `{output_dir}/07_derivatives/UnitProp_{session_id}.csv` |
-| TrialRecord CSV | `{output_dir}/07_derivatives/TrialRecord_{session_id}.csv` |
+| 文件 | 路径 | 数量 |
+|---|---|---|
+| TrialRecord CSV | `{output_dir}/07_derivatives/TrialRecord_{session_id}.csv` | 1（session 级） |
+| UnitProp CSV | `{output_dir}/07_derivatives/UnitProp_{session_id}_{probe_id}.csv` | N_probes |
+| Raster H5 | `{output_dir}/07_derivatives/TrialRaster_{session_id}_{probe_id}.h5` | N_probes |
 
-**目录编号约定**：`07_derivatives/` 严格替换旧 `07_export/`；实现时必须删除旧路径所有代码，不保留兼容层。
+**目录编号约定**：`07_derivatives/` 严格替换旧 `07_export/`；实现时必须删除旧路径所有代码，不保留兼容层。同样地，旧的 session-level 合并版 `UnitProp_{session_id}.csv` / `TrialRaster_{session_id}.h5` **不再产出**——任何依赖这两个老文件名的下游代码必须改读 per-probe 版本。
 
-其中 `{session_id}` = `session.session_id.canonical()`（例：`251024_FanFan_nsd1w_MSB-V4`）。
+其中 `{session_id}` = `session.session_id.canonical()`（例：`251024_FanFan_nsd1w_MSB-V4`），`{probe_id}` = NWB units 表的 probe 标识（典型 `imec0` / `imec1`，见 §5 切分规则）。
 
 ### `TrialRaster_*.h5` 结构
 
@@ -207,6 +209,25 @@ export: ExportConfig = field(default_factory=ExportConfig)
 `fix_success` ← `trial_valid`（语义等价重命名，见 `docs/ground_truth/step5_matlab_vs_python.md:335`）。
 源列保证由上游 ExportStage Phase 2 NWB 写入（trials 表契约），不做 missing-column defensive fallback。
 
+#### `split_units_by_probe(units_df) -> dict[str, pd.DataFrame]`
+
+按 probe 标识把 NWB `units.to_dataframe()` 切成 `{probe_id: sub_df}`。列查找顺序：
+
+1. `units_df["probe_id"]` — pynpxpipe NWBWriter 标准列（`io/nwb_writer.py` `add_unit_column("probe_id", ...)`），首选
+2. `units_df["electrode_group_name"]` — 标准 NWB 字段，外部 NWB 的 fallback
+3. 两者都缺 → 抛 `RuntimeError("Cannot split units by probe: neither 'probe_id' nor 'electrode_group_name' is present")`
+
+返回 `dict` 保留输入 DataFrame 的行顺序；空 DataFrame 返回 `{}`。
+
+#### `export_phase2_derivatives(nwb_path, out_dir, *, pre_onset_ms, post_onset_ms, bin_size_ms, n_jobs, verbose) -> Path`
+
+读取已写好的 NWB → 取 trials/units → 调 `split_units_by_probe` → 写 1 份 TrialRecord + N 份 UnitProp + N 份 TrialRaster 到 `out_dir`，返回 `out_dir`。
+
+- `post_onset_ms` 必须是浮点数；调用方负责把 `"auto"` 解析成具体值（standalone CLI 走 fallback 默认，stage 走 `BHV2Parser` + `resolve_post_onset_ms`）
+- 当 NWB `trials` 或 `units` 为 None / 缺 `spike_times` 列 / `units` 为空时，跳过 raster 但 `TrialRecord` 仍写出（trials 单独存在仍有意义）
+- 当 `units` 切分后某个 probe 无单元时，跳过该 probe 的两个文件并记 `WARNING`
+- 文件名中 `session_id` 来自 NWB 文件根属性 `session_id`，缺失时回退到 `nwb_path.stem`
+
 #### `resolve_post_onset_ms(bhv_parser) -> float`
 
 ```python
@@ -229,28 +250,20 @@ def resolve_post_onset_ms(bhv_parser: BHV2Parser) -> float:
     return max(values)
 ```
 
-### `ExportStage._export_phase2` 重写（**替换现有内容**）
+### `ExportStage._export_phase2` 简化为薄壳
 
-旧 Phase 2 写 `export/trials.csv|units.csv|raster_{probe_id}.h5`。**删除**这部分
-代码，替换为：
+负责 stage-specific 的两件事：(a) 读 `dcfg.enabled` 决定是否跳过；(b) 把 `post_onset_ms="auto"` 解析成具体浮点数（走 `BHV2Parser` + `resolve_post_onset_ms`，失败 fallback 800.0）。剩下的全部委托给 `io/derivatives.py:export_phase2_derivatives`：
 
 ```python
 def _export_phase2(self, nwb_path_written: Path, behavior_events: pd.DataFrame) -> None:
-    """Phase 2.5: export session-level derivative files (TrialRaster/UnitProp/TrialRecord).
-
-    Reads the just-written NWB file (units + trials), computes a combined
-    spike raster, and writes three files under ``{output_dir}/derivatives/``.
-    """
+    """Phase 2.5: write per-probe derivatives (TrialRaster/UnitProp) + session
+    TrialRecord under ``{output_dir}/07_derivatives/``."""
     from pynpxpipe.io.bhv import BHV2Parser
     from pynpxpipe.io.derivatives import (
-        export_trial_record,
-        export_unit_prop,
+        export_phase2_derivatives,
         resolve_post_onset_ms,
-        save_raster_h5,
-        spike_times_to_raster,
     )
 
-    # Config access — falls back to defaults when session.config is not wired.
     cfg = getattr(getattr(self.session, "config", None), "export", None)
     dcfg = getattr(cfg, "derivatives", None)
     if dcfg is not None and not dcfg.enabled:
@@ -262,16 +275,6 @@ def _export_phase2(self, nwb_path_written: Path, behavior_events: pd.DataFrame) 
     bin_size_ms = float(getattr(dcfg, "bin_size_ms", 1.0))
     n_jobs = int(getattr(dcfg, "n_jobs", 1))
 
-    session_id = self.session.session_id.canonical()
-    derivatives_dir = self.session.output_dir / "07_derivatives"
-    derivatives_dir.mkdir(parents=True, exist_ok=True)
-
-    # Open the NWB we just wrote and extract dataframes.
-    with pynwb.NWBHDF5IO(str(nwb_path_written), "r") as io:
-        nwbfile = io.read()
-        trials_df = nwbfile.trials.to_dataframe() if nwbfile.trials is not None else pd.DataFrame()
-        units_df = nwbfile.units.to_dataframe() if nwbfile.units is not None else pd.DataFrame()
-
     if post_onset_raw == "auto":
         try:
             post_onset_ms = resolve_post_onset_ms(BHV2Parser(self.session.bhv_file))
@@ -281,35 +284,17 @@ def _export_phase2(self, nwb_path_written: Path, behavior_events: pd.DataFrame) 
     else:
         post_onset_ms = float(post_onset_raw)
 
-    # CSV exports (cheap, always first)
-    export_trial_record(trials_df, derivatives_dir / f"TrialRecord_{session_id}.csv")
-    export_unit_prop(units_df, derivatives_dir / f"UnitProp_{session_id}.csv")
-
-    # Raster (expensive): need spike_times + start_time columns.
-    if len(units_df) and len(trials_df) and "spike_times" in units_df.columns:
-        raster = spike_times_to_raster(
-            units_df, trials_df,
-            pre_onset=pre_onset_ms,
-            post_onset=post_onset_ms,
-            bin_size=bin_size_ms,
-            n_jobs=n_jobs,
-        )
-        save_raster_h5(
-            str(derivatives_dir / f"TrialRaster_{session_id}.h5"),
-            raster,
-            metadata={
-                "pre_onset_ms": pre_onset_ms,
-                "post_onset_ms": post_onset_ms,
-                "bin_size_ms": bin_size_ms,
-                "session_id": session_id,
-            },
-        )
-    else:
-        self.logger.warning(
-            "Skipping TrialRaster export (units=%d, trials=%d, spike_times_col=%s)",
-            len(units_df), len(trials_df), "spike_times" in units_df.columns,
-        )
+    export_phase2_derivatives(
+        nwb_path_written,
+        self.session.output_dir / "07_derivatives",
+        pre_onset_ms=pre_onset_ms,
+        post_onset_ms=post_onset_ms,
+        bin_size_ms=bin_size_ms,
+        n_jobs=n_jobs,
+    )
 ```
+
+**`behavior_events` 仍出现在签名里**（保留），未来若 derivatives 需要 BHV2 元数据可从这里拿。当前实现不使用。
 
 `run()` 调用位置从：
 ```python
@@ -365,6 +350,21 @@ def export_unit_prop(units_df: pd.DataFrame, out_path: Path) -> Path: ...
 def export_trial_record(trials_df: pd.DataFrame, out_path: Path) -> Path: ...
 
 
+def split_units_by_probe(units_df: pd.DataFrame) -> dict[str, pd.DataFrame]: ...
+
+
+def export_phase2_derivatives(
+    nwb_path: Path,
+    out_dir: Path,
+    *,
+    pre_onset_ms: float = 50.0,
+    post_onset_ms: float = 300.0,
+    bin_size_ms: float = 1.0,
+    n_jobs: int = 1,
+    verbose: bool = False,
+) -> Path: ...
+
+
 def resolve_post_onset_ms(bhv_parser: BHV2Parser) -> float: ...
 ```
 
@@ -416,21 +416,43 @@ def resolve_post_onset_ms(bhv_parser: BHV2Parser) -> float: ...
 | `test_resolve_fallback_missing_fields` | 所有 trial VC 为空 dict | 返回 800.0 |
 | `test_resolve_skips_partial_trials` | 一个 trial 只有 onset_time | 该 trial 被跳过（另一个完整的生效） |
 
+### `split_units_by_probe` (`tests/test_io/test_derivatives.py`)
+
+| 测试名 | 输入 | 预期 |
+|---|---|---|
+| `test_split_uses_probe_id_column_when_present` | units_df 含 `probe_id=["imec0","imec0","imec1"]` | dict 键 `{"imec0", "imec1"}`，长度分别 2 / 1 |
+| `test_split_falls_back_to_electrode_group_name` | units_df 无 `probe_id`，含 `electrode_group_name` | 按后者切分，dict 键正确 |
+| `test_split_prefers_probe_id_over_electrode_group_name` | 两列都在但值不同 | 按 `probe_id` 切，忽略 `electrode_group_name` |
+| `test_split_raises_when_neither_column_present` | 两列都缺 | `RuntimeError`，message 含两列名 |
+| `test_split_empty_dataframe_returns_empty_dict` | 长度 0 的 units_df | 返回 `{}` 不抛错 |
+| `test_split_preserves_row_order_within_probe` | 乱序 probe_id | 每个 sub-DataFrame 按原 index 升序 |
+
+### `export_phase2_derivatives` (`tests/test_io/test_derivatives.py`)
+
+| 测试名 | 输入 | 预期 |
+|---|---|---|
+| `test_writes_one_trial_record_per_session` | 2 probes × N units | `TrialRecord_{session_id}.csv` 恰好 1 个 |
+| `test_writes_per_probe_unit_prop` | 2 probes | `UnitProp_{session_id}_imec0.csv` + `UnitProp_{session_id}_imec1.csv` 各 1 个 |
+| `test_writes_per_probe_trial_raster` | 2 probes | `TrialRaster_{session_id}_imec0.h5` + `TrialRaster_{session_id}_imec1.h5` 各 1 个 |
+| `test_skips_probe_with_zero_units_after_split` | imec1 有 0 unit | imec1 的 UnitProp/TrialRaster **不**写出，warning 记录；imec0 正常写 |
+| `test_session_id_falls_back_to_nwb_stem_when_attr_missing` | NWB 根 attr 无 session_id | 文件名用 `nwb_path.stem` |
+| `test_skips_raster_when_units_empty` | 整个 units 表为空 | TrialRecord 仍写；不调用 `spike_times_to_raster` |
+| `test_returns_out_dir` | — | 函数返回值 == `out_dir` |
+
 ### ExportStage Phase 2.5 集成（`tests/test_stages/test_export.py`）
 
 | 测试名 | 预期 |
 |---|---|
 | `test_phase2_writes_derivatives_dir` | 运行后 `output_dir/07_derivatives/` 存在，且旧 `07_export/` 不存在 |
-| `test_phase2_writes_three_files` | TrialRaster/UnitProp/TrialRecord 各 1 份 |
-| `test_phase2_filenames_use_session_id_canonical` | 文件名含 `canonical()` |
-| `test_phase2_disabled_skips` | `derivatives.enabled=False` → 目录不创建 |
+| `test_phase2_writes_per_probe_files` | 单 probe session：1 TrialRecord + 1 UnitProp_*_imec0 + 1 TrialRaster_*_imec0 |
+| `test_phase2_filenames_use_session_id_canonical` | 文件名含 `canonical()` 且 per-probe 文件含 probe_id 后缀 |
+| `test_phase2_disabled_skips` | `derivatives.enabled=False` → `export_phase2_derivatives` 不被调用 |
 | `test_phase2_auto_post_onset_calls_resolver` | `post_onset_ms="auto"` → `resolve_post_onset_ms` 被调用 |
 | `test_phase2_numeric_post_onset_bypasses_resolver` | `post_onset_ms=500` → resolver 不调用 |
-| `test_phase2_reads_nwb_post_write` | mock `pynwb.NWBHDF5IO` 被以 `"r"` 打开刚写的 NWB |
 | `test_phase2_runs_before_phase3` | Phase 2.5 在 `_export_phase3_background` 前完成（顺序断言） |
 
 **现有测试删除/修改**：
-- 现有 `_export_phase2` 相关测试（若存在 `export/trials.csv` / `units.csv` / `raster_*.h5` 断言）全部删除或改写
+- 旧 `_export_phase2` 相关测试中关于"单文件 TrialRaster_{session}.h5 / UnitProp_{session}.csv"的断言全部改写为 per-probe 文件名
 - `compute_probe_rasters` 相关 Group F 测试**保留**（功能独立，仍用于 NWB 嵌入 Raster 列）
 
 ---

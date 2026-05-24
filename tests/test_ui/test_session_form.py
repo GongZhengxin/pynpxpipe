@@ -118,3 +118,58 @@ class TestSessionFormNWBFields:
         assert form.detect_date_alert.visible is True
         assert "No *.ap.meta" in str(form.detect_date_alert.object)
         assert state.recording_date == ""
+
+
+class TestSessionFormApplyPaths:
+    """SessionForm.apply_paths() must populate path widgets after a session restore."""
+
+    def test_apply_paths_fills_advanced_inputs_and_state(self):
+        from pynpxpipe.ui.components.session_form import SessionForm
+
+        state = AppState()
+        form = SessionForm(state)
+        form.apply_paths(
+            session_dir="C:/data/monkey_g0",
+            bhv_file="C:/data/task.bhv2",
+            output_dir="C:/output/session1",
+        )
+
+        assert form.session_dir_input.value == "C:/data/monkey_g0"
+        assert form.bhv_file_input.value == "C:/data/task.bhv2"
+        assert form.output_dir_input.value == "C:/output/session1"
+        assert state.session_dir == Path("C:/data/monkey_g0")
+        assert state.bhv_file == Path("C:/data/task.bhv2")
+        assert state.output_dir == Path("C:/output/session1")
+
+    def test_apply_paths_switches_to_advanced_mode(self):
+        from pynpxpipe.ui.components.session_form import SessionForm
+
+        state = AppState()
+        form = SessionForm(state)
+        # Form starts in simple mode; advanced widgets are hidden.
+        assert form.session_dir_input.visible is False
+
+        form.apply_paths(
+            session_dir="C:/data/monkey_g0",
+            bhv_file="C:/data/task.bhv2",
+            output_dir="C:/output/session1",
+        )
+
+        # After apply, advanced inputs must be visible so user sees what was loaded.
+        assert form.advanced_toggle.value is True
+        assert form.session_dir_input.visible is True
+        assert form.bhv_file_input.visible is True
+
+    def test_apply_paths_tolerates_path_objects(self):
+        from pynpxpipe.ui.components.session_form import SessionForm
+
+        state = AppState()
+        form = SessionForm(state)
+        form.apply_paths(
+            session_dir=Path("C:/data/monkey_g0"),
+            bhv_file=Path("C:/data/task.bhv2"),
+            output_dir=Path("C:/output/session1"),
+        )
+
+        assert state.session_dir == Path("C:/data/monkey_g0")
+        assert state.output_dir == Path("C:/output/session1")

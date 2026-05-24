@@ -1,14 +1,15 @@
-"""Session-level derivative exports for Phase 2.5.
+"""Session-level + per-probe derivative exports for Phase 2.5.
 
-Three outputs land under ``{output_dir}/07_derivatives/``:
+Outputs under ``{output_dir}/07_derivatives/`` (multi-probe sessions emit
+``1 + 2 * N_probes`` files):
 
-- ``TrialRaster_{session_id}.h5`` — (n_units, n_trials, n_timebins) uint8 raster.
-- ``UnitProp_{session_id}.csv``   — reduced unit properties (ks_id, unit_location, unittype_string).
-- ``TrialRecord_{session_id}.csv``— full NWB trials table copy.
+- ``TrialRecord_{session_id}.csv`` — session-level trials projection (1 file).
+- ``UnitProp_{session_id}_{probe_id}.csv`` — per-probe unit properties.
+- ``TrialRaster_{session_id}_{probe_id}.h5`` — per-probe (n_units, n_trials,
+  n_timebins) uint8 raster.
 
-All inputs come from the NWB file that Phase 2 just wrote
-(``nwbfile.units.to_dataframe()`` / ``nwbfile.trials.to_dataframe()``), so
-the derivatives are always consistent with the canonical NWB.
+All inputs come from the NWB file that Phase 2 just wrote, so the derivatives
+are always consistent with the canonical NWB.
 """
 
 from __future__ import annotations
@@ -22,8 +23,12 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from pynpxpipe.core.logging import get_logger
+
 if TYPE_CHECKING:
     from pynpxpipe.io.bhv import BHV2Parser
+
+_log = get_logger(__name__)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -357,13 +362,22 @@ def export_trial_record(trials_df: pd.DataFrame, out_path: Path) -> Path:
     Returns:
         The ``out_path`` written.
     """
+    n = len(trials_df)
+
+    def _col_or_default(name: str, default):
+        # Optional NWB columns: stim_index/stim_name only exist when the
+        # upstream stim_map resolved successfully (see stages/export.py:227).
+        if name in trials_df.columns:
+            return trials_df[name].to_numpy()
+        return [default] * n
+
     out = pd.DataFrame(
         {
-            "id": list(range(len(trials_df))),
+            "id": list(range(n)),
             "start_time": trials_df["start_time"].to_numpy(),
             "stop_time": trials_df["stop_time"].to_numpy(),
-            "stim_index": trials_df["stim_index"].to_numpy(),
-            "stim_name": trials_df["stim_name"].to_numpy(),
+            "stim_index": _col_or_default("stim_index", -1),
+            "stim_name": _col_or_default("stim_name", ""),
             "fix_success": trials_df["trial_valid"].to_numpy(),
         }
     )
@@ -397,3 +411,160 @@ def resolve_post_onset_ms(bhv_parser: BHV2Parser) -> float:
     if not values:
         return 800.0
     return float(max(values))
+
+
+# ────────────────────────────────────────────────────────────────────────
+# split_units_by_probe
+# ────────────────────────────────────────────────────────────────────────
+
+
+def split_units_by_probe(units_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Split a NWB ``units.to_dataframe()`` into one sub-DataFrame per probe.
+
+    Column lookup order (mirrors the spec contract): ``probe_id`` first
+    (pynpxpipe's NWBWriter writes this column), then ``electrode_group_name``
+    as a fallback for externally-produced NWB files.
+
+    Args:
+        units_df: NWB units table as a DataFrame.
+
+    Returns:
+        Mapping ``{probe_id: sub_df}`` preserving the original row order
+        within each probe. Empty input returns an empty dict.
+
+    Raises:
+        RuntimeError: If neither ``probe_id`` nor ``electrode_group_name``
+            is present.
+    """
+    if "probe_id" in units_df.columns:
+        probe_col = "probe_id"
+    elif "electrode_group_name" in units_df.columns:
+        probe_col = "electrode_group_name"
+    else:
+        raise RuntimeError(
+            "Cannot split units by probe: neither 'probe_id' nor "
+            "'electrode_group_name' is present in the NWB units table."
+        )
+
+    if len(units_df) == 0:
+        return {}
+
+    out: dict[str, pd.DataFrame] = {}
+    for probe_id, sub in units_df.groupby(probe_col, sort=False):
+        out[str(probe_id)] = sub
+    return out
+
+
+# ────────────────────────────────────────────────────────────────────────
+# export_phase2_derivatives — multi-probe orchestrator
+# ────────────────────────────────────────────────────────────────────────
+
+
+def export_phase2_derivatives(
+    nwb_path: Path,
+    out_dir: Path,
+    *,
+    pre_onset_ms: float = 50.0,
+    post_onset_ms: float = 300.0,
+    bin_size_ms: float = 1.0,
+    n_jobs: int = 1,
+    verbose: bool = False,
+) -> Path:
+    """Read an existing NWB and write Phase 2.5 derivatives under ``out_dir``.
+
+    Emits one session-level ``TrialRecord_{session_id}.csv`` plus per-probe
+    ``UnitProp_{session_id}_{probe_id}.csv`` and
+    ``TrialRaster_{session_id}_{probe_id}.h5``. ``session_id`` is read from
+    the NWB root attribute and falls back to ``nwb_path.stem`` if missing.
+
+    Skip rules (logged as WARNING, not raised):
+
+    - Empty units table → only TrialRecord is written.
+    - One probe has zero units after split → that probe contributes neither
+      UnitProp nor TrialRaster.
+    - ``spike_times`` column missing → no raster file for any probe.
+
+    Args:
+        nwb_path: Existing NWB file to read trials/units from.
+        out_dir: Destination directory (created if missing).
+        pre_onset_ms: Raster pre-onset window (ms).
+        post_onset_ms: Raster post-onset window (ms). Must be a concrete
+            float; callers wanting "auto" must resolve it (e.g. via
+            ``resolve_post_onset_ms``) before invoking this function.
+        bin_size_ms: Raster bin width (ms).
+        n_jobs: joblib parallelism for ``spike_times_to_raster``.
+        verbose: tqdm progress bar in raster generation.
+
+    Returns:
+        ``out_dir`` (after files are written).
+
+    Raises:
+        FileNotFoundError: If ``nwb_path`` does not exist.
+        RuntimeError: From ``split_units_by_probe`` when units table lacks
+            both ``probe_id`` and ``electrode_group_name``.
+    """
+    import pynwb
+
+    nwb_path = Path(nwb_path)
+    out_dir = Path(out_dir)
+    if not nwb_path.exists():
+        raise FileNotFoundError(f"NWB file does not exist: {nwb_path}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with pynwb.NWBHDF5IO(str(nwb_path), "r") as io:
+        nwbfile = io.read()
+        trials_df = nwbfile.trials.to_dataframe() if nwbfile.trials is not None else pd.DataFrame()
+        units_df = nwbfile.units.to_dataframe() if nwbfile.units is not None else pd.DataFrame()
+        session_id = nwbfile.session_id or nwb_path.stem
+
+    # Session-level: TrialRecord (always, even if units empty).
+    export_trial_record(trials_df, out_dir / f"TrialRecord_{session_id}.csv")
+
+    if len(units_df) == 0:
+        _log.warning(
+            "Phase 2.5: NWB units table is empty; skipping per-probe outputs",
+            nwb_path=str(nwb_path),
+        )
+        return out_dir
+
+    has_spike_times = "spike_times" in units_df.columns
+    if not has_spike_times:
+        _log.warning(
+            "Phase 2.5: units table lacks 'spike_times' column; rasters will be skipped",
+            nwb_path=str(nwb_path),
+        )
+
+    by_probe = split_units_by_probe(units_df)
+    for probe_id, sub_units in by_probe.items():
+        if len(sub_units) == 0:
+            _log.warning(
+                "Phase 2.5: probe has zero units after split; skipping",
+                probe_id=probe_id,
+            )
+            continue
+        export_unit_prop(sub_units, out_dir / f"UnitProp_{session_id}_{probe_id}.csv")
+
+        if not has_spike_times or len(trials_df) == 0:
+            continue
+        raster = spike_times_to_raster(
+            sub_units,
+            trials_df,
+            pre_onset=pre_onset_ms,
+            post_onset=post_onset_ms,
+            bin_size=bin_size_ms,
+            n_jobs=n_jobs,
+            verbose=verbose,
+        )
+        save_raster_h5(
+            str(out_dir / f"TrialRaster_{session_id}_{probe_id}.h5"),
+            raster,
+            metadata={
+                "pre_onset_ms": pre_onset_ms,
+                "post_onset_ms": post_onset_ms,
+                "bin_size_ms": bin_size_ms,
+                "session_id": session_id,
+                "probe_id": probe_id,
+            },
+        )
+
+    return out_dir

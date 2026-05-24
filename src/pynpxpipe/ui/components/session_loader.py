@@ -11,12 +11,16 @@ SessionManager.load() and returns the session data as a dict.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import fields
 from pathlib import Path
 
 import panel as pn
 
+from pynpxpipe.core.session import SubjectConfig
 from pynpxpipe.ui.components.browsable_input import BrowsableInput
 from pynpxpipe.ui.state import AppState
+
+_SUBJECT_FIELDS = {f.name for f in fields(SubjectConfig)}
 
 
 class SessionLoader:
@@ -89,7 +93,25 @@ class SessionLoader:
         if "bhv_file" in session_data:
             self._state.bhv_file = session_data["bhv_file"]
         if "subject" in session_data:
-            self._state.subject_config = session_data["subject"]
+            raw_subject = session_data["subject"]
+            if isinstance(raw_subject, SubjectConfig):
+                self._state.subject_config = raw_subject
+            elif isinstance(raw_subject, dict):
+                # Filter to known dataclass fields so future schema additions
+                # in session.json don't crash older clients.
+                kwargs = {k: v for k, v in raw_subject.items() if k in _SUBJECT_FIELDS}
+                try:
+                    self._state.subject_config = SubjectConfig(**kwargs)
+                except TypeError as exc:
+                    self._state.subject_config = None
+                    self.message_pane.object = (
+                        f"Subject metadata in session.json is incomplete: {exc}"
+                    )
+                    return
+            else:
+                self._state.subject_config = None
+                self.message_pane.object = "Subject metadata in session.json has unexpected type."
+                return
 
         # SID S3: restore NWB filename fields (session_id + probe_plan).
         session_id = session_data.get("session_id")
@@ -103,6 +125,11 @@ class SessionLoader:
         if isinstance(probe_plan, dict):
             self._state.probe_plan = dict(probe_plan)
 
+        # Restore effective pipeline / sorting configs if previously dumped by
+        # PipelineRunner. Failure to read is non-fatal — older output dirs
+        # may predate the snapshotting feature.
+        self._restore_effective_configs(Path(output_dir))
+
         if missing_nwb_fields:
             self.message_pane.object = (
                 "Session loaded. Note: session.json lacks NWB filename metadata; "
@@ -113,6 +140,27 @@ class SessionLoader:
 
         if self._on_session_loaded:
             self._on_session_loaded()
+
+    def _restore_effective_configs(self, output_dir: Path) -> None:
+        """Reload used_pipeline.yaml / used_sorting.yaml into AppState if present.
+
+        Read failures are silently tolerated — older output dirs may predate
+        the snapshot feature, and a corrupt snapshot should not block the rest
+        of the resume flow.
+        """
+        import contextlib
+
+        from pynpxpipe.core.config import load_pipeline_config, load_sorting_config
+
+        pipeline_path = output_dir / "used_pipeline.yaml"
+        if pipeline_path.exists():
+            with contextlib.suppress(Exception):
+                self._state.pipeline_config = load_pipeline_config(pipeline_path)
+
+        sorting_path = output_dir / "used_sorting.yaml"
+        if sorting_path.exists():
+            with contextlib.suppress(Exception):
+                self._state.sorting_config = load_sorting_config(sorting_path)
 
     # ------------------------------------------------------------------
     # Default implementation (production wiring)

@@ -389,19 +389,57 @@ class ExportStage(BaseStage):
         existing["verify_policy"] = verify_policy
         cp_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
+    def rerun_phase2_only(self, nwb_path: Path | None = None) -> None:
+        """Re-run Phase 2.5 against an already-written NWB file.
+
+        Recovery path for runs whose Phase 2.5 failed (e.g. KeyError 'stim_name'
+        when the BHV2 dataset path was unresolvable). Reads ``trials`` and
+        ``units`` from the existing NWB and writes ``07_derivatives/`` without
+        touching Phase 1 / Phase 3.
+
+        Args:
+            nwb_path: Path to the NWB file. When ``None``, the path is read
+                from ``{output_dir}/checkpoints/export.json`` (the
+                ``nwb_path`` field written by a successful Phase 1).
+
+        Raises:
+            ExportError: If no ``nwb_path`` was supplied and the export
+                checkpoint cannot be located/parsed, or if the resolved path
+                does not exist on disk.
+        """
+        if nwb_path is None:
+            cp_path = self.session.output_dir / "checkpoints" / "export.json"
+            if not cp_path.exists():
+                raise ExportError(
+                    f"export checkpoint not found at {cp_path}; "
+                    "pass nwb_path explicitly or run the export stage first."
+                )
+            try:
+                cp = json.loads(cp_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ExportError(f"could not read export checkpoint: {exc}") from exc
+            cp_nwb = cp.get("nwb_path")
+            if not cp_nwb:
+                raise ExportError(f"export checkpoint at {cp_path} has no 'nwb_path' field")
+            nwb_path = Path(cp_nwb)
+
+        if not nwb_path.exists():
+            raise ExportError(f"NWB file does not exist: {nwb_path}")
+
+        self._export_phase2(nwb_path, pd.DataFrame())
+
     def _export_phase2(self, nwb_path_written: Path, behavior_events: pd.DataFrame) -> None:
-        """Phase 2.5: write session-level derivatives to ``07_derivatives/``.
+        """Phase 2.5: write per-probe derivatives + session TrialRecord.
 
-        Reads the just-written NWB (``units`` + ``trials``), computes a combined
-        spike raster, and writes three files under
-        ``{output_dir}/07_derivatives/``:
+        Resolves stage-specific concerns (``derivatives.enabled`` toggle,
+        ``post_onset_ms="auto"`` → BHV2 ``onset_time + offset_time`` fallback)
+        and delegates the rest to :func:`io.derivatives.export_phase2_derivatives`.
 
-        - ``TrialRaster_{session_id}.h5``  — (n_units, n_trials, n_timebins) uint8
-        - ``UnitProp_{session_id}.csv``    — reduced unit properties
-        - ``TrialRecord_{session_id}.csv`` — full NWB trials table
+        Output files (under ``{output_dir}/07_derivatives/``):
 
-        Controlled by ``session.config.export.derivatives``; when disabled the
-        directory is not created. Spec: ``docs/specs/derivatives.md`` §5.
+        - ``TrialRecord_{session_id}.csv``        — session-level (1 file)
+        - ``UnitProp_{session_id}_{probe_id}.csv``    — per-probe (N files)
+        - ``TrialRaster_{session_id}_{probe_id}.h5``  — per-probe (N files)
 
         Args:
             nwb_path_written: NWB path returned by Phase 1 ``writer.write()``.
@@ -409,11 +447,8 @@ class ExportStage(BaseStage):
         """
         from pynpxpipe.io.bhv import BHV2Parser
         from pynpxpipe.io.derivatives import (
-            export_trial_record,
-            export_unit_prop,
+            export_phase2_derivatives,
             resolve_post_onset_ms,
-            save_raster_h5,
-            spike_times_to_raster,
         )
 
         cfg = getattr(getattr(self.session, "config", None), "export", None)
@@ -427,17 +462,6 @@ class ExportStage(BaseStage):
         bin_size_ms = float(getattr(dcfg, "bin_size_ms", 1.0))
         n_jobs = int(getattr(dcfg, "n_jobs", 1))
 
-        session_id = self.session.session_id.canonical()
-        derivatives_dir = self.session.output_dir / "07_derivatives"
-        derivatives_dir.mkdir(parents=True, exist_ok=True)
-
-        with pynwb.NWBHDF5IO(str(nwb_path_written), "r") as io:
-            nwbfile = io.read()
-            trials_df = (
-                nwbfile.trials.to_dataframe() if nwbfile.trials is not None else pd.DataFrame()
-            )
-            units_df = nwbfile.units.to_dataframe() if nwbfile.units is not None else pd.DataFrame()
-
         if post_onset_raw == "auto":
             try:
                 post_onset_ms = resolve_post_onset_ms(BHV2Parser(self.session.bhv_file))
@@ -447,35 +471,14 @@ class ExportStage(BaseStage):
         else:
             post_onset_ms = float(post_onset_raw)
 
-        export_trial_record(trials_df, derivatives_dir / f"TrialRecord_{session_id}.csv")
-        export_unit_prop(units_df, derivatives_dir / f"UnitProp_{session_id}.csv")
-
-        if len(units_df) and len(trials_df) and "spike_times" in units_df.columns:
-            raster = spike_times_to_raster(
-                units_df,
-                trials_df,
-                pre_onset=pre_onset_ms,
-                post_onset=post_onset_ms,
-                bin_size=bin_size_ms,
-                n_jobs=n_jobs,
-            )
-            save_raster_h5(
-                str(derivatives_dir / f"TrialRaster_{session_id}.h5"),
-                raster,
-                metadata={
-                    "pre_onset_ms": pre_onset_ms,
-                    "post_onset_ms": post_onset_ms,
-                    "bin_size_ms": bin_size_ms,
-                    "session_id": session_id,
-                },
-            )
-        else:
-            self.logger.warning(
-                "Skipping TrialRaster export (units=%d, trials=%d, spike_times_col=%s)",
-                len(units_df),
-                len(trials_df),
-                "spike_times" in units_df.columns,
-            )
+        export_phase2_derivatives(
+            nwb_path_written,
+            self.session.output_dir / "07_derivatives",
+            pre_onset_ms=pre_onset_ms,
+            post_onset_ms=post_onset_ms,
+            bin_size_ms=bin_size_ms,
+            n_jobs=n_jobs,
+        )
 
     def _export_phase3_background(
         self,

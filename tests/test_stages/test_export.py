@@ -927,10 +927,15 @@ def _fake_trials_df(n: int = 3) -> pd.DataFrame:
     )
 
 
-def _fake_units_df(n: int = 2) -> pd.DataFrame:
-    """Synthetic units DataFrame (with spike_times) for Phase 2.5 tests."""
+def _fake_units_df(n: int = 2, probe_id: str = "imec0") -> pd.DataFrame:
+    """Synthetic units DataFrame (with spike_times + probe_id) for Phase 2.5 tests.
+
+    ``probe_id`` is required by ``split_units_by_probe`` — without it Phase 2.5
+    raises RuntimeError on the multi-probe split step.
+    """
     return pd.DataFrame(
         {
+            "probe_id": [probe_id] * n,
             "ks_id": list(range(n)),
             "unit_location": [np.array([0.0, 0.0, 0.0]) for _ in range(n)],
             "unittype_string": ["SUA"] * n,
@@ -939,16 +944,18 @@ def _fake_units_df(n: int = 2) -> pd.DataFrame:
     )
 
 
-def _patch_phase2_nwb(trials_df: pd.DataFrame, units_df: pd.DataFrame):
-    """Patch pynwb.NWBHDF5IO so Phase 2.5 sees the supplied DataFrames.
+def _patch_phase2_nwb(trials_df: pd.DataFrame, units_df: pd.DataFrame, session_id: str = "TEST"):
+    """Patch ``pynwb.NWBHDF5IO`` so Phase 2.5 (and Phase 1 verify) see the
+    supplied DataFrames. ``stages.export.pynwb`` and ``io.derivatives.pynwb``
+    both refer to the same global pynwb module, so a single global patch
+    covers them both.
 
-    Returns a ``unittest.mock._patch`` object whose context-manager mode
-    activates the patch. Use with ``with _patch_phase2_nwb(...)`` or
-    ``ExitStack``.
+    Returns the ``unittest.mock._patch`` object — use as a ``with`` context.
     """
     fake_nwb = MagicMock()
     fake_nwb.trials.to_dataframe.return_value = trials_df
     fake_nwb.units.to_dataframe.return_value = units_df
+    fake_nwb.session_id = session_id
 
     io_cm = MagicMock()
     io_cm.__enter__.return_value.read.return_value = fake_nwb
@@ -957,7 +964,7 @@ def _patch_phase2_nwb(trials_df: pd.DataFrame, units_df: pd.DataFrame):
     io_cm.close = MagicMock()
     io_cm.read = MagicMock(return_value=fake_nwb)
 
-    return patch("pynpxpipe.stages.export.pynwb.NWBHDF5IO", return_value=io_cm)
+    return patch("pynwb.NWBHDF5IO", return_value=io_cm)
 
 
 class TestPhase25Derivatives:
@@ -974,14 +981,15 @@ class TestPhase25Derivatives:
         trials_df = _fake_trials_df() if trials_df is None else trials_df
         units_df = _fake_units_df() if units_df is None else units_df
 
-        nwb_path = single_session.output_dir / f"{single_session.session_id.canonical()}.nwb"
+        sid = single_session.session_id.canonical()
+        nwb_path = single_session.output_dir / f"{sid}.nwb"
         nwb_path.parent.mkdir(parents=True, exist_ok=True)
         nwb_path.touch()
 
         stage = ExportStage(single_session)
         behavior_events = _make_behavior_events(single_session.output_dir)
         with (
-            _patch_phase2_nwb(trials_df, units_df),
+            _patch_phase2_nwb(trials_df, units_df, session_id=sid),
             patch("pynpxpipe.io.bhv.BHV2Parser"),
         ):
             stage._export_phase2(nwb_path, behavior_events)
@@ -997,14 +1005,17 @@ class TestPhase25Derivatives:
         self._call_phase2(single_session)
         assert not (single_session.output_dir / "07_export").exists()
 
-    def test_phase2_writes_three_files(self, single_session: Session) -> None:
-        """TrialRaster_*.h5 / UnitProp_*.csv / TrialRecord_*.csv all present."""
+    def test_phase2_writes_per_probe_files(self, single_session: Session) -> None:
+        """Single-probe session → 1 TrialRecord + 1 UnitProp_*_imec0 + 1 TrialRaster_*_imec0."""
         self._call_phase2(single_session)
         sid = single_session.session_id.canonical()
         d = single_session.output_dir / "07_derivatives"
-        assert (d / f"TrialRaster_{sid}.h5").is_file()
-        assert (d / f"UnitProp_{sid}.csv").is_file()
         assert (d / f"TrialRecord_{sid}.csv").is_file()
+        assert (d / f"UnitProp_{sid}_imec0.csv").is_file()
+        assert (d / f"TrialRaster_{sid}_imec0.h5").is_file()
+        # Old session-level layout must NOT be produced.
+        assert not (d / f"UnitProp_{sid}.csv").exists()
+        assert not (d / f"TrialRaster_{sid}.h5").exists()
 
     def test_phase2_disabled_skips(self, single_session: Session) -> None:
         """``export.derivatives.enabled=False`` → directory not created."""
@@ -1015,13 +1026,14 @@ class TestPhase25Derivatives:
     def test_phase2_auto_post_onset_calls_resolver(self, single_session: Session) -> None:
         """``post_onset_ms="auto"`` → ``resolve_post_onset_ms`` invoked."""
         single_session.config.export.derivatives.post_onset_ms = "auto"
-        nwb_path = single_session.output_dir / f"{single_session.session_id.canonical()}.nwb"
+        sid = single_session.session_id.canonical()
+        nwb_path = single_session.output_dir / f"{sid}.nwb"
         nwb_path.parent.mkdir(parents=True, exist_ok=True)
         nwb_path.touch()
         stage = ExportStage(single_session)
         behavior_events = _make_behavior_events(single_session.output_dir)
         with (
-            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df()),
+            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df(), session_id=sid),
             patch("pynpxpipe.io.bhv.BHV2Parser"),
             patch(
                 "pynpxpipe.io.derivatives.resolve_post_onset_ms",
@@ -1034,13 +1046,14 @@ class TestPhase25Derivatives:
     def test_phase2_numeric_post_onset_bypasses_resolver(self, single_session: Session) -> None:
         """Numeric ``post_onset_ms`` → resolver not invoked."""
         single_session.config.export.derivatives.post_onset_ms = 500.0
-        nwb_path = single_session.output_dir / f"{single_session.session_id.canonical()}.nwb"
+        sid = single_session.session_id.canonical()
+        nwb_path = single_session.output_dir / f"{sid}.nwb"
         nwb_path.parent.mkdir(parents=True, exist_ok=True)
         nwb_path.touch()
         stage = ExportStage(single_session)
         behavior_events = _make_behavior_events(single_session.output_dir)
         with (
-            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df()),
+            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df(), session_id=sid),
             patch("pynpxpipe.io.bhv.BHV2Parser"),
             patch("pynpxpipe.io.derivatives.resolve_post_onset_ms") as mock_resolver,
         ):
@@ -1049,13 +1062,14 @@ class TestPhase25Derivatives:
 
     def test_phase2_reads_nwb_post_write(self, single_session: Session) -> None:
         """Phase 2.5 opens the written NWB in ``"r"`` mode."""
-        nwb_path = single_session.output_dir / f"{single_session.session_id.canonical()}.nwb"
+        sid = single_session.session_id.canonical()
+        nwb_path = single_session.output_dir / f"{sid}.nwb"
         nwb_path.parent.mkdir(parents=True, exist_ok=True)
         nwb_path.touch()
         stage = ExportStage(single_session)
         behavior_events = _make_behavior_events(single_session.output_dir)
         with (
-            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df()) as patched_io,
+            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df(), session_id=sid) as patched_io,
             patch("pynpxpipe.io.bhv.BHV2Parser"),
         ):
             stage._export_phase2(nwb_path, behavior_events)
@@ -1065,15 +1079,79 @@ class TestPhase25Derivatives:
             len(c.args) >= 2 and c.args[0] == str(nwb_path) and c.args[1] == "r" for c in calls
         )
 
-    def test_phase2_integrated_in_run(self, single_session: Session) -> None:
+    def test_phase2_integrated_in_run(self, single_session: Session, tmp_path: Path) -> None:
         """Full ``run()`` produces ``07_derivatives/`` (end-to-end wiring)."""
-        mock_writer = _make_mock_writer()
+        sid = single_session.session_id.canonical()
+        # mock_writer.write() must return a path that actually exists on disk,
+        # because export_phase2_derivatives (called by Phase 2.5) checks
+        # nwb_path.exists() before opening.
+        nwb_path = single_session.output_dir / f"{sid}.nwb"
+        nwb_path.parent.mkdir(parents=True, exist_ok=True)
+        nwb_path.touch()
+        mock_writer = _make_mock_writer(nwb_path)
         with (
             patch("pynpxpipe.stages.export.NWBWriter", return_value=mock_writer),
             patch("pynpxpipe.stages.export.si"),
             patch("pynpxpipe.stages.export.gc"),
-            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df()),
+            _patch_phase2_nwb(_fake_trials_df(), _fake_units_df(), session_id=sid),
             patch("pynpxpipe.io.bhv.BHV2Parser"),
         ):
             ExportStage(single_session).run()
         assert (single_session.output_dir / "07_derivatives").is_dir()
+
+
+class TestRerunPhase2Only:
+    """``ExportStage.rerun_phase2_only`` — recovery path for runs whose Phase 2.5
+    failed (e.g. KeyError 'stim_name'). Lets the user regenerate
+    ``07_derivatives/`` without redoing the 30+ hour Phase 3 raw-data append."""
+
+    def test_uses_explicit_nwb_path(self, single_session: Session) -> None:
+        nwb_path = single_session.output_dir / f"{single_session.session_id.canonical()}.nwb"
+        nwb_path.parent.mkdir(parents=True, exist_ok=True)
+        nwb_path.touch()
+        stage = ExportStage(single_session)
+
+        with patch.object(stage, "_export_phase2") as mock_p2:
+            stage.rerun_phase2_only(nwb_path)
+
+        mock_p2.assert_called_once()
+        called_path, called_events = mock_p2.call_args.args
+        assert called_path == nwb_path
+        # behavior_events is reserved/unused by _export_phase2; we pass an empty df.
+        assert isinstance(called_events, pd.DataFrame)
+
+    def test_resolves_nwb_path_from_export_checkpoint(self, single_session: Session) -> None:
+        """When nwb_path=None, read it from checkpoints/export.json."""
+        nwb_path = single_session.output_dir / f"{single_session.session_id.canonical()}.nwb"
+        nwb_path.parent.mkdir(parents=True, exist_ok=True)
+        nwb_path.touch()
+        cp_dir = single_session.output_dir / "checkpoints"
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        (cp_dir / "export.json").write_text(
+            json.dumps(
+                {
+                    "stage": "export",
+                    "status": "completed",
+                    "nwb_path": str(nwb_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        stage = ExportStage(single_session)
+        with patch.object(stage, "_export_phase2") as mock_p2:
+            stage.rerun_phase2_only()
+
+        called_path, _ = mock_p2.call_args.args
+        assert called_path == nwb_path
+
+    def test_raises_when_no_explicit_path_and_no_checkpoint(self, single_session: Session) -> None:
+        stage = ExportStage(single_session)
+        with pytest.raises(ExportError, match="export checkpoint"):
+            stage.rerun_phase2_only()
+
+    def test_raises_when_nwb_file_missing(self, single_session: Session) -> None:
+        bogus = single_session.output_dir / "does_not_exist.nwb"
+        stage = ExportStage(single_session)
+        with pytest.raises(ExportError, match="NWB"):
+            stage.rerun_phase2_only(bogus)

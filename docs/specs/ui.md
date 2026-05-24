@@ -36,6 +36,7 @@ src/pynpxpipe/ui/
         log_viewer.py      # 实时日志面板
         status_view.py     # 已有 session 状态查看 + Reset
         session_loader.py  # Session 恢复（从 output_dir 加载）
+        rerun_derivatives.py  # Phase 2.5 单独重跑面板（A8 新增）
 ```
 
 ---
@@ -519,6 +520,77 @@ sort          ░░░░░░░░░░░░░░░░░░░░   0% 
 
 若 `session_id` 或 `probe_plan` 在旧的 `session.json` 中缺失（兼容 A6 之前的数据），保留 `state` 当前值并在 `message_pane` 追加 `"Loaded session lacks NWB filename metadata; please fill before running."`。
 
+### 3.12 rerun_derivatives.py — Phase 2.5 重跑面板（A8 新增）
+
+**位置**：`Review` 标签的最底部，紧跟 `figs_viewer.panel()`。
+
+**职责**：对一个**已经 load 的** `output_dir`，单独重跑 Phase 2.5 derivatives，不重做 Phase 1（NWB 写）和 Phase 3（raw data + verify）。典型用途：上一轮 Phase 2.5 因 `KeyError 'stim_name'` 之类失败，但 NWB 已写完且 Phase 3 verify 通过 — 用户加载 output_dir 后一键补齐 `07_derivatives/`。
+
+**Widgets**（自上而下）：
+
+| Widget | 类型 | 说明 |
+|---|---|---|
+| 标题 | `pn.pane.Markdown` | `## Re-run Phase 2.5 Derivatives` |
+| 说明 | `pn.pane.Str` | 一行文字说明用途与前置条件 |
+| `output_dir` 显示 | `pn.pane.Str` | 从 `state.output_dir` 实时反映；空时显示提示 |
+| 按钮 | `pn.widgets.Button` | name `"Rerun derivatives"`，`button_type="primary"`，`state.output_dir is None` 时 `disabled=True` |
+| 状态行 | `pn.pane.Alert` | `alert_type` 在 `"info"`/`"success"`/`"danger"` 之间切换，`visible=False` 初始隐藏 |
+
+**输入**：
+
+| 来源 | 字段 | 默认 |
+|------|------|------|
+| `state.output_dir` | 必需 | 空 → 按钮 disabled |
+| `state.pipeline_config.export.derivatives` | 可选 | 缺失走默认 `DerivativesConfig()` |
+
+**注入接口**（用于测试）：
+
+```python
+RunFn = Callable[[Path, DerivativesConfig], Path]
+
+class RerunDerivatives:
+    def __init__(
+        self,
+        state: AppState,
+        *,
+        run_fn: RunFn | None = None,
+    ) -> None: ...
+
+    def panel(self) -> pn.viewable.Viewable: ...
+```
+
+`run_fn(output_dir, derivatives_cfg) -> Path`：执行重跑，返回 `07_derivatives/` 目录路径。生产实现：
+
+```python
+def _default_run_fn(output_dir: Path, derivatives_cfg: DerivativesConfig) -> Path:
+    session = SessionManager.load(output_dir)
+    used_pipeline = output_dir / "used_pipeline.yaml"
+    pipeline_cfg = load_pipeline_config(used_pipeline if used_pipeline.exists() else None)
+    # Override only the derivatives sub-config so widget-edited values flow through.
+    pipeline_cfg.export.derivatives = derivatives_cfg
+    session.config = pipeline_cfg
+    ExportStage(session).rerun_phase2_only()
+    return output_dir / "07_derivatives"
+```
+
+**执行模型**：
+
+- 点击按钮 → 后台 daemon thread（与 `RunPanel` 一致），thread 内调 `run_fn`
+- 进行中按钮 disabled，alert `info "Rerunning Phase 2.5 derivatives…"`
+- 完成 → alert `success "Wrote derivatives to {path}"`，按钮重新 enable
+- 异常 → alert `danger "{exc.__class__.__name__}: {exc}"`，按钮重新 enable
+
+**Validation**（点击触发，单元测试可同步覆盖）：
+
+| 条件 | 行为 |
+|------|------|
+| `state.output_dir` 为 None / 空字符串 | 按钮 disabled；不会触发 click |
+| `Path(state.output_dir).exists()` 为 False | alert `danger "Output directory not found: ..."`，不调用 run_fn |
+| run_fn 抛 `ExportError` | alert `danger`，不抛出到 UI 主线程 |
+| run_fn 抛任何其他异常 | alert `danger` + `str(exc)`，不抛出 |
+
+**state 监听**：`state.param.watch(self._on_output_dir_change, "output_dir")` —— SessionLoader 设置 `state.output_dir` 后按钮自动从 disabled 切回 enabled。
+
 ---
 
 ## 4. 线程模型
@@ -624,6 +696,20 @@ pynpxpipe-ui = "pynpxpipe.ui.app:main"
 | `test_load_session_restores_recording_date` | `session.json` 中 `session_id.date` 读出后写入 `state.recording_date` |
 | `test_load_session_restores_probe_plan` | `session.json` 中 `probe_plan` 读出后以 dict copy 写入 `state.probe_plan` |
 
+**`tests/test_ui/test_rerun_derivatives.py`** (A8)
+
+| 测试名 | 覆盖点 |
+|--------|--------|
+| `test_creates_panel_layout` | `panel()` 返回 `pn.viewable.Viewable` |
+| `test_button_disabled_when_output_dir_missing` | `state.output_dir is None` 时按钮 `disabled=True` |
+| `test_button_enables_after_output_dir_set` | 设置 `state.output_dir` → 按钮 `disabled=False`（state watch 生效） |
+| `test_click_calls_run_fn_with_output_dir` | 注入同步 `run_fn`，点击后被以 `(Path(state.output_dir), DerivativesConfig)` 调用 |
+| `test_click_uses_pipeline_config_derivatives_when_present` | `state.pipeline_config.export.derivatives.bin_size_ms=2.5` → run_fn 收到的 cfg `bin_size_ms == 2.5` |
+| `test_click_falls_back_to_default_derivatives_when_pipeline_config_none` | `state.pipeline_config is None` → run_fn 收到默认 `DerivativesConfig()` |
+| `test_run_fn_exception_shows_danger_alert` | run_fn 抛 `ExportError("nwb missing")` → alert `alert_type=="danger"` 且文本含 `"nwb missing"` |
+| `test_successful_run_shows_success_alert` | run_fn 返回 path → alert `alert_type=="success"` 且文本含 `"07_derivatives"` |
+| `test_click_when_output_dir_does_not_exist_shows_danger` | `state.output_dir` 指向不存在路径 → alert `danger`，run_fn 不被调用 |
+
 ---
 
 ## 8. 实施阶段对应关系
@@ -636,3 +722,4 @@ pynpxpipe-ui = "pynpxpipe.ui.app:main"
 | **A4** | 1 | Status 查看 + Reset + Session 恢复 | status_view.py, session_loader.py |
 | **A5** | 1 | 布局整合 + 错误处理 + 入口命令 + 测试 | app.py 完善, tests/test_ui/ |
 | **A6** | 1 | NWB filename 规整整合：AppState 新增 `experiment` / `recording_date` / `probe_plan` + `session_id` 派生属性；SessionForm 新增 experiment 输入 + Detect Date 按钮 + recording_date 输入；新建 `components/probe_region_editor.py` 并挂在左列 SubjectForm 与 StageSelector 之间；RunPanel 增加预执行校验与 `SessionManager.create(..., experiment=, probe_plan=, date=)` 调用；SessionLoader 回填三个新字段；补齐 §7 测试矩阵 | state.py, components/session_form.py, components/probe_region_editor.py, components/run_panel.py, components/session_loader.py, app.py, tests/test_ui/test_state.py, tests/test_ui/test_session_form.py, tests/test_ui/test_app.py, tests/test_ui/test_session_loader.py |
+| **A8** | 1 | UI 暴露 Phase 2.5 单独重跑入口：新建 `components/rerun_derivatives.py`（按钮 + 后台 thread + alert）挂到 Review 标签底部；连线注入 `_default_run_fn`（`SessionManager.load` + `load_pipeline_config(used_pipeline.yaml)` + `ExportStage.rerun_phase2_only`） | components/rerun_derivatives.py, app.py, tests/test_ui/test_rerun_derivatives.py |

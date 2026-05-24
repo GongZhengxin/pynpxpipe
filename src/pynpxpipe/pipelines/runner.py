@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from pynpxpipe.core.checkpoint import CheckpointManager
+from pynpxpipe.core.config import save_pipeline_config, save_sorting_config
 from pynpxpipe.core.resources import ResourceDetector
 from pynpxpipe.pipelines.constants import PER_PROBE_STAGES, STAGE_ORDER
 
@@ -92,6 +93,13 @@ class PipelineRunner:
             pipeline_config.parallel.max_workers,
             sorting_config.sorter.params.batch_size,
         )
+
+        # Persist effective configs for audit + UI resume reload.
+        try:
+            save_pipeline_config(pipeline_config, session.output_dir / "used_pipeline.yaml")
+            save_sorting_config(sorting_config, session.output_dir / "used_sorting.yaml")
+        except OSError as exc:
+            _log.warning("Failed to write effective config snapshots: %s", exc)
 
     def run(self, stages: list[str] | None = None) -> None:
         """Run the pipeline, optionally restricted to a subset of stages.

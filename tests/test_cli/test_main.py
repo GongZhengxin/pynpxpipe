@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from pynpxpipe.cli.main import cli
-from pynpxpipe.core.errors import DiscoverError
+from pynpxpipe.core.errors import DiscoverError, ExportError
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -635,9 +635,7 @@ def _make_verify_fixture(
     if with_verified_at:
         cp["raw_data_verified_at"] = "2026-04-17T10:00:00+00:00"
         cp["verify_policy"] = "full"
-    (output_dir / "checkpoints" / "export.json").write_text(
-        json.dumps(cp), encoding="utf-8"
-    )
+    (output_dir / "checkpoints" / "export.json").write_text(json.dumps(cp), encoding="utf-8")
 
     return output_dir, nwb_path
 
@@ -703,3 +701,79 @@ class TestVerifySafeToDeleteCommand:
 
         assert result.exit_code == EXIT_NO_RAW_FILES_FOUND
         assert "no raw" in result.output.lower() or "empty" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Group F — rerun-derivatives command (Phase 2.5 recovery path)
+# ---------------------------------------------------------------------------
+
+
+class TestRerunDerivativesCommand:
+    """``pynpxpipe rerun-derivatives <output_dir>`` re-runs Phase 2.5 against
+    an existing NWB file. Used to recover after a Phase 2.5 failure (e.g.
+    KeyError 'stim_name') without redoing Phase 1 / Phase 3."""
+
+    def test_calls_rerun_phase2_only(self, tmp_path: Path) -> None:
+        output_dir, _ = _make_verify_fixture(tmp_path)
+        # Stand up a minimal used_pipeline.yaml so the CLI can restore PipelineConfig.
+        # Absence of the file is also legal — defaults are used.
+
+        with (
+            patch("pynpxpipe.cli.main.SessionManager") as mock_sm,
+            patch("pynpxpipe.cli.main.ExportStage") as mock_stage_cls,
+        ):
+            mock_session = MagicMock()
+            mock_sm.load.return_value = mock_session
+            mock_stage = MagicMock()
+            mock_stage_cls.return_value = mock_stage
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["rerun-derivatives", str(output_dir)])
+
+        assert result.exit_code == 0, result.output
+        mock_sm.load.assert_called_once()
+        mock_stage_cls.assert_called_once_with(mock_session)
+        mock_stage.rerun_phase2_only.assert_called_once()
+
+    def test_loads_used_pipeline_yaml_when_present(self, tmp_path: Path) -> None:
+        """When output_dir/used_pipeline.yaml exists, it is loaded into session.config."""
+        output_dir, _ = _make_verify_fixture(tmp_path)
+        from pynpxpipe.core.config import load_pipeline_config, save_pipeline_config
+
+        cfg = load_pipeline_config(None)
+        cfg.export.derivatives.bin_size_ms = 5.0  # non-default sentinel
+        save_pipeline_config(cfg, output_dir / "used_pipeline.yaml")
+
+        with (
+            patch("pynpxpipe.cli.main.SessionManager") as mock_sm,
+            patch("pynpxpipe.cli.main.ExportStage") as mock_stage_cls,
+        ):
+            mock_session = MagicMock()
+            mock_sm.load.return_value = mock_session
+            mock_stage_cls.return_value = MagicMock()
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["rerun-derivatives", str(output_dir)])
+
+        assert result.exit_code == 0, result.output
+        # Restored config must be on the session before ExportStage is built.
+        assert mock_session.config.export.derivatives.bin_size_ms == 5.0
+
+    def test_propagates_export_error_as_exit_one(self, tmp_path: Path) -> None:
+        """ExportError from rerun_phase2_only → exit 1, message printed."""
+        output_dir, _ = _make_verify_fixture(tmp_path)
+
+        with (
+            patch("pynpxpipe.cli.main.SessionManager") as mock_sm,
+            patch("pynpxpipe.cli.main.ExportStage") as mock_stage_cls,
+        ):
+            mock_sm.load.return_value = MagicMock()
+            mock_stage = MagicMock()
+            mock_stage.rerun_phase2_only.side_effect = ExportError("NWB file does not exist: x.nwb")
+            mock_stage_cls.return_value = mock_stage
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["rerun-derivatives", str(output_dir)])
+
+        assert result.exit_code == 1
+        assert "NWB" in result.output

@@ -407,6 +407,41 @@ def test_subject_form_image_vault_paths_empty_stays_empty():
     assert state.subject_config.image_vault_paths == []
 
 
+def test_subject_form_apply_subject_fills_widgets():
+    """apply_subject(cfg) must populate every widget value from a SubjectConfig dataclass."""
+    from pathlib import Path as _Path
+
+    from pynpxpipe.core.session import SubjectConfig
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    state = AppState()
+    form = SubjectForm(state)
+    vault = [_Path("/data/stim_a"), _Path("/data/stim_b")]
+    cfg = SubjectConfig(
+        subject_id="Restored",
+        description="from session.json",
+        species="Macaca mulatta",
+        sex="F",
+        age="P5Y",
+        weight="11.4kg",
+        image_vault_paths=list(vault),
+    )
+    form.apply_subject(cfg)
+
+    assert form.subject_id_input.value == "Restored"
+    assert form.description_input.value == "from session.json"
+    assert form.species_input.value == "Macaca mulatta"
+    assert form.sex_select.value == "F"
+    assert form.age_input.value == "P5Y"
+    assert form.weight_input.value == "11.4kg"
+    # Path str() formatting is platform-dependent (backslash on Windows); compare via Path.
+    rendered = [_Path(line) for line in form.image_vault_paths_input.value.splitlines()]
+    assert rendered == vault
+    # Widget watchers must rebuild state.subject_config from the new widget values
+    assert state.subject_config is not None
+    assert state.subject_config.subject_id == "Restored"
+
+
 def test_subject_form_image_vault_paths_save_round_trip(tmp_path: Path):
     """Vault paths survive a save → load round trip through YAML."""
     from pynpxpipe.ui.components.subject_form import SubjectForm
@@ -1583,3 +1618,222 @@ def test_sorting_form_default_roundtrip():
         f"SortingForm default state drift: diff fields: "
         f"{[k for k in expected if expected[k] != actual.get(k)]}"
     )
+
+
+def test_pipeline_form_apply_pipeline_round_trips_via_state():
+    """apply_pipeline(cfg) populates widgets so state.pipeline_config matches cfg
+    on every field the form actually controls."""
+    from pynpxpipe.core.config import (
+        BadChannelConfig,
+        BandpassConfig,
+        BombcellConfig,
+        CommonReferenceConfig,
+        CurationConfig,
+        DerivativesConfig,
+        ExportConfig,
+        EyeValidationConfig,
+        MergeConfig,
+        MotionCorrectionConfig,
+        ParallelConfig,
+        PipelineConfig,
+        PostprocessConfig,
+        PreprocessConfig,
+        ResourcesConfig,
+        SyncConfig,
+    )
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+    cfg = PipelineConfig(
+        resources=ResourcesConfig(n_jobs=8, chunk_duration="3s", max_memory="16G"),
+        parallel=ParallelConfig(enabled=True, max_workers=2),
+        preprocess=PreprocessConfig(
+            bandpass=BandpassConfig(freq_min=250.0, freq_max=8000.0),
+            bad_channel_detection=BadChannelConfig(
+                method="coherence+psd", dead_channel_threshold=0.4
+            ),
+            common_reference=CommonReferenceConfig(reference="local", operator="mean"),
+            motion_correction=MotionCorrectionConfig(method=None, preset="rigid_fast"),
+        ),
+        curation=CurationConfig(
+            isi_violation_ratio_max=1.5,
+            amplitude_cutoff_max=0.4,
+            presence_ratio_min=0.6,
+            snr_min=0.5,
+            good_isi_max=0.08,
+            good_snr_min=4.0,
+            use_bombcell=True,
+            bombcell=BombcellConfig(
+                amplitude_median_min=25.0,
+                num_spikes_min=80,
+                presence_ratio_min=0.3,
+                snr_min=4.0,
+                amplitude_cutoff_max=0.15,
+                rp_contamination_max=0.08,
+                drift_ptp_max=120.0,
+                label_non_somatic=False,
+                split_non_somatic_good_mua=True,
+            ),
+        ),
+        sync=SyncConfig(
+            imec_sync_bit=6,
+            nidq_sync_bit=1,
+            event_bits=[1, 2, 3, 4],
+            max_time_error_ms=12.0,
+            trial_count_tolerance=3,
+            photodiode_channel_index=2,
+            monitor_delay_ms=-3.0,
+            stim_onset_code=64,
+            generate_plots=False,
+            gap_threshold_ms=900.0,
+            trial_start_bit=4,
+            stim_onset_bit=5,
+            stim_count_tolerance=1,
+            pd_window_pre_ms=8.0,
+            pd_window_post_ms=80.0,
+            pd_hignline_skip_ms=40.0,
+            pd_hignline_width_ms=15.0,
+            pd_min_signal_variance=2e-6,
+        ),
+        postprocess=PostprocessConfig(
+            slay_pre_s=0.04,
+            slay_post_s=0.25,
+            pre_onset_ms=40.0,
+            eye_validation=EyeValidationConfig(enabled=False, eye_threshold=0.95),
+        ),
+        merge=MergeConfig(enabled=True),
+        export=ExportConfig(
+            derivatives=DerivativesConfig(
+                enabled=False,
+                pre_onset_ms=60.0,
+                post_onset_ms=400.0,
+                bin_size_ms=2.0,
+                n_jobs=2,
+            ),
+        ),
+    )
+
+    form.apply_pipeline(cfg)
+    actual = state.pipeline_config
+
+    # Resources / Parallel
+    assert actual.resources.n_jobs == 8
+    assert actual.resources.chunk_duration == "3s"
+    assert actual.resources.max_memory == "16G"
+    assert actual.parallel.enabled is True
+    assert actual.parallel.max_workers == 2
+    # Preprocess
+    assert actual.preprocess.bandpass.freq_min == 250.0
+    assert actual.preprocess.bandpass.freq_max == 8000.0
+    assert actual.preprocess.bad_channel_detection.dead_channel_threshold == 0.4
+    assert actual.preprocess.common_reference.reference == "local"
+    assert actual.preprocess.common_reference.operator == "mean"
+    # Motion off → method=None per the form's checkbox semantics
+    assert actual.preprocess.motion_correction.method is None
+    assert actual.preprocess.motion_correction.preset == "rigid_fast"
+    # Curation / Bombcell
+    assert actual.curation.use_bombcell is True
+    assert actual.curation.isi_violation_ratio_max == 1.5
+    assert actual.curation.bombcell.amplitude_median_min == 25.0
+    assert actual.curation.bombcell.split_non_somatic_good_mua is True
+    # Sync
+    assert actual.sync.imec_sync_bit == 6
+    assert actual.sync.nidq_sync_bit == 1
+    assert actual.sync.event_bits == [1, 2, 3, 4]
+    assert actual.sync.gap_threshold_ms == 900.0
+    assert actual.sync.trial_start_bit == 4
+    assert actual.sync.stim_onset_bit == 5
+    assert actual.sync.pd_min_signal_variance == 2e-6
+    # Postprocess / Eye validation
+    assert actual.postprocess.slay_pre_s == 0.04
+    assert actual.postprocess.eye_validation.enabled is False
+    # Merge / Export
+    assert actual.merge.enabled is True
+    assert actual.export.derivatives.enabled is False
+    assert actual.export.derivatives.post_onset_ms == 400.0
+
+
+def test_pipeline_form_apply_pipeline_keeps_post_onset_auto():
+    """post_onset_ms='auto' must survive apply (TextInput sentinel)."""
+    from pynpxpipe.core.config import PipelineConfig
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+    cfg = PipelineConfig()  # default post_onset_ms='auto'
+
+    form.apply_pipeline(cfg)
+
+    assert form.derivatives_post_onset_ms_input.value == "auto"
+    assert state.pipeline_config.export.derivatives.post_onset_ms == "auto"
+
+
+def test_sorting_form_apply_sorting_round_trips_via_state():
+    """apply_sorting(cfg) populates widgets so state.sorting_config matches cfg field-by-field."""
+    import dataclasses
+
+    from pynpxpipe.core.config import (
+        AnalyzerConfig,
+        ImportConfig,
+        RandomSpikesConfig,
+        SorterConfig,
+        SorterParams,
+        SortingConfig,
+        WaveformConfig,
+    )
+    from pynpxpipe.ui.components.sorting_form import SortingForm
+
+    state = AppState()
+    form = SortingForm(state)
+    cfg = SortingConfig(
+        mode="local",
+        sorter=SorterConfig(
+            name="kilosort4",
+            params=SorterParams(
+                nblocks=5,
+                Th_learned=8.0,
+                Th_universal=9.0,
+                do_CAR=False,
+                batch_size=30000,
+                n_jobs=2,
+                torch_device="cuda",
+            ),
+        ),
+        import_cfg=ImportConfig(format="kilosort4", paths={}),
+        analyzer=AnalyzerConfig(
+            random_spikes=RandomSpikesConfig(max_spikes_per_unit=1000, method="uniform"),
+            waveforms=WaveformConfig(ms_before=1.5, ms_after=2.5),
+            template_operators=["average", "std"],
+            unit_locations_method="monopolar_triangulation",
+            template_similarity_method="cosine_similarity",
+        ),
+    )
+
+    form.apply_sorting(cfg)
+
+    # The sorter / analyzer fields the form actually controls must round-trip.
+    actual = state.sorting_config
+    assert actual.mode == cfg.mode
+    assert actual.sorter.params.nblocks == 5
+    assert actual.sorter.params.Th_learned == 8.0
+    assert actual.sorter.params.do_CAR is False
+    assert actual.sorter.params.batch_size == 30000
+    assert actual.sorter.params.n_jobs == 2
+    assert actual.sorter.params.torch_device == "cuda"
+    assert dataclasses.asdict(actual.analyzer) == dataclasses.asdict(cfg.analyzer)
+
+
+def test_sorting_form_apply_sorting_handles_auto_batch_size():
+    """apply_sorting must keep batch_size='auto' visible in the TextInput widget."""
+    from pynpxpipe.core.config import SortingConfig
+    from pynpxpipe.ui.components.sorting_form import SortingForm
+
+    state = AppState()
+    form = SortingForm(state)
+    cfg = SortingConfig()  # defaults batch_size='auto'
+
+    form.apply_sorting(cfg)
+
+    assert form.batch_size_input.value == "auto"
+    assert state.sorting_config.sorter.params.batch_size == "auto"
