@@ -298,6 +298,17 @@ class TestTargetAreaPreflight:
             ExportStage(single_session).run()
         MockWriter.assert_not_called()
 
+    def test_empty_target_area_writes_failed_checkpoint(self, single_session: Session) -> None:
+        single_session.probes[0].target_area = ""
+
+        with pytest.raises(ExportError, match="target_area"):
+            ExportStage(single_session).run()
+
+        cp = single_session.output_dir / "checkpoints" / "export.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
 
 # ---------------------------------------------------------------------------
 # Group D — Error handling

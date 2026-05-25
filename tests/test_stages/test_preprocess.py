@@ -504,6 +504,19 @@ class TestErrorHandling:
             with pytest.raises(PreprocessError):
                 PreprocessStage(session, config).run()
 
+    def test_no_probes_writes_failed_stage_checkpoint(self, single_session: Session) -> None:
+        """No probes preflight failure writes preprocess.json status=failed."""
+        single_session.probes = []
+        config = _make_config()
+
+        with pytest.raises(PreprocessError, match="No probes"):
+            PreprocessStage(single_session, config).run()
+
+        cp = single_session.output_dir / "checkpoints" / "preprocess.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
 
 # ---------------------------------------------------------------------------
 # Group D — Config params

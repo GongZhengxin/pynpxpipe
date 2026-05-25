@@ -1,10 +1,10 @@
 """tools/install_sort_stack.py — one-shot installer for torch + kilosort.
 
 pynpxpipe deliberately keeps **torch** and **kilosort** OUT of
-``pyproject.toml`` so that ``uv sync`` never reverts a CUDA build to the
+``pyproject.toml`` so that ``uv sync --inexact`` never reverts a CUDA build to the
 pypi CPU wheel. Run this script once after cloning / after your first
-``uv sync`` to install a CUDA-matched torch and kilosort. Subsequent
-``uv sync`` calls will not touch either package.
+``uv sync --inexact`` to install a CUDA-matched torch and kilosort. Subsequent
+``uv sync --inexact`` calls will not touch either package.
 
 Usage
 -----
@@ -38,7 +38,7 @@ try:
 except ImportError:
     sys.stderr.write(
         "pyyaml is required to read tools/cuda_matrix.yaml. "
-        "Run `uv sync` first so that the core deps (incl. pyyaml) are installed.\n"
+        "Run `uv sync --inexact` first so that the core deps (incl. pyyaml) are installed.\n"
     )
     sys.exit(2)
 
@@ -413,10 +413,7 @@ def main() -> int:
     if tag == "cpu":
         print(f"  - uv pip install torch{reinstall_suffix}    (from pypi; CPU wheel)")
     else:
-        print(
-            f"  - uv pip install torch --index-url {WHEEL_BASE_URL}/{tag}"
-            f"{reinstall_suffix}"
-        )
+        print(f"  - uv pip install torch --index-url {WHEEL_BASE_URL}/{tag}{reinstall_suffix}")
     if not args.skip_kilosort:
         for pkg in matrix.get("companion_packages", []):
             flag = " --no-deps" if pkg.get("no_deps") else ""

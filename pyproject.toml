@@ -77,12 +77,12 @@ chat = [
 ]
 sort = [
     # torch + kilosort are intentionally NOT listed here. They are installed
-    # out-of-band by `tools/install_sort_stack.py` so that `uv sync` cannot
+    # out-of-band by `tools/install_sort_stack.py` so that `uv sync --inexact` cannot
     # revert a CUDA build back to the pypi CPU wheel. Each user picks the
     # CUDA wheel matching their own GPU/driver and it stays put across
     # updates. See getting_started.md for the one-line install command.
     #
-    # This extra is kept as a documentation marker: `uv sync --extra sort`
+    # This extra is kept as a documentation marker: `uv sync --inexact --extra sort`
     # is still a valid (if no-op) command, and preserves the historical
     # shape of the optional-dependencies table.
 ]

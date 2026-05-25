@@ -2,7 +2,7 @@
 
 pynpxpipe deliberately does NOT declare ``torch`` or ``kilosort`` in
 ``pyproject.toml``. They are installed by ``tools/install_sort_stack.py``
-once and then left alone by ``uv sync``. See that script for the why.
+once and then left alone by ``uv sync --inexact``. See that script for the why.
 
 This module provides the stage-side runtime check: given the user's
 configured ``torch_device`` and the detected GPU state, decide what to do.

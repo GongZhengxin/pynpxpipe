@@ -11,6 +11,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -593,10 +594,8 @@ class NWBWriter:
                 self.session.output_dir / "06_postprocessed" / probe.probe_id / "slay_scores.json"
             )
             if slay_path.exists():
-                try:
+                with suppress(Exception):
                     slay_scores_data = json.loads(slay_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
 
         unit_ids = list(analyzer.sorting.get_unit_ids())
 
@@ -1241,10 +1240,9 @@ class NWBWriter:
             raise RuntimeError("call create_file() before add_ks4_sorting()")
 
         sorter_output_path = Path(sorter_output_path)
-        try:
-            from pynwb.ecephys import ElectricalSeries
-            from pynwb.misc import Units
-
+        # KS4 metadata is optional; export should not fail if these sidecar
+        # files are absent or malformed.
+        with suppress(Exception):
             amplitudes_path = sorter_output_path / "amplitudes.npy"
             templates_path = sorter_output_path / "spike_templates.npy"
 
@@ -1279,9 +1277,6 @@ class NWBWriter:
                     description=f"KS4 spike template assignments for {probe_id}",
                 )
             )
-        except Exception:
-            # KS4 metadata is optional — do not fail the export
-            pass
 
     def append_raw_data(
         self,

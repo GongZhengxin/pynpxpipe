@@ -29,9 +29,9 @@
 | `config.sorting.sorter.name` | `str` | `"kilosort4"` | SpikeInterface sorter 名称 |
 | `config.sorting.sorter.params` | `dict` | `{}` | 传递给 `si.run_sorter` 的参数字典 |
 | `config.sorting.sorter.params.batch_size` | `int \| str` | `"auto"` | Kilosort batch_size；`"auto"` 由 ResourceDetector 在 runner 层解析 |
-| `config.sorting.import_cfg.format` | `str` | `"kilosort"` | 导入格式：`"kilosort"` 或 `"phy"` |
+| `config.sorting.import_cfg.format` | `str` | `"kilosort4"` | 导入格式：`"kilosort4"` 或 `"phy"` |
 | `config.sorting.import_cfg.paths` | `dict[str, str]` | `{}` | probe_id → 外部 sorting 路径映射 |
-| `config.pipeline.n_jobs` | `int` | `1` | SpikeInterface 内部并行数（sort 建议保持 1） |
+| `config.sorting.sorter.params.n_jobs` | `int` | `1` | sorter 内部并行数（GPU sort 建议保持 1） |
 
 ---
 
@@ -52,7 +52,7 @@
   "mode": "local",
   "sorter_name": "kilosort4",
   "n_units": 142,
-  "output_path": "/output/sorted/imec0"
+  "output_path": "/output/02_sorted/imec0"
 }
 ```
 
@@ -103,7 +103,7 @@
 1. 检查 per-probe checkpoint；若已完成 → return
 2. 验证 `import_path` 存在；不存在 → raise `SortError("Import path not found: {import_path}")`
 3. **加载外部结果**：
-   - `"kilosort"` 格式：`sorting = si.read_sorter_folder(import_path)` 或 `si.read_kilosort(import_path)`
+   - `"kilosort4"` 格式：`sorting = si.read_sorter_folder(import_path)` 或 `si.read_kilosort(import_path)`
    - `"phy"` 格式：`sorting = si.read_phy(import_path)`
 4. **验证结果**：`n_units = len(sorting.get_unit_ids())`；若 `n_units == 0` → WARNING
 5. **保存 sorting**：同 local 模式
@@ -187,7 +187,7 @@ class SortStage(BaseStage):
 | `mode` | `config.sorting.mode` | `"local"` | `"local"` 或 `"import"` |
 | `sorter_name` | `config.sorting.sorter.name` | `"kilosort4"` | SpikeInterface sorter ID |
 | `sorter_params` | `config.sorting.sorter.params` | `{}` | 传递给 run_sorter 的参数（含 batch_size） |
-| `import_format` | `config.sorting.import_cfg.format` | `"kilosort"` | 导入格式 |
+| `import_format` | `config.sorting.import_cfg.format` | `"kilosort4"` | 导入格式 |
 | `import_paths` | `config.sorting.import_cfg.paths` | `{}` | probe_id → 外部路径映射 |
 
 **KS4 参数设计约束（运动校正互斥）**：
@@ -209,7 +209,7 @@ class SortStage(BaseStage):
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
 | `test_local_mode_calls_run_sorter` | mode="local" | `si.run_sorter` 以 sorter_name 调用 |
-| `test_local_mode_saves_sorting` | mode="local"，sorting 返回有效 | `sorting.save` 调用路径含 `sorted/imec0` |
+| `test_local_mode_saves_sorting` | mode="local"，sorting 返回有效 | `sorting.save` 调用路径含 `02_sorted/imec0` |
 | `test_local_mode_writes_probe_checkpoint` | 成功 | `checkpoints/sort_imec0.json` status=completed |
 | `test_local_zero_units_logs_warning_not_error` | `sorting.get_unit_ids()` 返回空 | 不 raise，记录 WARNING |
 | `test_sorter_params_passed_to_run_sorter` | `sorter_params={"nblocks": 5}` | `si.run_sorter` 被调以 `nblocks=5` |

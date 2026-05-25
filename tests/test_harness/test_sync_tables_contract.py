@@ -124,9 +124,7 @@ class TestSyncTablesContract:
         writer = NWBWriter(session, out_path)
         writer.create_file()
         writer.add_trials(events)
-        summary = writer.add_sync_tables(
-            writer._nwbfile, sync_dir, behavior_events=events
-        )
+        summary = writer.add_sync_tables(writer._nwbfile, sync_dir, behavior_events=events)
         assert summary["idempotent_skipped"] is False
         writer.write()
 

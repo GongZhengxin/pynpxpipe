@@ -593,9 +593,7 @@ def _stim_df(stim_index: list[int]) -> pd.DataFrame:
             "trial_id": list(range(n)),
             "onset_nidq_s": [float(i) for i in range(n)],
             "stim_onset_nidq_s": [float(i) + 0.1 for i in range(n)],
-            "stim_onset_imec_s": [
-                _json.dumps({"imec0": float(i) + 0.11}) for i in range(n)
-            ],
+            "stim_onset_imec_s": [_json.dumps({"imec0": float(i) + 0.11}) for i in range(n)],
             "condition_id": [1] * n,
             "trial_valid": [True] * n,
             "stim_index": list(stim_index),
@@ -1207,9 +1205,7 @@ class TestPhase3ProgressCallback:
 
         writer = NWBWriter(session, nwb_path)
         with patch("pynpxpipe.io.nwb_writer.SpikeGLXLoader.load_ap", return_value=rec):
-            writer.append_raw_data(
-                session, nwb_path, time_range=(0.0, 0.1), progress_callback=cb
-            )
+            writer.append_raw_data(session, nwb_path, time_range=(0.0, 0.1), progress_callback=cb)
 
         assert len(calls) > 0, "progress_callback was never invoked"
 
@@ -1565,9 +1561,7 @@ def _make_writer_with_nwbfile(session: Session, tmp_path: Path) -> NWBWriter:
 class TestAddSyncTables:
     """Tests for NWBWriter.add_sync_tables (E1.3)."""
 
-    def test_add_sync_tables_single_probe_present(
-        self, tmp_path: Path, session: Session
-    ) -> None:
+    def test_add_sync_tables_single_probe_present(self, tmp_path: Path, session: Session) -> None:
         """A single imec0_imec_nidq.json in sync_dir shows up verbatim in scratch."""
         import json as _json
 
@@ -1612,9 +1606,7 @@ class TestAddSyncTables:
         assert set(blob["imec_nidq"].keys()) == {"imec0", "imec1"}
         assert blob["imec_nidq"]["imec1"]["b"] == pytest.approx(0.5)
 
-    def test_add_sync_tables_photodiode_from_events(
-        self, tmp_path: Path, session: Session
-    ) -> None:
+    def test_add_sync_tables_photodiode_from_events(self, tmp_path: Path, session: Session) -> None:
         """behavior_events with pd + ec columns produces a populated photodiode list."""
         import json as _json
 
@@ -1648,9 +1640,7 @@ class TestAddSyncTables:
         assert pd_rows[0]["trial_index"] == 0
         assert pd_rows[1]["trial_index"] == 1
 
-    def test_add_sync_tables_missing_files_marked(
-        self, tmp_path: Path, session: Session
-    ) -> None:
+    def test_add_sync_tables_missing_files_marked(self, tmp_path: Path, session: Session) -> None:
         """Empty sync_dir + None events → all three keys carry _missing sentinel."""
         import json as _json
 
@@ -1659,9 +1649,7 @@ class TestAddSyncTables:
 
         writer = _make_writer_with_nwbfile(session, tmp_path)
         # No exception — graceful fallback per the locked spec.
-        summary = writer.add_sync_tables(
-            writer._nwbfile, sync_dir, behavior_events=None
-        )
+        summary = writer.add_sync_tables(writer._nwbfile, sync_dir, behavior_events=None)
 
         assert summary["idempotent_skipped"] is False
         assert summary["n_probes"] == 0
@@ -1709,9 +1697,11 @@ class TestAppendRecordingStreamErrors:
         rec = _make_recording_without_gain(n_samples=3000, n_channels=4)
 
         writer = NWBWriter(session, nwb_path)
-        with patch("pynpxpipe.io.nwb_writer.SpikeGLXLoader.load_ap", return_value=rec):
-            with pytest.raises(ExportError):
-                writer.append_raw_data(session, nwb_path, time_range=(0.0, 0.1))
+        with (
+            patch("pynpxpipe.io.nwb_writer.SpikeGLXLoader.load_ap", return_value=rec),
+            pytest.raises(ExportError),
+        ):
+            writer.append_raw_data(session, nwb_path, time_range=(0.0, 0.1))
 
     def test_append_error_message_identifies_probe_and_stream(self, tmp_path, session):
         """Error message must embed probe_id ('imec0'), stream ('AP'), and 'gain_to_uV'."""
@@ -1723,9 +1713,11 @@ class TestAppendRecordingStreamErrors:
         rec = _make_recording_without_gain(n_samples=3000, n_channels=4)
 
         writer = NWBWriter(session, nwb_path)
-        with patch("pynpxpipe.io.nwb_writer.SpikeGLXLoader.load_ap", return_value=rec):
-            with pytest.raises(ExportError) as excinfo:
-                writer.append_raw_data(session, nwb_path, time_range=(0.0, 0.1))
+        with (
+            patch("pynpxpipe.io.nwb_writer.SpikeGLXLoader.load_ap", return_value=rec),
+            pytest.raises(ExportError) as excinfo,
+        ):
+            writer.append_raw_data(session, nwb_path, time_range=(0.0, 0.1))
 
         msg = str(excinfo.value)
         assert "imec0" in msg, msg

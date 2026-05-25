@@ -107,8 +107,8 @@
 ### `_curate_probe(probe_id) -> tuple[int, int]`
 
 1. **检查 per-probe checkpoint**：`_is_complete(probe_id=probe_id)` → 若已完成则 return `(0, 0)`（或从 checkpoint 读出已记录的值）
-2. **加载 sorting**：从 `{output_dir}/02_02_sorted/{probe_id}/` 加载，`si.load(sorted_path)`
-3. **加载预处理录制**（用于计算 noise levels）：从 `{output_dir}/01_01_preprocessed/{probe_id}/` lazy 加载
+2. **加载 sorting**：从 `{output_dir}/02_sorted/{probe_id}/` 加载，`si.load(sorted_path)`
+3. **加载预处理录制**（用于计算 noise levels）：从 `{output_dir}/01_preprocessed/{probe_id}.zarr` lazy 加载
 4. **创建 in-memory SortingAnalyzer**：
    ```python
    analyzer = si.create_sorting_analyzer(
@@ -142,7 +142,7 @@
    analyzer.compute("quality_metrics", metric_names=metric_names)
    ```
 6. **获取质量指标**：`qm = analyzer.get_extension("quality_metrics").get_data()`（返回 DataFrame）
-7. **保存 quality_metrics.csv**：`qm.to_csv(output_dir / "curated" / probe_id / "quality_metrics.csv")`，`mkdir(parents=True, exist_ok=True)`
+7. **保存 quality_metrics.csv**：`qm.to_csv(output_dir / "05_curated" / probe_id / "quality_metrics.csv")`，`mkdir(parents=True, exist_ok=True)`
 8. **记录过滤前数量**：`n_before = len(sorting.get_unit_ids())`
 9. **四级分类 SUA / MUA / NON-SOMA / NOISE**：
 
@@ -192,7 +192,7 @@
    curated_sorting.set_property("unittype_string", [unittype_map[uid] for uid in keep_ids])
    ```
 10. **检查结果**：`n_after = len(keep_ids)`；若 `n_after == 0` → 记录 WARNING（继续）
-11. **保存过滤后 sorting**：`curated_sorting.save(folder=output_dir / "curated" / probe_id, overwrite=True)`
+11. **保存过滤后 sorting**：`curated_sorting.save(folder=output_dir / "05_curated" / probe_id, overwrite=True)`
 12. **写 per-probe checkpoint**：含 n_before、n_after、thresholds
 13. **绘图**：
     - `pynpxpipe.plots.curate.emit_all(...)`：3 张自制 QM 分布 / 分类饼图 / 波形图到 `05_curated/{probe_id}/figures/`（现有逻辑不变）。
@@ -293,8 +293,8 @@ class CurateStage(BaseStage):
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
 | `test_run_curates_all_probes` | 2 probes，各 10 units | `_curate_probe` 对每个 probe 调用一次 |
-| `test_quality_metrics_csv_written` | 正常 | `curated/imec0/quality_metrics.csv` 存在 |
-| `test_curated_sorting_saved` | 正常 | `curated/imec0/` 目录存在（binary_folder） |
+| `test_quality_metrics_csv_written` | 正常 | `05_curated/imec0/quality_metrics.csv` 存在 |
+| `test_curated_sorting_saved` | 正常 | `05_curated/imec0/` 目录存在（binary_folder） |
 | `test_probe_checkpoint_written` | 正常 | `checkpoints/curate_imec0.json` status=completed |
 | `test_curate_returns_unit_counts` | 10 units，5 pass filter | `_curate_probe` 返回 `(10, 5)` |
 | `test_stage_checkpoint_written` | 所有 probe 完成 | `checkpoints/curate.json` status=completed |

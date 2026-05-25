@@ -1,7 +1,7 @@
 """Preprocess-stage diagnostic plots in Nature journal style.
 
 Emits up to three PNG figures per probe into
-``{output_dir}/01_01_preprocessed/{probe_id}/figures/``:
+``{output_dir}/01_preprocessed/{probe_id}/figures/``:
 
 1. ``bad_channels.png``             — bad vs good channels on probe layout.
 2. ``traces_cmr_beforeafter.png``   — raw vs post-CMR traces, 8 channels.

@@ -545,6 +545,52 @@ class TestOomRetry:
 # ---------------------------------------------------------------------------
 
 
+class TestPostprocessErrorHandling:
+    def test_oom_retry_failure_writes_failed_probe_checkpoint(
+        self, single_session: Session
+    ) -> None:
+        """Unrecovered waveform OOM writes postprocess_imec0.json status=failed."""
+        unit_ids = ["u0"]
+        mock_analyzer = _make_mock_analyzer(unit_ids)
+
+        def compute_side_effect(ext_name, **kwargs):
+            if ext_name == "waveforms":
+                raise MemoryError("OOM")
+
+        mock_analyzer.compute.side_effect = compute_side_effect
+
+        with (
+            patch("pynpxpipe.stages.postprocess.si.load", side_effect=_mock_si_load(unit_ids)),
+            patch(
+                "pynpxpipe.stages.postprocess.si.create_sorting_analyzer",
+                return_value=mock_analyzer,
+            ),
+            patch("pynpxpipe.stages.postprocess.gc"),
+            pytest.raises(PostprocessError),
+        ):
+            PostprocessStage(single_session).run()
+
+        cp = single_session.output_dir / "checkpoints" / "postprocess_imec0.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
+    def test_missing_behavior_events_writes_failed_stage_checkpoint(
+        self, single_session: Session
+    ) -> None:
+        """Missing behavior_events.parquet writes postprocess.json status=failed."""
+        behavior_events = single_session.output_dir / "04_sync" / "behavior_events.parquet"
+        behavior_events.unlink()
+
+        with pytest.raises(PostprocessError, match="behavior_events"):
+            PostprocessStage(single_session).run()
+
+        cp = single_session.output_dir / "checkpoints" / "postprocess.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
+
 class TestCheckpointSkip:
     def test_skips_postprocessed_probe(self, session: Session) -> None:
         """imec0 per-probe checkpoint complete → si.load not called for imec0."""
