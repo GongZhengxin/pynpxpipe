@@ -327,10 +327,7 @@ class SpikeGLXLoader:
         # Sync/digital channel is always the last saved channel:
         # - AP with load_sync_channel=True: sync appended as last channel
         # - NIDQ: digital word follows analog channels (acqMnMaXaDw order)
-        if raw.ndim > 1:
-            digital_word = raw[:, -1].astype(np.uint16)
-        else:
-            digital_word = raw.astype(np.uint16)
+        digital_word = raw[:, -1].astype(np.uint16) if raw.ndim > 1 else raw.astype(np.uint16)
         digital = (digital_word >> sync_bit) & 1
         diff = np.diff(digital.astype(np.int8))
         rising_indices = np.where(diff == 1)[0] + 1

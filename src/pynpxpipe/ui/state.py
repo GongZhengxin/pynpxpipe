@@ -105,11 +105,7 @@ class ProgressBridge:
 
     def _update(self, message: str, fraction: float) -> None:
         # message format: "stage_name:Human readable text"
-        if ":" in message:
-            stage_name, display_msg = message.split(":", 1)
-        else:
-            stage_name = message
-            display_msg = message
+        stage_name = message.split(":", 1)[0] if ":" in message else message
 
         self._state.current_stage = stage_name
         self._state.stage_progress = fraction

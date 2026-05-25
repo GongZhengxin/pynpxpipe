@@ -264,6 +264,10 @@ class SynchronizeStage(BaseStage):
         except SyncError as exc:
             self._write_failed_checkpoint(exc)
             raise
+        except Exception as exc:
+            err = SyncError(f"Synchronize failed: {exc}")
+            self._write_failed_checkpoint(err)
+            raise err from exc
 
     def _align_probe_to_nidq(
         self,

@@ -601,6 +601,23 @@ class TestErrorHandling:
         data = json.loads(cp.read_text(encoding="utf-8"))
         assert data["status"] == "failed"
 
+    def test_unexpected_probe_error_wrapped_as_curate_error(self, single_session: Session) -> None:
+        """Unexpected probe failures are normalized to CurateError."""
+        with (
+            patch.object(
+                CurateStage,
+                "_curate_probe",
+                side_effect=RuntimeError("quality metric failed"),
+            ),
+            pytest.raises(CurateError, match="Failed to curate imec0"),
+        ):
+            CurateStage(single_session).run()
+
+        cp = single_session.output_dir / "checkpoints" / "curate_imec0.json"
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+        assert "Failed to curate imec0" in data["error"]
+
 
 # ---------------------------------------------------------------------------
 # Group F — CSV content

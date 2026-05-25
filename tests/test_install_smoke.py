@@ -13,8 +13,8 @@ These tests are the forcing function that protects against that drift.
 
 **Current contract** (post GPU redesign, 2026-04): ``torch`` and ``kilosort``
 are deliberately NOT listed in ``pyproject.toml`` — they are installed
-out-of-band by ``tools/install_sort_stack.py`` so that ``uv sync`` cannot
-revert a CUDA build to the pypi CPU wheel. That means these real-import
+out-of-band by ``tools/install_sort_stack.py`` so that ``uv sync --inexact``
+leaves the selected CUDA build alone. That means these real-import
 tests fail when a fresh clone has not yet run the installer. Fix it with::
 
     uv run python tools/install_sort_stack.py
@@ -95,7 +95,7 @@ def test_torch_and_kilosort_not_in_pyproject() -> None:
     core_deps = " ".join(data["project"].get("dependencies", []))
     assert "torch" not in core_deps, (
         "torch must NOT be in [project.dependencies]; it belongs in "
-        "tools/install_sort_stack.py so uv sync won't revert CUDA builds"
+        "tools/install_sort_stack.py so uv sync --inexact won't revert CUDA builds"
     )
     assert "kilosort" not in core_deps, "kilosort must NOT be in [project.dependencies]"
 

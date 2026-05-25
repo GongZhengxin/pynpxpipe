@@ -21,7 +21,7 @@ import spikeinterface.sorters as ss
 from pynpxpipe.core.checkpoint import CheckpointManager
 from pynpxpipe.core.config import load_pipeline_config, load_sorting_config, load_subject_config
 from pynpxpipe.core.session import SessionManager
-from pynpxpipe.pipelines.runner import PipelineRunner, STAGE_ORDER
+from pynpxpipe.pipelines.runner import STAGE_ORDER, PipelineRunner
 
 # ── Constants ────────────────────────────────────────────────────────
 DATA_DIR = Path(r"F:\#Datasets\demo_rawdata")
@@ -136,7 +136,7 @@ def main() -> None:
             probe_plan={"imec0": "V4"},
             date="240101",
         )
-        print(f"  Created new session")
+        print("  Created new session")
 
     # 3. Build runner
     runner = PipelineRunner(session, pipeline_cfg, sorting_cfg, progress_callback=print_progress)
@@ -176,7 +176,7 @@ def main() -> None:
             print(f"\n  Stopping pipeline at failed stage: {stage_name}")
             sys.exit(1)
 
-    print(f"\n  All requested stages completed successfully.")
+    print("\n  All requested stages completed successfully.")
     print_status(runner)
 
 

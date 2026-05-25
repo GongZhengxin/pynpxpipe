@@ -431,6 +431,19 @@ class TestErrorHandling:
         with pytest.raises(SortError, match="Unknown mode"):
             SortStage(single_session, sorting_cfg).run()
 
+    def test_unknown_mode_writes_failed_stage_checkpoint(self, single_session: Session) -> None:
+        """Unknown mode preflight failure writes sort.json status=failed."""
+        sorting_cfg = _make_sorting_config(mode="local")
+        sorting_cfg.mode = "invalid"
+
+        with pytest.raises(SortError, match="Unknown mode"):
+            SortStage(single_session, sorting_cfg).run()
+
+        cp = single_session.output_dir / "checkpoints" / "sort.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
 
 # ---------------------------------------------------------------------------
 # Group F — GC release

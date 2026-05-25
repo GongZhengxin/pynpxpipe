@@ -93,7 +93,7 @@ M1 遗留项（不阻塞 M2）：集成验证待做。`sync_plots` 已由 M2 Pha
 | SID S3 contract harness | `TestUIContract` 扩展 | ✅ | 4 new end-to-end 契约测试（累计 27 tests <3s）：AppState.session_id=canonical / 任一字段空→None / SessionLoader 恢复 NWB 字段 / RunPanel 缺字段阻止执行 |
 | SID S3 UI polish | 删 probe 的 Bokeh warning + target_area 宽度 + merge 默认对齐 | ✅ | `ProbeRegionEditor` 改增量 add/remove 避免 "reference already known"；area 输入框定宽 140px；`StageSelector` merge 默认 `value=False` 对齐 `MergeConfig.enabled=False`，勾 merge 但参数关时给警告（+2 tests） |
 | Plots S1 | Nature 风格 `plots/` 子包 + 5 stage 接入 + figs_viewer 分组 | ✅ | `plots/{style,sync,curate,postprocess,preprocess}.py` 覆盖 MATLAB 诊断图 #1-#13 + 单元波形/location/raster/PSTH + 坏道/CMR traces/motion；`figs_viewer` 按 stage 折叠显示；所有 stage 绘图失败仅 warning 不阻塞 checkpoint（+54 tests，1425 passed，2026-04-18） |
-| Output dirs S1 | 按 pipeline 生成顺序给输出目录加数字前缀 | ✅ | `preprocessed→01_preprocessed / sorted→02_sorted / sorter_output→02_sorter_output_KS4 / merged→03_merged / sync→04_sync / curated→05_curated / postprocessed→06_postprocessed / export→07_export`；同步更新 stages/io/harness/validators/ui/tests + docs/specs；不保留旧路径 fallback（全回归 1425 passed，2026-04-18） |
+| Output dirs S1 | 按 pipeline 生成顺序给输出目录加数字前缀 | ✅ | `preprocessed→01_preprocessed / sorted→02_sorted / sorter_output→02_sorter_output_KS4 / merged→03_merged / sync→04_sync / curated→05_curated / postprocessed→06_postprocessed / derivatives→07_derivatives`；同步更新 stages/io/harness/validators/ui/tests + docs/specs；不保留旧路径 fallback（全回归 1425 passed，2026-04-18） |
 
 #### 修复与改进（M2 期间）
 

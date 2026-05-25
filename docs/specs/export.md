@@ -42,10 +42,10 @@
 
 | 文件/目录 | 路径 | 说明 |
 |---|---|---|
-| SortingAnalyzer（每个 probe） | `{output_dir}/06_06_postprocessed/{probe_id}/` | 含 waveforms/templates/unit_locations 扩展 |
-| SLAY 分数 | `{output_dir}/06_06_postprocessed/{probe_id}/slay_scores.json` | 由 postprocess stage 写出，含 slay_score + is_visual |
+| SortingAnalyzer（每个 probe） | `{output_dir}/06_postprocessed/{probe_id}/` | 含 waveforms/templates/unit_locations 扩展 |
+| SLAY 分数 | `{output_dir}/06_postprocessed/{probe_id}/slay_scores.json` | 由 postprocess stage 写出，含 slay_score + is_visual |
 | behavior_events.parquet | `{output_dir}/04_sync/behavior_events.parquet` | 含 trial 事件表（完整列） |
-| KS4 sorter_output（每个 probe） | `{output_dir}/02_02_sorted/{probe_id}/sorter_output/` | spike_templates.npy, amplitudes.npy, params.py |
+| KS4 sorter_output（每个 probe） | `{output_dir}/02_sorted/{probe_id}/sorter_output/` | spike_templates.npy, amplitudes.npy, params.py |
 | BHV2 文件 | `session.bhv_file` | 眼动数据（via BHV2Parser） |
 | 原始 AP/LF/NIDQ .bin | `session.probes[*].ap_bin` 等 | Phase 3 原始数据压缩写入 |
 
@@ -56,9 +56,9 @@
 | 输出 | 路径 | 说明 |
 |---|---|---|
 | NWB 文件 | `{output_dir}/{session.session_id.canonical()}.nwb` | DANDI 兼容 NWB 2.x；文件名按 SessionID 规范（`{date}_{subject}_{experiment}_{region}`）生成，与磁盘上的 `session_dir.name` 解耦 |
-| raster HDF5（每个 probe） | `{output_dir}/07_export/raster_{probe_id}.h5` | spike raster 矩阵 |
-| trial CSV | `{output_dir}/07_export/trials.csv` | trial 表导出 |
-| unit CSV | `{output_dir}/07_export/units.csv` | unit 表导出 |
+| TrialRecord CSV | `{output_dir}/07_derivatives/TrialRecord_{session_id}.csv` | session 级 trial 表导出 |
+| UnitProp CSV（每个 probe） | `{output_dir}/07_derivatives/UnitProp_{session_id}_{probe_id}.csv` | per-probe unit 属性导出 |
+| TrialRaster HDF5（每个 probe） | `{output_dir}/07_derivatives/TrialRaster_{session_id}_{probe_id}.h5` | per-probe spike raster 矩阵 |
 | stage checkpoint | `{output_dir}/checkpoints/export.json` | 含文件路径和统计数量 |
 
 ### stage checkpoint payload
@@ -96,7 +96,7 @@
 4. 计算输出 NWB 路径：`nwb_path = _get_output_path()`（基于 `session.session_id.canonical()`）
 5. **初始化 NWBWriter**：`writer = NWBWriter(session, nwb_path)`
 6. **创建 NWBFile**：`writer.create_file()`（读取 ap.meta 的 fileCreateTime，验证 subject 字段）
-7. **读取 behavior_events**：`pd.read_parquet(output_dir / "sync" / "behavior_events.parquet")`
+7. **读取 behavior_events**：`pd.read_parquet(output_dir / "04_sync" / "behavior_events.parquet")`
 8. **逐 probe 写入 units + electrodes + KS4**（串行，含内存释放）：
    ```
    for probe in session.probes:
@@ -112,22 +112,21 @@
 11. **写出 NWB 文件**：`nwb_path_written = writer.write()`
 12. **验证文件可读**：`pynwb.NWBHDF5IO(nwb_path_written, "r")` 打开再关闭；若失败 → raise `ExportError`
 
-#### Phase 2：分析数据导出（秒级）
+#### Phase 2.5：分析数据导出（秒级）
 
-13. **导出 raster HDF5**：对每个 probe，将 raster 矩阵写入 `{output_dir}/07_export/raster_{probe_id}.h5`
-14. **导出 CSV**：从 NWB 或 intermediate 数据导出 `trials.csv` 和 `units.csv`
-15. **写 Phase 1+2 checkpoint**：`_write_checkpoint({nwb_path, n_probes, n_units_total, n_trials, phase: "analysis_ready"})`
-16. `_report_progress("Analysis data ready", 0.8)`
+13. **导出 derivatives**：读取刚写好的 NWB，写出 `07_derivatives/TrialRecord_{session_id}.csv`、`UnitProp_{session_id}_{probe_id}.csv`、`TrialRaster_{session_id}_{probe_id}.h5`
+14. **写 Phase 1+2.5 checkpoint**：`_write_checkpoint({nwb_path, n_probes, n_units_total, n_trials, phase: "analysis_ready"})`
+15. `_report_progress("Analysis data ready", 0.8)`
 
-← 用户已可开始分析（raster.h5 + CSV 已就绪）
+← 用户已可开始分析（`07_derivatives/` 已就绪）
 
 #### Phase 3：原始数据压缩写入 + 全文件 bit-exact 校验（分钟级）
 
-17. **调用 `writer.append_raw_data(session, nwb_path, verify_policy="full", progress_callback=...)`**
+16. **调用 `writer.append_raw_data(session, nwb_path, verify_policy="full", progress_callback=...)`**
     - 流式 append AP+LF+NIDQ 到 NWB (`r+` 模式)，Blosc zstd clevel=6
     - 每写一个 chunk 调用 `progress_callback(message, fraction)`
     - 内部再调 `verify_nwb(nwb_path, progress_callback=...)` 逐 chunk bit-exact 扫描
-18. **进度分段**（fraction 映射到 Phase 3 全段 0.7-1.0，前段 0-0.7 是 Phase 1+2.5）：
+17. **进度分段**（fraction 映射到 Phase 3 全段 0.7-1.0，前段 0-0.7 是 Phase 1+2.5）：
     - AP 写入：`append_ap_{probe_id}`（按 probe 均分）
     - LF 写入：`append_lf_{probe_id}`
     - NIDQ 写入：`append_nidq`

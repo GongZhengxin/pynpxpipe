@@ -97,7 +97,7 @@ def emit_all(
     if plt is None:
         raise RuntimeError(
             "matplotlib is required for pynpxpipe.plots.sync.emit_all — "
-            "install the [plots] extra (e.g. `uv sync --extra plots`)."
+            "install the [plots] extra (e.g. `uv sync --inexact --extra plots`)."
         )
 
     output_dir = Path(output_dir)

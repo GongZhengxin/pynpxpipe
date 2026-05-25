@@ -75,7 +75,9 @@ class SortStage(BaseStage):
         """
         mode = self.sorting_config.mode
         if mode not in ("local", "import"):
-            raise SortError(f"Unknown mode: {mode}")
+            err = SortError(f"Unknown mode: {mode}")
+            self._write_failed_checkpoint(err)
+            raise err
 
         if self._is_complete():
             self._report_progress("Sort already complete", 1.0)
@@ -84,10 +86,12 @@ class SortStage(BaseStage):
         self._report_progress("Starting sort (always serial)", 0.0)
 
         if not self.session.probes:
-            raise SortError(
+            err = SortError(
                 "No probes in session. The discover stage may not have run or "
                 "failed to populate probes. Re-run from discover."
             )
+            self._write_failed_checkpoint(err)
+            raise err
 
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):

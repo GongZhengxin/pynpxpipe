@@ -55,7 +55,7 @@ uv run python tools/install_sort_stack.py
 ```bash
 git clone https://github.com/GongZhengxin/pynpxpipe.git
 cd pynpxpipe
-uv sync --all-groups
+uv sync --inexact --all-groups
 
 # 一次性 sort stack 安装（原因见模式 A 第 2 步）
 uv run python tools/install_sort_stack.py
@@ -279,9 +279,11 @@ D:/output/my_session/
     discover.json                # Stage checkpoint
     preprocess_imec0.json        # Probe 级 checkpoint
     preprocess_imec1.json        # （多 probe 时）
-  preprocessed/
-    imec0/                       # Zarr 录制数据（分块，内存友好）
-    imec1/                       # （多 probe 时）
+  01_preprocessed/
+    imec0.zarr/                  # Zarr 录制数据（分块，内存友好）
+    imec0/
+      figures/                   # 可选预处理 QC 图
+    imec1.zarr/                  # （多 probe 时）
 ```
 
 ### 预处理步骤（每个 probe）
@@ -381,16 +383,16 @@ Subject:
 
 | 问题 | 解决方法 |
 |------|----------|
-| `ModuleNotFoundError: No module named 'panel'` | 装 UI extra：`uv sync --extra ui` |
+| `ModuleNotFoundError: No module named 'panel'` | 装 UI extra：`uv sync --inexact --extra ui` |
 | `ModuleNotFoundError: No module named 'torch'` | 跑 `uv run python tools/install_sort_stack.py`（torch 不在 pyproject，见安装指南） |
 | `The dredge method require torch: pip install torch` | 同上 —— 跑 sort stack 安装器；DREDge 需要 `torch` |
 | `ModuleNotFoundError: No module named 'kilosort'` | 同上 —— 跑 sort stack 安装器 |
 | `TorchEnvError: torch_device='cuda' was requested ... CPU-only build` | 当前 torch 是 CPU wheel。跑 `uv run python tools/install_sort_stack.py --force` 选匹配驱动的 CUDA wheel |
 | `TorchEnvError: torch_device='cuda' was requested but no NVIDIA GPU` | 在 `config/sorting.yaml` 把 `torch_device` 设为 `cpu`（或 `auto`） |
-| `pynpxpipe-ui` 命令找不到 | 用 `uv run pynpxpipe-ui` 或先 `uv sync` |
+| `pynpxpipe-ui` 命令找不到 | 用 `uv run pynpxpipe-ui` 或先 `uv sync --inexact` |
 | UI 没自动打开浏览器 | 手动访问 `http://localhost:5006` |
 | 预处理阶段内存溢出 | 把 `pipeline.yaml` 里的 `chunk_duration` 调小（如 `"0.5s"`）或降低 `n_jobs` |
 | 运动校正 + KS4 nblocks 冲突 | 两者互斥。用 KS4 nblocks > 0 时把运动校正设为 `null`；用 DREDge 时把 nblocks 设为 0 |
-| Sorting 时检测不到 GPU | 装 GPU extra：`uv sync --extra gpu`。确保已装 CUDA 驱动 |
+| Sorting 时检测不到 GPU | 装 GPU extra：`uv sync --inexact --extra gpu`。确保已装 CUDA 驱动 |
 | 管线卡在某个 stage | 检查 `logs/pipeline.jsonl` 看错误。用 `reset-stage` 清 checkpoint 重试 |
 | BHV2 解析错误 | pynpxpipe 默认用纯 Python 解析器。设 `BHV2_BACKEND=matlab` 用 MATLAB Engine 回退（需要 MATLAB） |

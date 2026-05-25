@@ -521,6 +521,19 @@ class TestErrorHandling:
             with pytest.raises(SyncError, match="Photodiode"):
                 stage.run()
 
+    def test_unexpected_error_wrapped_and_failed_checkpoint_written(
+        self, stage: SynchronizeStage, session: Session
+    ) -> None:
+        with _patch_run(session) as ctx:
+            ctx["mock_loader_cls"].load_nidq.side_effect = OSError("cannot read nidq")
+            with pytest.raises(SyncError, match="Synchronize failed"):
+                stage.run()
+
+        cp = session.output_dir / "checkpoints" / "synchronize.json"
+        assert cp.exists()
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+
 
 # ---------------------------------------------------------------------------
 # Group F — Parquet content

@@ -29,7 +29,7 @@ Prepare pynpxpipe for public release on GitHub so that other Windows users can i
 ### Files to modify
 1. **`.gitignore`** — Replace the 12-line stub with a full exclude list covering: Python/uv cache, tool working dirs (`.claude/`, `.superpowers/`, `.prompt4claude/`, graphify), IDE, runtime outputs (`kilosort4_output/`, `logs/`, `*.nwb`, `*.zarr/`, `*.mat`), private dirs (`legacy_reference/`, `spec_manifests/`, `tests/fixtures/bhv2_ground_truth/`, `docs/audit/`, `docs/bug_spec/`, `docs/temp/`, `docs/superpowers/`), and private subject YAMLs (`monkeys/*.yaml` with `!monkeys/MonkeyTemplate.yaml` exception).
 2. **`pyproject.toml`** — Add `license`, `keywords`, `classifiers`, `[project.urls]` (Homepage/Repository/Issues). Do NOT change `build-backend`.
-3. **`getting_started.md`** — Rewrite §1 (Install) to show both "consumer mode" (`uv add git+...`) and "developer mode" (`git clone + uv sync`). Add short subsections describing the new UI features (Figures Viewer, Chat Help, SubjectForm save button). Other sections unchanged.
+3. **`getting_started.md`** — Rewrite §1 (Install) to show both "consumer mode" (`uv add git+...`) and "developer mode" (`git clone + uv sync --inexact`). Add short subsections describing the new UI features (Figures Viewer, Chat Help, SubjectForm save button). Other sections unchanged.
 4. **`CLAUDE.md`** — Update the "current development phase" paragraph; add `src/pynpxpipe/agent/` to the directory tree. Do not touch development workflow rules or spec index table (agent module is UI-auxiliary, not a pipeline stage).
 5. **`docs/progress.md`** — Append UI S6 (Chat Help), UI S7 (Figures Viewer), UI S8 (SubjectForm save-yaml). Record the two bug fixes (`imec_sync_code` removal, `nblocks` default). Update total test count from 972 → 1160 (verified via `uv run pytest --collect-only`).
 
@@ -63,7 +63,7 @@ Rationale: splits license/metadata from docs so reviewers can see each clearly. 
 ## Risks / Notes
 
 - **Unrelated WIP will NOT be pushed** because those files stay `modified` in the working tree and are never `git add`-ed. They remain local until the user decides what to do with them.
-- **`uv.lock` is committed** (already tracked) — guarantees reproducible `uv sync` for developers.
+- **`uv.lock` is committed** (already tracked) — guarantees reproducible `uv sync --inexact` for developers.
 - **No history rewrite** — if something sensitive is already in git history, we keep it there (accept the tradeoff) rather than `git filter-branch`. User has confirmed nothing sensitive is historically tracked.
 - **README bilingual ordering**: English section first (international reach), then 中文. Both sections self-contained.
 

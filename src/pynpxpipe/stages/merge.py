@@ -73,9 +73,13 @@ class MergeStage(BaseStage):
             probe_id = probe.probe_id
             try:
                 self._merge_probe(probe_id)
-            except Exception as exc:
+            except MergeError as exc:
                 self._write_failed_checkpoint(exc, probe_id=probe_id)
                 raise
+            except Exception as exc:
+                err = MergeError(f"Failed to merge {probe_id}: {exc}")
+                self._write_failed_checkpoint(err, probe_id=probe_id)
+                raise err from exc
             self._report_progress(f"Merged {probe_id}", (i + 1) / n_probes)
 
         self._write_checkpoint({"probe_ids": [p.probe_id for p in self.session.probes]})
