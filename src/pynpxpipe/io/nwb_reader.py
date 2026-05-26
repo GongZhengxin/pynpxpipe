@@ -32,6 +32,16 @@ class NWBInputSummary:
     has_nidq_raw: bool
 
 
+@dataclass(frozen=True)
+class NWBSortingBundle:
+    """Per-probe SpikeInterface sorting reconstructed from NWB units."""
+
+    probe_id: str
+    sorting: object
+    units: pd.DataFrame
+    sampling_frequency: float
+
+
 class NWBLoader:
     """Inspect and load pynpxpipe NWB files without mutating them."""
 
@@ -116,6 +126,55 @@ class NWBLoader:
             raise NWBInputError("NWB /units column 'probe_id' contains empty values")
         return units
 
+    def load_sortings(
+        self,
+        sampling_frequency: float | None = None,
+    ) -> dict[str, NWBSortingBundle]:
+        """Load per-probe SpikeInterface ``NumpySorting`` objects from NWB units.
+
+        Args:
+            sampling_frequency: Optional frequency used to convert seconds to
+                sample indices. If omitted, each probe's AP acquisition rate is
+                read from ``ElectricalSeriesAP_{probe_id}``.
+
+        Returns:
+            Mapping of probe id to sorting bundle.
+
+        Raises:
+            NWBInputError: If sampling frequency cannot be determined.
+        """
+        import spikeinterface.core as si
+
+        units = self.load_units()
+        ap_rates = self._ap_sampling_frequencies()
+        bundles: dict[str, NWBSortingBundle] = {}
+        for probe_id, probe_units in units.groupby("probe_id", sort=True):
+            fs = (
+                float(sampling_frequency)
+                if sampling_frequency is not None
+                else ap_rates.get(probe_id)
+            )
+            if fs is None:
+                raise NWBInputError(
+                    "Cannot build sorting for "
+                    f"{probe_id}: sampling_frequency was not provided and "
+                    f"ElectricalSeriesAP_{probe_id} is absent or lacks rate"
+                )
+            unit_dict = {}
+            for row in probe_units.itertuples(index=False):
+                spike_times = np.asarray(row.spike_times, dtype=float)
+                unit_dict[int(row.unit_id)] = np.rint(spike_times * fs).astype(np.int64)
+
+            sorting = si.NumpySorting.from_unit_dict([unit_dict], sampling_frequency=fs)
+            self._attach_sorting_properties(sorting, probe_units)
+            bundles[str(probe_id)] = NWBSortingBundle(
+                probe_id=str(probe_id),
+                sorting=sorting,
+                units=probe_units.reset_index(drop=True),
+                sampling_frequency=fs,
+            )
+        return bundles
+
     def require_capabilities(self, mode: Literal["rewrite-units", "postprocess", "raw"]) -> None:
         """Validate that the NWB contains inputs required by a rerun mode.
 
@@ -144,6 +203,35 @@ class NWBLoader:
             raise NWBInputError(f"NWB file not found: {self.nwb_path}")
         if self.nwb_path.suffix.lower() != ".nwb":
             raise NWBInputError(f"Expected a .nwb file: {self.nwb_path}")
+
+    def _ap_sampling_frequencies(self) -> dict[str, float]:
+        self._validate_path()
+        rates: dict[str, float] = {}
+        try:
+            with NWBHDF5IO(self.nwb_path, "r") as io:
+                nwbfile = io.read()
+                for name, series in nwbfile.acquisition.items():
+                    if name.startswith("ElectricalSeriesAP_"):
+                        rate = getattr(series, "rate", None)
+                        if rate is not None:
+                            rates[name.removeprefix("ElectricalSeriesAP_")] = float(rate)
+        except Exception as exc:  # noqa: BLE001
+            raise NWBInputError(
+                f"Failed to inspect AP sampling frequencies in {self.nwb_path}: {exc}"
+            ) from exc
+        return rates
+
+    @staticmethod
+    def _attach_sorting_properties(sorting, probe_units: pd.DataFrame) -> None:  # noqa: ANN001
+        skip = {"unit_id", "spike_times"}
+        for column in probe_units.columns:
+            if column in skip:
+                continue
+            values = probe_units[column].map(_decode_scalar).to_numpy()
+            try:
+                sorting.set_property(column, values)
+            except Exception as exc:  # noqa: BLE001
+                raise NWBInputError(f"Failed to attach sorting property {column!r}: {exc}") from exc
 
     @staticmethod
     def _probe_ids_from_nwb(nwbfile) -> tuple[str, ...]:  # noqa: ANN001

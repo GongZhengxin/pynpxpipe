@@ -95,6 +95,7 @@ M1 遗留项（不阻塞 M2）：集成验证待做。`sync_plots` 已由 M2 Pha
 | Plots S1 | Nature 风格 `plots/` 子包 + 5 stage 接入 + figs_viewer 分组 | ✅ | `plots/{style,sync,curate,postprocess,preprocess}.py` 覆盖 MATLAB 诊断图 #1-#13 + 单元波形/location/raster/PSTH + 坏道/CMR traces/motion；`figs_viewer` 按 stage 折叠显示；所有 stage 绘图失败仅 warning 不阻塞 checkpoint（+54 tests，1425 passed，2026-04-18） |
 | Output dirs S1 | 按 pipeline 生成顺序给输出目录加数字前缀 | ✅ | `preprocessed→01_preprocessed / sorted→02_sorted / sorter_output→02_sorter_output_KS4 / merged→03_merged / sync→04_sync / curated→05_curated / postprocessed→06_postprocessed / export→07_export`；同步更新 stages/io/harness/validators/ui/tests + docs/specs；不保留旧路径 fallback（全回归 1425 passed，2026-04-18） |
 | Task 2 PR1 | NWB 回炉处理最小闭环 | ✅ | `docs/specs/{nwb_reader,nwb_rerun}.md` + `io/nwb_reader.py` + `pipelines/nwb_rerun.py` + CLI `rerun-from-nwb`；copy-on-write `rewrite-units`，不原地修改输入 NWB，不允许改 `spike_times`（18 tests，2026-05-27） |
+| Task 2 PR2 | NWB units → per-probe Sorting adapter | ✅ | `NWBLoader.load_sortings()` 将 `/units` 按 `probe_id` 拆为 `spikeinterface.core.NumpySorting`，保留 unit metadata properties，可从 AP acquisition rate 推断 sampling frequency（+5 tests，2026-05-27） |
 
 #### 修复与改进（M2 期间）
 

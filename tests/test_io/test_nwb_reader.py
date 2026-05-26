@@ -14,7 +14,12 @@ from pynpxpipe.core.errors import NWBInputError
 from pynpxpipe.io.nwb_reader import NWBLoader
 
 
-def _write_tiny_nwb(path: Path, *, include_probe_id: bool = True) -> Path:
+def _write_tiny_nwb(
+    path: Path,
+    *,
+    include_probe_id: bool = True,
+    ap_probe_ids: tuple[str, ...] = ("imec0",),
+) -> Path:
     """Write a minimal pynpxpipe-like NWB fixture."""
     nwbfile = NWBFile(
         session_description="tiny pynpxpipe fixture",
@@ -44,14 +49,15 @@ def _write_tiny_nwb(path: Path, *, include_probe_id: bool = True) -> Path:
         slay_score=0.2,
     )
     nwbfile.add_trial(start_time=0.0, stop_time=1.0)
-    nwbfile.add_acquisition(
-        TimeSeries(
-            name="ElectricalSeriesAP_imec0",
-            data=np.zeros((4, 2), dtype=np.int16),
-            unit="uV",
-            rate=30000.0,
+    for probe_id in ap_probe_ids:
+        nwbfile.add_acquisition(
+            TimeSeries(
+                name=f"ElectricalSeriesAP_{probe_id}",
+                data=np.zeros((4, 2), dtype=np.int16),
+                unit="uV",
+                rate=1000.0 if probe_id == "imec0" else 2000.0,
+            )
         )
-    )
     nwbfile.add_acquisition(
         TimeSeries(
             name="NIDQ_raw",
@@ -135,3 +141,52 @@ def test_missing_file_raises_nwb_input_error(tmp_path: Path) -> None:
     """Missing paths are reported as NWBInputError."""
     with pytest.raises(NWBInputError, match="not found"):
         NWBLoader(tmp_path / "missing.nwb").inspect()
+
+
+def test_load_sortings_splits_by_probe(tmp_path: Path) -> None:
+    """load_sortings() returns one SpikeInterface sorting bundle per probe."""
+    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb")
+
+    bundles = NWBLoader(nwb_path).load_sortings(sampling_frequency=1000.0)
+
+    assert set(bundles) == {"imec0", "imec1"}
+    assert list(bundles["imec0"].sorting.get_unit_ids()) == [11]
+    assert list(bundles["imec1"].sorting.get_unit_ids()) == [12]
+
+
+def test_load_sortings_roundtrips_spike_times(tmp_path: Path) -> None:
+    """SpikeInterface return_times=True approximately recovers NWB spike_times."""
+    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb")
+
+    bundles = NWBLoader(nwb_path).load_sortings(sampling_frequency=1000.0)
+    spike_times = bundles["imec0"].sorting.get_unit_spike_train(11, return_times=True)
+
+    assert np.allclose(spike_times, np.array([0.1, 0.2, 0.3]))
+
+
+def test_load_sortings_preserves_unit_properties(tmp_path: Path) -> None:
+    """Unit metadata columns become SpikeInterface sorting properties."""
+    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb")
+
+    bundles = NWBLoader(nwb_path).load_sortings(sampling_frequency=1000.0)
+
+    assert bundles["imec0"].sorting.get_property("unittype_string").tolist() == ["SUA"]
+    assert bundles["imec1"].sorting.get_property("is_visual").tolist() == [False]
+
+
+def test_load_sortings_infers_sampling_frequency_from_ap_stream(tmp_path: Path) -> None:
+    """When no sampling_frequency is passed, AP acquisition rate is used per probe."""
+    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb", ap_probe_ids=("imec0", "imec1"))
+
+    bundles = NWBLoader(nwb_path).load_sortings()
+
+    assert bundles["imec0"].sampling_frequency == 1000.0
+    assert bundles["imec1"].sampling_frequency == 2000.0
+
+
+def test_load_sortings_requires_sampling_frequency_without_ap(tmp_path: Path) -> None:
+    """A bare /units table is not enough to convert seconds to sample indices."""
+    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb", ap_probe_ids=())
+
+    with pytest.raises(NWBInputError, match="sampling_frequency"):
+        NWBLoader(nwb_path).load_sortings()
