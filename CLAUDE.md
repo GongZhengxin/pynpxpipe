@@ -66,6 +66,7 @@ pynpxpipe：神经电生理数据预处理工具包。
 | spikeglx | `docs/specs/spikeglx.md` | SpikeGLX 数据发现、meta 解析、AP/NIDQ lazy 加载 |
 | bhv | `docs/specs/bhv.md` | BHV2→MATLAB Engine→.mat→h5py 桥接，提供 TrialData 列表 |
 | nwb_writer | `docs/specs/nwb_writer.md` | NWB 2.x 文件组装与写盘（DANDI 兼容） |
+| nwb_reader | `docs/specs/nwb_reader.md` | 从 pynpxpipe NWB 读取 units/raw/provenance，支撑 NWB 回炉处理 |
 | imec_nidq_align | `docs/specs/imec_nidq_align.md` | IMEC↔NIDQ sync 脉冲线性回归对齐 |
 | bhv_nidq_align | `docs/specs/bhv_nidq_align.md` | BHV2↔NIDQ 事件码序列匹配，输出 trial 级事件表 |
 | photodiode_calibrate | `docs/specs/photodiode_calibrate.md` | Photodiode 模拟信号校准，检测 stimulus onset 延迟 |
@@ -88,6 +89,7 @@ pynpxpipe：神经电生理数据预处理工具包。
 | 模块 | Spec 路径 | 摘要 |
 |------|----------|------|
 | runner | `docs/specs/runner.md` | Pipeline 编排：断点续跑、资源配置、子集执行 |
+| nwb_rerun | `docs/specs/nwb_rerun.md` | NWB 输入回炉处理：copy-on-write units rewrite MVP 与后续 raw/postprocess 入口 |
 | cli_main | `docs/specs/cli_main.md` | CLI 薄壳入口：run / status / reset-stage 三个命令 |
 
 **L4 — UI（Panel Web UI，零业务逻辑）**

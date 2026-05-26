@@ -20,6 +20,7 @@ from pynpxpipe.core.checkpoint import CheckpointManager
 from pynpxpipe.core.config import load_pipeline_config, load_sorting_config, load_subject_config
 from pynpxpipe.core.errors import PynpxpipeError
 from pynpxpipe.core.session import SessionManager
+from pynpxpipe.pipelines.nwb_rerun import rerun_from_nwb
 from pynpxpipe.pipelines.runner import STAGE_ORDER, PipelineRunner
 from pynpxpipe.stages.export import ExportStage
 
@@ -245,6 +246,62 @@ def rerun_derivatives(output_dir: Path) -> None:
     except PynpxpipeError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command("rerun-from-nwb")
+@click.argument("input_nwb", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--mode",
+    type=click.Choice(["rewrite-units", "postprocess", "raw"]),
+    default="rewrite-units",
+    show_default=True,
+    help="NWB rerun mode. Task 2 PR1 implements only rewrite-units.",
+)
+@click.option(
+    "--output-dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Output root for copy-on-write NWB rerun results.",
+)
+@click.option(
+    "--unit-updates",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="CSV file keyed by unit_id with units metadata updates.",
+)
+@click.option("--overwrite", is_flag=True, default=False, help="Overwrite selected output NWB.")
+def rerun_from_nwb_command(
+    input_nwb: Path,
+    mode: str,
+    output_dir: Path,
+    unit_updates: Path | None,
+    overwrite: bool,
+) -> None:
+    """Re-run selected processing from an existing NWB file.
+
+    Task 2 PR1 supports only copy-on-write ``rewrite-units``.
+    """
+    if mode != "rewrite-units":
+        click.echo("Error: Task 2 PR1 supports only --mode rewrite-units", err=True)
+        sys.exit(1)
+    if unit_updates is None:
+        click.echo("Error: --unit-updates is required for rewrite-units", err=True)
+        sys.exit(1)
+
+    try:
+        result = rerun_from_nwb(
+            input_nwb,
+            output_dir,
+            mode="rewrite-units",
+            unit_updates=unit_updates,
+            overwrite=overwrite,
+        )
+        click.echo(f"NWB rerun complete. Output: {result.output_nwb}")
+    except PynpxpipeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Unexpected error: {e}", err=True)
+        sys.exit(2)
 
 
 @cli.command("verify-safe-to-delete")
