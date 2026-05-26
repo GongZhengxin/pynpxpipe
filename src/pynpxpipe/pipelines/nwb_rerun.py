@@ -6,7 +6,7 @@ import json
 import math
 import shutil
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -14,9 +14,12 @@ from typing import Literal
 import h5py
 import numpy as np
 import pandas as pd
+import spikeinterface.preprocessing as spp
+import spikeinterface.sorters as ss
 from pynwb import NWBHDF5IO
 from scipy.stats import mannwhitneyu, rankdata
 
+from pynpxpipe.core.config import PipelineConfig, SortingConfig
 from pynpxpipe.core.errors import NWBInputError, NWBRerunError
 from pynpxpipe.io.nwb_reader import NWBLoader
 
@@ -42,6 +45,8 @@ def rerun_from_nwb(
     unit_updates: Path | pd.DataFrame | None = None,
     version: str | None = None,
     overwrite: bool = False,
+    pipeline_config: PipelineConfig | None = None,
+    sorting_config: SortingConfig | None = None,
 ) -> NWBRerunResult:
     """Run an NWB-based copy-on-write rerun workflow.
 
@@ -52,6 +57,8 @@ def rerun_from_nwb(
         unit_updates: CSV path or DataFrame keyed by ``unit_id``.
         version: Optional version suffix such as ``"v001"``.
         overwrite: Whether an existing output NWB may be overwritten.
+        pipeline_config: Optional preprocessing config for ``mode="raw"``.
+        sorting_config: Optional sorter config for ``mode="raw"``.
 
     Returns:
         Rerun result metadata.
@@ -72,6 +79,7 @@ def rerun_from_nwb(
 
     try:
         loader = NWBLoader(nwb_path)
+        extra_report: dict[str, object] = {}
         if mode == "rewrite-units":
             if unit_updates is None:
                 raise NWBRerunError("unit_updates is required for rewrite-units rerun")
@@ -79,6 +87,7 @@ def rerun_from_nwb(
             original_units = loader.load_units()
             updates = _load_unit_updates(unit_updates)
             unit_update_source = str(unit_updates) if isinstance(unit_updates, Path) else None
+            rewritten_units = _apply_unit_updates(original_units, updates)
         elif mode == "postprocess":
             if unit_updates is not None:
                 raise NWBRerunError("unit_updates is not supported for postprocess rerun")
@@ -87,17 +96,21 @@ def rerun_from_nwb(
             trials = _load_trials(nwb_path)
             updates = _compute_postprocess_unit_updates(original_units, trials)
             unit_update_source = "computed:postprocess-lite"
+            rewritten_units = _apply_unit_updates(original_units, updates)
         elif mode == "raw":
+            if unit_updates is not None:
+                raise NWBRerunError("unit_updates is not supported for raw rerun")
             loader.require_capabilities("raw")
-            raise NWBRerunError(
-                "mode='raw' has loadable NWB AP Recording support via "
-                "NWBLoader.load_recordings(), but full preprocess/sort/export "
-                "orchestration is not run by rerun_from_nwb yet"
+            original_units = loader.load_units()
+            rewritten_units, extra_report = _run_raw_rerun_units(
+                loader,
+                rerun_dir,
+                pipeline_config=pipeline_config,
+                sorting_config=sorting_config,
             )
+            unit_update_source = "computed:raw-sorter"
         else:
             raise NWBRerunError(f"Unsupported NWB rerun mode: {mode!r}")
-
-        rewritten_units = _apply_unit_updates(original_units, updates)
 
         output_nwb = _choose_output_nwb(
             nwb_path,
@@ -116,6 +129,7 @@ def rerun_from_nwb(
             "n_units_before": int(len(original_units)),
             "n_units_after": int(len(rewritten_units)),
             "completed_at": _now_iso(),
+            **extra_report,
         }
         _rewrite_units_table(output_nwb, rewritten_units)
         _write_rerun_scratch_report(output_nwb, report)
@@ -372,6 +386,113 @@ def _compute_ranksum(
         return bool(p < 0.001)
     except Exception:
         return False
+
+
+def _run_raw_rerun_units(
+    loader: NWBLoader,
+    rerun_dir: Path,
+    *,
+    pipeline_config: PipelineConfig | None,
+    sorting_config: SortingConfig | None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    pipeline_config = pipeline_config or PipelineConfig()
+    sorting_config = sorting_config or SortingConfig()
+    if sorting_config.mode != "local":
+        raise NWBRerunError("raw rerun requires SortingConfig.mode='local'")
+
+    recording_bundles = loader.load_recordings(stream_type="ap")
+    sorter_output_root = rerun_dir / "02_sorter_output_from_nwb"
+    rows: list[dict[str, object]] = []
+    probe_reports: list[dict[str, object]] = []
+    next_unit_id = 1
+
+    for probe_id, bundle in recording_bundles.items():
+        recording = _preprocess_raw_recording(bundle.recording, pipeline_config)
+        sorter_folder = sorter_output_root / probe_id
+        params = asdict(sorting_config.sorter.params)
+        try:
+            sorting = ss.run_sorter(
+                sorting_config.sorter.name,
+                recording,
+                folder=sorter_folder,
+                remove_existing_folder=True,
+                **params,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise NWBRerunError(f"raw rerun sorter failed for {probe_id}: {exc}") from exc
+
+        fs = float(sorting.get_sampling_frequency())
+        probe_unit_ids = list(sorting.get_unit_ids())
+        for sorter_unit_id in probe_unit_ids:
+            spike_samples = sorting.get_unit_spike_train(sorter_unit_id, segment_index=0)
+            rows.append(
+                {
+                    "unit_id": next_unit_id,
+                    "probe_id": probe_id,
+                    "ks_id": _json_safe_unit_id(sorter_unit_id),
+                    "spike_times": np.asarray(spike_samples, dtype=float) / fs,
+                    "unittype_string": "UNCLASSIFIED",
+                    "is_visual": False,
+                    "slay_score": np.nan,
+                }
+            )
+            next_unit_id += 1
+        probe_reports.append(
+            {
+                "probe_id": probe_id,
+                "series_path": bundle.series_path,
+                "sampling_frequency": bundle.sampling_frequency,
+                "sorter_name": sorting_config.sorter.name,
+                "sorter_output": str(sorter_folder),
+                "n_units": len(probe_unit_ids),
+            }
+        )
+
+    if not rows:
+        raise NWBRerunError("raw rerun produced zero units across all probes")
+
+    report = {
+        "raw_rerun": {
+            "probe_reports": probe_reports,
+            "n_probes": len(probe_reports),
+            "sorter_name": sorting_config.sorter.name,
+        }
+    }
+    return pd.DataFrame(rows), report
+
+
+def _preprocess_raw_recording(recording, pipeline_config: PipelineConfig):  # noqa: ANN001
+    cfg = pipeline_config
+    processed = spp.phase_shift(recording)
+    processed = spp.bandpass_filter(
+        processed,
+        freq_min=cfg.preprocess.bandpass.freq_min,
+        freq_max=cfg.preprocess.bandpass.freq_max,
+    )
+    bad_channel_ids, _ = spp.detect_bad_channels(
+        processed,
+        method=cfg.preprocess.bad_channel_detection.method,
+    )
+    if len(bad_channel_ids) > 0:
+        processed = processed.remove_channels(bad_channel_ids)
+    processed = spp.common_reference(
+        processed,
+        reference=cfg.preprocess.common_reference.reference,
+        operator=cfg.preprocess.common_reference.operator,
+    )
+    if cfg.preprocess.motion_correction.method is not None:
+        processed = spp.correct_motion(
+            processed,
+            preset=cfg.preprocess.motion_correction.preset,
+        )
+    return processed
+
+
+def _json_safe_unit_id(unit_id: object) -> int | str:
+    try:
+        return int(unit_id)
+    except (TypeError, ValueError):
+        return str(unit_id)
 
 
 def _choose_output_nwb(

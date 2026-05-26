@@ -98,6 +98,7 @@ M1 遗留项（不阻塞 M2）：集成验证待做。`sync_plots` 已由 M2 Pha
 | Task 2 PR2 | NWB units → per-probe Sorting adapter | ✅ | `NWBLoader.load_sortings()` 将 `/units` 按 `probe_id` 拆为 `spikeinterface.core.NumpySorting`，保留 unit metadata properties，可从 AP acquisition rate 推断 sampling frequency（+5 tests，2026-05-27） |
 | Task 2 PR3 | NWB 轻量 postprocess rerun | ✅ | `rerun_from_nwb(..., mode="postprocess")` 从 `/units` + trials 重算 `slay_score/is_visual`，按 `stim_onset_imec_{probe_id}` 处理多 probe 时钟，copy-on-write 写回新 NWB；CLI 支持无 `--unit-updates` 的 postprocess rerun（+4 tests，2026-05-27） |
 | Task 2 PR4 | NWB raw Recording adapter | ✅ | `NWBLoader.load_recordings()` 将 acquisition `ElectricalSeriesAP/LF_{probe_id}` 转成 SpikeInterface Recording bundle，`require_capabilities("raw")` 验证 AP streams 可懒加载，为后续 full preprocess/sort orchestration 打通输入层（+3 tests，2026-05-27） |
+| Task 2 PR5 | NWB raw preprocess/sort rerun | ✅ | `rerun_from_nwb(..., mode="raw")` 从 NWB AP `ElectricalSeries` 懒加载 Recording，运行 preprocess sequence + SpikeInterface sorter，并将 sorter 输出重写回 copied NWB `/units`；CLI `--mode raw` 接入 pipeline（+2 tests，2026-05-27） |
 
 #### 修复与改进（M2 期间）
 
