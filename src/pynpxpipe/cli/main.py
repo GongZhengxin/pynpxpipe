@@ -255,7 +255,7 @@ def rerun_derivatives(output_dir: Path) -> None:
     type=click.Choice(["rewrite-units", "postprocess", "raw"]),
     default="rewrite-units",
     show_default=True,
-    help="NWB rerun mode. Task 2 PR1 implements only rewrite-units.",
+    help="NWB rerun mode. raw is reserved for a future full rerun.",
 )
 @click.option(
     "--output-dir",
@@ -278,12 +278,12 @@ def rerun_from_nwb_command(
 ) -> None:
     """Re-run selected processing from an existing NWB file.
 
-    Task 2 PR1 supports only copy-on-write ``rewrite-units``.
+    Supports copy-on-write unit rewrites and lightweight postprocess metrics.
     """
-    if mode != "rewrite-units":
-        click.echo("Error: Task 2 PR1 supports only --mode rewrite-units", err=True)
+    if mode == "raw":
+        click.echo("Error: --mode raw is not implemented yet", err=True)
         sys.exit(1)
-    if unit_updates is None:
+    if mode == "rewrite-units" and unit_updates is None:
         click.echo("Error: --unit-updates is required for rewrite-units", err=True)
         sys.exit(1)
 
@@ -291,7 +291,7 @@ def rerun_from_nwb_command(
         result = rerun_from_nwb(
             input_nwb,
             output_dir,
-            mode="rewrite-units",
+            mode=mode,
             unit_updates=unit_updates,
             overwrite=overwrite,
         )

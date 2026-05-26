@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 from pynwb import NWBHDF5IO, NWBFile
 
-from pynpxpipe.core.errors import NWBRerunError
+from pynpxpipe.core.errors import NWBInputError, NWBRerunError
 from pynpxpipe.pipelines.nwb_rerun import rerun_from_nwb
 
 
@@ -47,6 +47,73 @@ def _write_units_nwb(path: Path) -> Path:
         is_visual=False,
         slay_score=0.1,
     )
+    with NWBHDF5IO(path, "w") as io:
+        io.write(nwbfile)
+    return path
+
+
+def _write_postprocess_nwb(
+    path: Path,
+    *,
+    probe_id: str = "imec0",
+    include_trials: bool = True,
+) -> Path:
+    """Write an NWB fixture where unit 1 has a reliable onset response."""
+    nwbfile = NWBFile(
+        session_description="tiny postprocess rerun fixture",
+        identifier="tiny-postprocess-rerun-fixture",
+        session_start_time=datetime(2024, 1, 1),
+        session_id="240101_Test_nsd1w_V4",
+    )
+    reference_onsets = np.arange(1.0, 11.0)
+    probe_onsets = reference_onsets if probe_id == "imec0" else reference_onsets + 0.25
+    responsive_spikes = np.sort(np.concatenate([probe_onsets + 0.023, probe_onsets + 0.067]))
+
+    nwbfile.add_unit_column("probe_id", "Probe identifier")
+    nwbfile.add_unit_column("unittype_string", "Unit type")
+    nwbfile.add_unit_column("is_visual", "Visual response flag")
+    nwbfile.add_unit_column("slay_score", "SLAY score")
+    nwbfile.add_unit(
+        id=1,
+        spike_times=responsive_spikes,
+        probe_id=probe_id,
+        unittype_string="SUA",
+        is_visual=False,
+        slay_score=0.0,
+    )
+    nwbfile.add_unit(
+        id=2,
+        spike_times=np.array([], dtype=float),
+        probe_id=probe_id,
+        unittype_string="MUA",
+        is_visual=True,
+        slay_score=0.5,
+    )
+
+    if include_trials:
+        nwbfile.add_trial_column("stim_onset_time", "Reference-probe onset time")
+        nwbfile.add_trial_column("trial_valid", "Whether the trial is valid")
+        nwbfile.add_trial_column(
+            f"stim_onset_imec_{probe_id}",
+            f"Stimulus onset time for {probe_id}",
+        )
+        if probe_id != "imec0":
+            nwbfile.add_trial_column(
+                "stim_onset_imec_imec0",
+                "Stimulus onset time for imec0",
+            )
+        for reference_onset, probe_onset in zip(reference_onsets, probe_onsets, strict=True):
+            kwargs = {
+                "start_time": float(reference_onset),
+                "stop_time": float(reference_onset + 0.35),
+                "stim_onset_time": float(reference_onset),
+                "trial_valid": True,
+                f"stim_onset_imec_{probe_id}": float(probe_onset),
+            }
+            if probe_id != "imec0":
+                kwargs["stim_onset_imec_imec0"] = float(reference_onset)
+            nwbfile.add_trial(**kwargs)
+
     with NWBHDF5IO(path, "w") as io:
         io.write(nwbfile)
     return path
@@ -160,3 +227,42 @@ def test_auto_version_increments(tmp_path: Path) -> None:
 
     assert first.output_nwb.name.endswith("_rerun_v001.nwb")
     assert second.output_nwb.name.endswith("_rerun_v002.nwb")
+
+
+def test_postprocess_mode_recomputes_slay_and_is_visual(tmp_path: Path) -> None:
+    """postprocess mode recomputes lightweight visual metrics from units + trials."""
+    input_nwb = _write_postprocess_nwb(tmp_path / "input.nwb")
+
+    result = rerun_from_nwb(input_nwb, tmp_path / "out", mode="postprocess")
+
+    units = _read_units(result.output_nwb)
+    responsive = units.loc[units["unit_id"] == 1].iloc[0]
+    silent = units.loc[units["unit_id"] == 2].iloc[0]
+    assert result.mode == "postprocess"
+    assert responsive["slay_score"] == pytest.approx(1.0)
+    assert bool(responsive["is_visual"]) is True
+    assert pd.isna(silent["slay_score"])
+    assert bool(silent["is_visual"]) is False
+
+
+def test_postprocess_mode_uses_probe_specific_trial_column(tmp_path: Path) -> None:
+    """Non-reference probes use stim_onset_imec_{probe_id}, not stim_onset_time."""
+    input_nwb = _write_postprocess_nwb(tmp_path / "input.nwb", probe_id="imec1")
+
+    result = rerun_from_nwb(input_nwb, tmp_path / "out", mode="postprocess")
+
+    units = _read_units(result.output_nwb)
+    row = units.loc[units["unit_id"] == 1].iloc[0]
+    assert row["slay_score"] == pytest.approx(1.0)
+    assert bool(row["is_visual"]) is True
+
+
+def test_postprocess_mode_requires_trials(tmp_path: Path) -> None:
+    """postprocess mode fails clearly when an NWB has units but no trials."""
+    input_nwb = _write_postprocess_nwb(
+        tmp_path / "input.nwb",
+        include_trials=False,
+    )
+
+    with pytest.raises((NWBInputError, NWBRerunError), match="trials"):
+        rerun_from_nwb(input_nwb, tmp_path / "out", mode="postprocess")

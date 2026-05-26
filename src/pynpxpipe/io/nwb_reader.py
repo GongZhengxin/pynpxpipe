@@ -186,11 +186,12 @@ class NWBLoader:
             return
         if mode == "postprocess":
             summary = self.inspect()
-            if not summary.has_units or not summary.has_trials:
+            if not summary.has_units or not summary.has_trials or summary.n_trials == 0:
                 raise NWBInputError(
                     "postprocess rerun requires /units and trials; this NWB is incomplete"
                 )
-            raise NWBInputError("postprocess rerun from NWB is not implemented in PR1")
+            self.load_units()
+            return
         if mode == "raw":
             summary = self.inspect()
             if not summary.raw_ap_streams:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ import h5py
 import numpy as np
 import pandas as pd
 from pynwb import NWBHDF5IO
+from scipy.stats import mannwhitneyu, rankdata
 
 from pynpxpipe.core.errors import NWBInputError, NWBRerunError
 from pynpxpipe.io.nwb_reader import NWBLoader
@@ -43,12 +45,10 @@ def rerun_from_nwb(
 ) -> NWBRerunResult:
     """Run an NWB-based copy-on-write rerun workflow.
 
-    PR1 implements only ``mode="rewrite-units"``.
-
     Args:
         nwb_path: Input NWB file. It is never modified.
         output_dir: Rerun output root.
-        mode: Rerun mode. Only ``rewrite-units`` is implemented.
+        mode: Rerun mode. ``postprocess`` recomputes lightweight unit metrics.
         unit_updates: CSV path or DataFrame keyed by ``unit_id``.
         version: Optional version suffix such as ``"v001"``.
         overwrite: Whether an existing output NWB may be overwritten.
@@ -71,15 +71,27 @@ def rerun_from_nwb(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        if mode != "rewrite-units":
-            raise NWBRerunError("Only mode='rewrite-units' is implemented in Task 2 PR1")
-        if unit_updates is None:
-            raise NWBRerunError("unit_updates is required for rewrite-units rerun")
-
         loader = NWBLoader(nwb_path)
-        loader.require_capabilities("rewrite-units")
-        original_units = loader.load_units()
-        updates = _load_unit_updates(unit_updates)
+        if mode == "rewrite-units":
+            if unit_updates is None:
+                raise NWBRerunError("unit_updates is required for rewrite-units rerun")
+            loader.require_capabilities("rewrite-units")
+            original_units = loader.load_units()
+            updates = _load_unit_updates(unit_updates)
+            unit_update_source = str(unit_updates) if isinstance(unit_updates, Path) else None
+        elif mode == "postprocess":
+            if unit_updates is not None:
+                raise NWBRerunError("unit_updates is not supported for postprocess rerun")
+            loader.require_capabilities("postprocess")
+            original_units = loader.load_units()
+            trials = _load_trials(nwb_path)
+            updates = _compute_postprocess_unit_updates(original_units, trials)
+            unit_update_source = "computed:postprocess-lite"
+        elif mode == "raw":
+            raise NWBRerunError("mode='raw' is not implemented in Task 2")
+        else:
+            raise NWBRerunError(f"Unsupported NWB rerun mode: {mode!r}")
+
         rewritten_units = _apply_unit_updates(original_units, updates)
 
         output_nwb = _choose_output_nwb(
@@ -95,7 +107,7 @@ def rerun_from_nwb(
             "mode": mode,
             "input_nwb": str(nwb_path),
             "output_nwb": str(output_nwb),
-            "unit_update_source": str(unit_updates) if isinstance(unit_updates, Path) else None,
+            "unit_update_source": unit_update_source,
             "n_units_before": int(len(original_units)),
             "n_units_after": int(len(rewritten_units)),
             "completed_at": _now_iso(),
@@ -172,6 +184,7 @@ def _apply_unit_updates(original_units: pd.DataFrame, updates: pd.DataFrame) -> 
     original["unit_id"] = original["unit_id"].astype(int)
     updates = updates.copy()
     updates["unit_id"] = updates["unit_id"].astype(int)
+    updates["__has_update"] = True
 
     unknown = sorted(set(updates["unit_id"]) - set(original["unit_id"]))
     if unknown:
@@ -183,15 +196,16 @@ def _apply_unit_updates(original_units: pd.DataFrame, updates: pd.DataFrame) -> 
         how="left",
         suffixes=("", "__update"),
     )
+    has_update = merged["__has_update"].eq(True)
     for column in updates.columns:
-        if column in {"unit_id", "keep"}:
+        if column in {"unit_id", "keep", "__has_update"}:
             continue
         update_column = f"{column}__update" if column in original.columns else column
         if update_column not in merged.columns:
             continue
         if column not in merged.columns:
             merged[column] = pd.NA
-        mask = merged[update_column].notna()
+        mask = has_update
         update_values = merged.loc[mask, update_column]
         original_is_bool = column in original.columns and pd.api.types.is_bool_dtype(
             original[column]
@@ -201,15 +215,158 @@ def _apply_unit_updates(original_units: pd.DataFrame, updates: pd.DataFrame) -> 
         merged.loc[mask, column] = update_values
 
     if "keep" in merged.columns:
-        keep_values = merged["keep"].map(_coerce_keep_value)
+        keep_values = merged["keep"].where(has_update, pd.NA).map(_coerce_keep_value)
         keep_mask = pd.Series(
             [True if value is None else bool(value) for value in keep_values],
             index=merged.index,
         )
         merged = merged.loc[keep_mask].copy()
 
-    drop_cols = [col for col in merged.columns if col.endswith("__update") or col == "keep"]
+    drop_cols = [
+        col for col in merged.columns if col.endswith("__update") or col in {"keep", "__has_update"}
+    ]
     return merged.drop(columns=drop_cols).reset_index(drop=True)
+
+
+def _load_trials(nwb_path: Path) -> pd.DataFrame:
+    try:
+        with NWBHDF5IO(nwb_path, "r") as io:
+            nwbfile = io.read()
+            if nwbfile.trials is None:
+                raise NWBInputError(f"NWB file has no trials table: {nwb_path}")
+            trials = nwbfile.trials.to_dataframe().reset_index(names="trial_row")
+    except NWBInputError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise NWBInputError(f"Failed to load trials from {nwb_path}: {exc}") from exc
+
+    if trials.empty:
+        raise NWBInputError(f"NWB file has no trials rows: {nwb_path}")
+    for column in trials.columns:
+        if pd.api.types.is_object_dtype(trials[column]):
+            trials[column] = trials[column].map(_decode_if_bytes)
+    return trials
+
+
+def _compute_postprocess_unit_updates(
+    units: pd.DataFrame,
+    trials: pd.DataFrame,
+    *,
+    pre_s: float = 0.05,
+    post_s: float = 0.30,
+) -> pd.DataFrame:
+    if units.empty:
+        raise NWBRerunError("postprocess rerun requires at least one unit")
+
+    rows: list[dict[str, object]] = []
+    for probe_id, probe_units in units.groupby("probe_id", sort=True):
+        onset_times = _stim_onsets_for_probe(trials, str(probe_id))
+        for row in probe_units.itertuples(index=False):
+            spike_times = np.asarray(row.spike_times, dtype=float)
+            slay_score = _compute_slay(spike_times, onset_times, pre_s, post_s)
+            rows.append(
+                {
+                    "unit_id": int(row.unit_id),
+                    "slay_score": None if math.isnan(slay_score) else slay_score,
+                    "is_visual": _compute_ranksum(spike_times, onset_times, pre_s, post_s),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _stim_onsets_for_probe(trials: pd.DataFrame, probe_id: str) -> np.ndarray:
+    probe_column = f"stim_onset_imec_{probe_id}"
+    if probe_column in trials.columns:
+        source_column = probe_column
+    elif probe_id == "imec0" and "stim_onset_time" in trials.columns:
+        source_column = "stim_onset_time"
+    else:
+        raise NWBRerunError(
+            f"postprocess rerun requires trials column {probe_column!r} for {probe_id}"
+        )
+
+    onsets = pd.to_numeric(trials[source_column], errors="coerce").to_numpy(dtype=float)
+    if "trial_valid" in trials.columns:
+        valid = trials["trial_valid"].map(_coerce_trial_valid).to_numpy(dtype=bool)
+        onsets = onsets.copy()
+        onsets[~valid] = np.nan
+    return onsets
+
+
+def _compute_slay(
+    spike_times: np.ndarray,
+    stim_onset_times: np.ndarray,
+    pre_s: float = 0.05,
+    post_s: float = 0.30,
+) -> float:
+    valid_onsets = stim_onset_times[~np.isnan(stim_onset_times)]
+    if len(valid_onsets) < 5:
+        return float("nan")
+
+    n_bins = int((pre_s + post_s) / 0.01)
+    pre_bins = int(pre_s / 0.01)
+
+    trial_vectors = []
+    for onset in valid_onsets:
+        window_start = onset - pre_s
+        window_end = onset + post_s
+        spikes_in = spike_times[(spike_times >= window_start) & (spike_times < window_end)]
+        counts, _ = np.histogram(
+            spikes_in - window_start,
+            bins=n_bins,
+            range=(0, pre_s + post_s),
+        )
+        trial_vectors.append(counts)
+    trial_mat = np.asarray(trial_vectors, dtype=float)
+
+    baseline_rate = trial_mat[:, :pre_bins].mean(axis=1)
+    response_rate = trial_mat[:, pre_bins:].mean(axis=1)
+    if response_rate.mean() <= baseline_rate.mean():
+        return float("nan")
+
+    row_var = trial_mat.var(axis=1)
+    non_constant = trial_mat[row_var > 0]
+    if non_constant.shape[0] < 2:
+        return float("nan")
+
+    ranks = rankdata(non_constant, axis=1)
+    corr_matrix = np.corrcoef(ranks)
+    iu = np.triu_indices_from(corr_matrix, k=1)
+    corrs = corr_matrix[iu]
+    corrs = corrs[~np.isnan(corrs)]
+    if corrs.size == 0:
+        return float("nan")
+    return float(np.mean(corrs))
+
+
+def _compute_ranksum(
+    spike_times: np.ndarray,
+    stim_onset_times: np.ndarray,
+    pre_s: float = 0.05,
+    post_s: float = 0.30,
+) -> bool:
+    valid_onsets = stim_onset_times[~np.isnan(stim_onset_times)]
+    if len(valid_onsets) < 5:
+        return False
+
+    baseline_counts: list[int] = []
+    response_counts: list[int] = []
+    for onset in valid_onsets:
+        baseline = spike_times[(spike_times >= onset - pre_s) & (spike_times < onset)]
+        response = spike_times[(spike_times >= onset) & (spike_times < onset + post_s)]
+        baseline_counts.append(len(baseline))
+        response_counts.append(len(response))
+
+    mean_baseline = float(np.mean(baseline_counts))
+    mean_response = float(np.mean(response_counts))
+    if mean_response <= mean_baseline:
+        return False
+
+    try:
+        _, p = mannwhitneyu(baseline_counts, response_counts, alternative="less")
+        return bool(p < 0.001)
+    except Exception:
+        return False
 
 
 def _choose_output_nwb(
@@ -450,6 +607,21 @@ def _coerce_keep_value(value: object) -> bool | None:
     if text in {"false", "0", "no", "n"}:
         return False
     raise NWBRerunError(f"Invalid keep value: {value!r}")
+
+
+def _coerce_trial_valid(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer, float, np.floating)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y"}:
+        return True
+    if text in {"false", "0", "no", "n"}:
+        return False
+    raise NWBRerunError(f"Invalid trial_valid value: {value!r}")
 
 
 def _coerce_bool_value(value: object) -> bool:

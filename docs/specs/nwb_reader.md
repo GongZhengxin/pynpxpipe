@@ -12,7 +12,7 @@
 2. 读取 `/units` 表，保留 spike_times、probe_id、unit 分类和 provenance 列。
 3. 检查是否具备后续 B/C 回炉所需的输入条件。
 
-PR2 范围加入 `/units` 到 SpikeInterface Sorting-like 接口的适配。raw AP/LF `ElectricalSeries` 到 Recording-like 接口仍留到后续 PR。
+PR2 范围加入 `/units` 到 SpikeInterface Sorting-like 接口的适配。PR3 让 `postprocess` capability 成为可执行入口：要求 `/units` 与非空 `trials`，供轻量 `slay_score/is_visual` 重算使用。raw AP/LF `ElectricalSeries` 到 Recording-like 接口仍留到后续 PR。
 
 ## 2. 输入
 
@@ -157,7 +157,7 @@ class NWBSortingBundle:
 | `postprocess` | units + probe_id + spike_times + trials；若需 waveform/template/unit_locations，则还需 AP raw |
 | `raw` | per-probe AP raw；建议 sync_tables + NIDQ_raw |
 
-PR1 只实现 `rewrite-units` 检查；其他 mode 可以返回结构化 `NWBInputError`，说明尚未实现或缺少能力。
+PR3 后 `rewrite-units` 与轻量 `postprocess` 检查均可通过；`raw` 仍返回结构化 `NWBInputError`，说明尚未实现或缺少能力。轻量 `postprocess` 不要求 raw AP stream，因此不能代表 full SortingAnalyzer postprocess。
 
 ### `load_sortings(sampling_frequency: float | None = None) -> dict[str, NWBSortingBundle]`
 

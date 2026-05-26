@@ -10,7 +10,7 @@
 - `reset-stage`：删除指定 stage 的 checkpoint 以强制重跑
 - `rerun-derivatives`：从已有 NWB 重新导出 Phase 2.5 derivatives
 - `verify-safe-to-delete`：验证 raw `.bin` 是否已安全写入 NWB
-- `rerun-from-nwb`：从已有 NWB 进行 copy-on-write 回炉处理（Task 2 PR1 仅支持 `rewrite-units`）
+- `rerun-from-nwb`：从已有 NWB 进行 copy-on-write 回炉处理（支持 `rewrite-units` 与轻量 `postprocess`；`raw` 预留）
 
 所有业务逻辑均在 `core/`、`io/`、`stages/`、`pipelines/` 层中；CLI 层只解析参数、构建对象、调用 `PipelineRunner`，不含任何计算逻辑。
 
@@ -54,7 +54,7 @@
 | 参数/选项 | 类型 | 说明 |
 |---|---|---|
 | `input_nwb` | positional `Path` (exists, file) | 输入 NWB 文件；不会被原地修改 |
-| `--mode` | `click.Choice(["rewrite-units", "postprocess", "raw"])` | Task 2 PR1 只实现 `rewrite-units`；其他模式给出清晰错误 |
+| `--mode` | `click.Choice(["rewrite-units", "postprocess", "raw"])` | `rewrite-units` 覆盖 `/units` metadata；`postprocess` 从 `/units` + trials 重算 `slay_score/is_visual`；`raw` 给出清晰未实现错误 |
 | `--output-dir` | option `Path` (file_okay=False), required | copy-on-write 回炉输出目录 |
 | `--unit-updates` | option `Path` (exists, file) | CSV，按 `unit_id` 更新 `/units` metadata |
 | `--overwrite` | flag | 允许覆盖所选输出 NWB |
@@ -100,8 +100,8 @@ Reset complete.
 ### `rerun-from-nwb`
 
 - 成功：`click.echo(f"NWB rerun complete. Output: {result.output_nwb}")` + 退出 0
-- `mode != "rewrite-units"`：打印 Task 2 PR1 仅支持 `rewrite-units` + 退出 1
-- 缺少 `--unit-updates`：打印错误 + 退出 1
+- `mode == "raw"`：打印 raw 尚未实现 + 退出 1
+- `mode == "rewrite-units"` 且缺少 `--unit-updates`：打印错误 + 退出 1
 - `PynpxpipeError`：`click.echo(f"Error: {e}", err=True)` + 退出 1
 - 其他异常：`click.echo(f"Unexpected error: {e}", err=True)` + 退出 2
 

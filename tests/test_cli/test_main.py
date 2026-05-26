@@ -841,7 +841,37 @@ class TestRerunFromNWBCommand:
         )
 
         assert result.exit_code != 0
-        assert "rewrite-units" in result.output
+        assert "raw" in result.output
+
+    def test_calls_postprocess_without_unit_updates(self, tmp_path: Path) -> None:
+        input_nwb = tmp_path / "input.nwb"
+        input_nwb.write_bytes(b"not a real nwb; pipeline is mocked")
+        output_dir = tmp_path / "out"
+
+        with patch("pynpxpipe.cli.main.rerun_from_nwb") as mock_rerun:
+            mock_rerun.return_value = MagicMock(output_nwb=output_dir / "nwb_rerun" / "x.nwb")
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "rerun-from-nwb",
+                    str(input_nwb),
+                    "--mode",
+                    "postprocess",
+                    "--output-dir",
+                    str(output_dir),
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_rerun.assert_called_once_with(
+            input_nwb,
+            output_dir,
+            mode="postprocess",
+            unit_updates=None,
+            overwrite=False,
+        )
 
     def test_success_message_includes_output_nwb(self, tmp_path: Path) -> None:
         input_nwb = tmp_path / "input.nwb"

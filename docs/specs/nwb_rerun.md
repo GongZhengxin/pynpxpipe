@@ -25,6 +25,20 @@ input.nwb + units update table/rules
 
 A/B 在 spec 中保留设计边界，但不在 PR1 实现。
 
+Task 2 PR3（本地后续提交）实现 B 的轻量入口：
+
+```text
+input.nwb (/units + trials)
+  -> validate input
+  -> recompute per-unit slay_score / is_visual from spike_times and stimulus onsets
+  -> copy original NWB to rerun output
+  -> replace/rewrite /units in the copied NWB
+  -> validate copied NWB opens
+  -> write rerun checkpoint/report
+```
+
+该入口只依赖 NWB `/units` 与 `trials`，不要求 raw AP recording，因此不计算 waveform/template/unit_locations/Bombcell 等需要 `SortingAnalyzer` 或原始 recording 的指标。full postprocess rerun 与 raw rerun 仍保留为后续工作。
+
 ## 2. 关键设计决策
 
 ### 2.1 输出策略：copy-on-write
@@ -242,7 +256,23 @@ rewrite_units_table(output_nwb: Path, units_df: pd.DataFrame, report: dict) -> N
 
 若低层替换在测试中不稳定，PR1 应退回"新建 NWBFile + 复制核心对象"而不是引入脆弱 hack。无论采用哪种，输入 NWB 原文件都不能改变。
 
-### PR2: postprocess rerun（设计保留）
+### PR2/PR3: postprocess rerun
+
+PR3 先实现 `mode="postprocess"` 的轻量版本：
+
+1. `NWBLoader(nwb_path).require_capabilities("postprocess")`，要求 `/units` 与非空 `trials`。
+2. 读取 `/units`，按 `probe_id` 分组。
+3. 对每个 probe 读取 stimulus onset：
+   - 优先使用 `trials["stim_onset_imec_{probe_id}"]`。
+   - 对 reference probe `imec0`，若 per-probe 列不存在，可 fallback 到 `stim_onset_time`。
+   - 若 `trial_valid` 存在，`False/0/no` trial 视为无效 onset；`NaN` 视为尚未验证，保留为有效 trial。
+4. 对每个 unit 用 NWB 中的 `spike_times`（秒，probe local IMEC clock）重算：
+   - `slay_score`：复用 `PostprocessStage._compute_slay` 的 10 ms bin + trial-to-trial Spearman 语义。
+   - `is_visual`：复用 Mann-Whitney U `p < 0.001` + response > baseline 的语义。
+5. 将计算结果作为 unit update table 写回 copied NWB 的 `/units`。
+6. report/checkpoint 的 `mode` 写为 `"postprocess"`。
+
+后续 full postprocess 版本保留以下扩展点：
 
 1. 从 `/units` 拆 per-probe sorting。
 2. 若需要 waveform/template/unit_locations，要求 AP raw stream 存在。
