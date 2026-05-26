@@ -88,7 +88,12 @@ def rerun_from_nwb(
             updates = _compute_postprocess_unit_updates(original_units, trials)
             unit_update_source = "computed:postprocess-lite"
         elif mode == "raw":
-            raise NWBRerunError("mode='raw' is not implemented in Task 2")
+            loader.require_capabilities("raw")
+            raise NWBRerunError(
+                "mode='raw' has loadable NWB AP Recording support via "
+                "NWBLoader.load_recordings(), but full preprocess/sort/export "
+                "orchestration is not run by rerun_from_nwb yet"
+            )
         else:
             raise NWBRerunError(f"Unsupported NWB rerun mode: {mode!r}")
 

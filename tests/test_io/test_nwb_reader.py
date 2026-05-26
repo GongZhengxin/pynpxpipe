@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from pynwb import NWBHDF5IO, NWBFile, TimeSeries
+from pynwb.ecephys import ElectricalSeries
 
 from pynpxpipe.core.errors import NWBInputError
 from pynpxpipe.io.nwb_reader import NWBLoader
@@ -77,6 +78,66 @@ def _write_tiny_nwb(
     return path
 
 
+def _write_raw_electrical_series_nwb(
+    path: Path,
+    *,
+    probe_ids: tuple[str, ...] = ("imec0", "imec1"),
+) -> Path:
+    """Write a tiny NWB with loadable per-probe ElectricalSeriesAP streams."""
+    nwbfile = NWBFile(
+        session_description="tiny raw fixture",
+        identifier="tiny-raw-fixture",
+        session_start_time=datetime(2024, 1, 1),
+        session_id="240101_Test_nsd1w_V4",
+    )
+    nwbfile.add_electrode_column("probe_id", "Probe identifier")
+    electrode_offset = 0
+    for probe_id in probe_ids:
+        device = nwbfile.create_device(f"{probe_id}_device")
+        group = nwbfile.create_electrode_group(
+            f"{probe_id}_group",
+            description=f"{probe_id} electrodes",
+            location="V4",
+            device=device,
+        )
+        electrode_indices = []
+        for channel in range(2):
+            row_id = electrode_offset + channel
+            nwbfile.add_electrode(
+                id=row_id,
+                x=float(channel),
+                y=float(channel * 20),
+                z=0.0,
+                imp=np.nan,
+                location="V4",
+                filtering="none",
+                group=group,
+                probe_id=probe_id,
+            )
+            electrode_indices.append(row_id)
+        electrode_offset += 2
+        region = nwbfile.create_electrode_table_region(
+            electrode_indices,
+            f"AP electrodes for {probe_id}",
+        )
+        data = np.arange(20, dtype=np.int16).reshape(10, 2) + electrode_indices[0] * 100
+        nwbfile.add_acquisition(
+            ElectricalSeries(
+                name=f"ElectricalSeriesAP_{probe_id}",
+                data=data,
+                electrodes=region,
+                starting_time=0.0,
+                rate=1000.0 if probe_id == "imec0" else 2000.0,
+                conversion=1e-6,
+                description=f"Raw AP recording for {probe_id}",
+            )
+        )
+
+    with NWBHDF5IO(path, "w") as io:
+        io.write(nwbfile)
+    return path
+
+
 def test_inspect_basic_pynpxpipe_nwb(tmp_path: Path) -> None:
     """inspect() summarizes session id, units, trials, and probe ids."""
     nwb_path = _write_tiny_nwb(tmp_path / "input.nwb")
@@ -129,11 +190,18 @@ def test_require_rewrite_units_capability(tmp_path: Path) -> None:
     NWBLoader(nwb_path).require_capabilities("rewrite-units")
 
 
+def test_require_raw_capability_accepts_electrical_series(tmp_path: Path) -> None:
+    """Raw rerun capability accepts loadable AP ElectricalSeries streams."""
+    nwb_path = _write_raw_electrical_series_nwb(tmp_path / "input.nwb")
+
+    NWBLoader(nwb_path).require_capabilities("raw")
+
+
 def test_require_raw_capability_reports_missing_ap(tmp_path: Path) -> None:
     """Raw rerun capability reports missing AP streams clearly."""
-    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb")
+    nwb_path = _write_tiny_nwb(tmp_path / "input.nwb", ap_probe_ids=())
 
-    with pytest.raises(NWBInputError, match="not implemented"):
+    with pytest.raises(NWBInputError, match="ElectricalSeriesAP"):
         NWBLoader(nwb_path).require_capabilities("raw")
 
 
@@ -190,3 +258,27 @@ def test_load_sortings_requires_sampling_frequency_without_ap(tmp_path: Path) ->
 
     with pytest.raises(NWBInputError, match="sampling_frequency"):
         NWBLoader(nwb_path).load_sortings()
+
+
+def test_load_recordings_returns_per_probe_ap_recordings(tmp_path: Path) -> None:
+    """load_recordings() exposes AP ElectricalSeries as SpikeInterface recordings."""
+    nwb_path = _write_raw_electrical_series_nwb(tmp_path / "input.nwb")
+
+    bundles = NWBLoader(nwb_path).load_recordings(load_channel_properties=False)
+
+    assert set(bundles) == {"imec0", "imec1"}
+    assert bundles["imec0"].series_path == "acquisition/ElectricalSeriesAP_imec0"
+    assert bundles["imec0"].sampling_frequency == 1000.0
+    assert bundles["imec1"].sampling_frequency == 2000.0
+    assert bundles["imec0"].recording.get_num_channels() == 2
+    assert bundles["imec0"].recording.get_num_samples() == 10
+    traces = bundles["imec0"].recording.get_traces(start_frame=0, end_frame=3)
+    assert traces.tolist() == [[0, 1], [2, 3], [4, 5]]
+
+
+def test_load_recordings_requires_matching_stream(tmp_path: Path) -> None:
+    """A clear error is raised when the requested raw stream family is absent."""
+    nwb_path = _write_raw_electrical_series_nwb(tmp_path / "input.nwb")
+
+    with pytest.raises(NWBInputError, match="ElectricalSeriesLF"):
+        NWBLoader(nwb_path).load_recordings(stream_type="lf")

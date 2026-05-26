@@ -37,7 +37,7 @@ input.nwb (/units + trials)
   -> write rerun checkpoint/report
 ```
 
-该入口只依赖 NWB `/units` 与 `trials`，不要求 raw AP recording，因此不计算 waveform/template/unit_locations/Bombcell 等需要 `SortingAnalyzer` 或原始 recording 的指标。full postprocess rerun 与 raw rerun 仍保留为后续工作。
+该入口只依赖 NWB `/units` 与 `trials`，不要求 raw AP recording，因此不计算 waveform/template/unit_locations/Bombcell 等需要 `SortingAnalyzer` 或原始 recording 的指标。PR4 补齐 raw AP/LF `ElectricalSeries` 到 SpikeInterface Recording 的输入适配层；真正调度 preprocess/sort/export 仍需 pipeline 层显式实现。
 
 ## 2. 关键设计决策
 
@@ -284,16 +284,23 @@ PR3 先实现 `mode="postprocess"` 的轻量版本：
 
 - 仅 `/units` 是否足够做 metric computation？大多数 waveform/template metric 需要 recording，因此 B 模式可能分成 `labels-only` 与 `full-postprocess` 两档。
 
-### PR3: raw rerun（设计保留）
+### PR4: raw Recording adapter
 
-1. 从 acquisition `ElectricalSeriesAP_{probe_id}` 生成 Recording-like 适配器。
-2. 接入 preprocess/sort stage，避免 stage 直接绑定 `SpikeGLXLoader`。
+1. 从 acquisition `ElectricalSeriesAP_{probe_id}` 生成 SpikeInterface Recording-like 适配器。
+2. 使用 `NWBLoader.load_recordings(stream_type="ap"|"lf")` 按 probe 返回 `NWBRecordingBundle`。
+3. `require_capabilities("raw")` 会检查 AP `ElectricalSeries` 能被 SpikeInterface 懒加载。
+4. `rerun_from_nwb(..., mode="raw")` 暂不启动 sorter；message 明确指出底层 Recording adapter 已存在，但 full preprocess/sort/export orchestration 尚未接入该 helper。
+
+后续 full raw rerun 需在 pipeline 层完成：
+
+1. 将 `PreprocessStage` 的 AP loader 从 `SpikeGLXLoader.load_ap()` 抽象为可注入 `BaseRecording` 来源。
+2. 接入 `SortStage`，复用现有 Kilosort/import 配置。
 3. 对 raw AP/LF/NIDQ 做必要 metadata 恢复。
 4. 输出新 NWB。
 
 开放问题：
 
-- NWB 中 raw AP 是否包含足够 channel geometry / gain / sampling metadata，能否完全重建 SpikeInterface Recording。
+- PR4 已验证 pynpxpipe `ElectricalSeriesAP_{probe_id}` 可以重建 SpikeInterface Recording；channel geometry/gain 是否足以支持所有 preprocess/sort 参数仍需真实数据 smoke test。
 - 如果原 NWB 没有 Phase 3 raw append，应明确报错，不 fallback 到原 SpikeGLX 路径。
 
 ## 6. 可配参数

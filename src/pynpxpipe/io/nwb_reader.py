@@ -42,6 +42,17 @@ class NWBSortingBundle:
     sampling_frequency: float
 
 
+@dataclass(frozen=True)
+class NWBRecordingBundle:
+    """Per-probe SpikeInterface recording reconstructed from NWB acquisition."""
+
+    probe_id: str
+    recording: object
+    series_path: str
+    stream_type: str
+    sampling_frequency: float
+
+
 class NWBLoader:
     """Inspect and load pynpxpipe NWB files without mutating them."""
 
@@ -175,6 +186,54 @@ class NWBLoader:
             )
         return bundles
 
+    def load_recordings(
+        self,
+        *,
+        stream_type: Literal["ap", "lf"] = "ap",
+        load_channel_properties: bool = True,
+    ) -> dict[str, NWBRecordingBundle]:
+        """Load per-probe SpikeInterface ``Recording`` objects from NWB acquisition.
+
+        Args:
+            stream_type: ``"ap"`` for ``ElectricalSeriesAP_{probe_id}``, or
+                ``"lf"`` for ``ElectricalSeriesLF_{probe_id}``.
+            load_channel_properties: Forwarded to SpikeInterface's NWB reader.
+
+        Returns:
+            Mapping of probe id to recording bundle.
+
+        Raises:
+            NWBInputError: If no matching ElectricalSeries can be loaded.
+        """
+        import spikeinterface.extractors as se
+
+        summary = self.inspect()
+        streams = summary.raw_ap_streams if stream_type == "ap" else summary.raw_lf_streams
+        if not streams:
+            raise NWBInputError(f"NWB file has no ElectricalSeries{stream_type.upper()}_* streams")
+
+        bundles: dict[str, NWBRecordingBundle] = {}
+        for probe_id, series_name in sorted(streams.items()):
+            series_path = f"acquisition/{series_name}"
+            try:
+                recording = se.read_nwb_recording(
+                    self.nwb_path,
+                    electrical_series_path=series_path,
+                    load_channel_properties=load_channel_properties,
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise NWBInputError(
+                    f"Failed to load {series_path} as a SpikeInterface recording: {exc}"
+                ) from exc
+            bundles[probe_id] = NWBRecordingBundle(
+                probe_id=probe_id,
+                recording=recording,
+                series_path=series_path,
+                stream_type=stream_type.upper(),
+                sampling_frequency=float(recording.get_sampling_frequency()),
+            )
+        return bundles
+
     def require_capabilities(self, mode: Literal["rewrite-units", "postprocess", "raw"]) -> None:
         """Validate that the NWB contains inputs required by a rerun mode.
 
@@ -196,7 +255,8 @@ class NWBLoader:
             summary = self.inspect()
             if not summary.raw_ap_streams:
                 raise NWBInputError("raw rerun requires ElectricalSeriesAP_* acquisition streams")
-            raise NWBInputError("raw rerun from NWB is not implemented in PR1")
+            self.load_recordings(stream_type="ap", load_channel_properties=False)
+            return
         raise NWBInputError(f"Unsupported NWB rerun mode: {mode!r}")
 
     def _validate_path(self) -> None:
