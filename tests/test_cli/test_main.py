@@ -852,6 +852,57 @@ class TestRerunFromNWBCommand:
             overwrite=False,
         )
 
+    def test_calls_raw_with_configs_and_time_range(self, tmp_path: Path) -> None:
+        input_nwb = tmp_path / "input.nwb"
+        input_nwb.write_bytes(b"not a real nwb; pipeline is mocked")
+        output_dir = tmp_path / "out"
+        pipeline_config = tmp_path / "pipeline.yaml"
+        sorting_config = tmp_path / "sorting.yaml"
+        pipeline_config.write_text("pipeline: test\n", encoding="utf-8")
+        sorting_config.write_text("sorting: test\n", encoding="utf-8")
+        pipeline_cfg = object()
+        sorting_cfg = object()
+
+        with (
+            patch("pynpxpipe.cli.main.load_pipeline_config", return_value=pipeline_cfg),
+            patch("pynpxpipe.cli.main.load_sorting_config", return_value=sorting_cfg),
+            patch("pynpxpipe.cli.main.rerun_from_nwb") as mock_rerun,
+        ):
+            mock_rerun.return_value = MagicMock(output_nwb=output_dir / "nwb_rerun" / "x.nwb")
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "rerun-from-nwb",
+                    str(input_nwb),
+                    "--mode",
+                    "raw",
+                    "--output-dir",
+                    str(output_dir),
+                    "--pipeline-config",
+                    str(pipeline_config),
+                    "--sorting-config",
+                    str(sorting_config),
+                    "--raw-start-sec",
+                    "1.5",
+                    "--raw-end-sec",
+                    "2.5",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_rerun.assert_called_once_with(
+            input_nwb,
+            output_dir,
+            mode="raw",
+            unit_updates=None,
+            overwrite=False,
+            pipeline_config=pipeline_cfg,
+            sorting_config=sorting_cfg,
+            raw_time_range=(1.5, 2.5),
+        )
+
     def test_calls_postprocess_without_unit_updates(self, tmp_path: Path) -> None:
         input_nwb = tmp_path / "input.nwb"
         input_nwb.write_bytes(b"not a real nwb; pipeline is mocked")

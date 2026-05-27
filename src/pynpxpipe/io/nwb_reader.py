@@ -212,6 +212,9 @@ class NWBLoader:
         if not streams:
             raise NWBInputError(f"NWB file has no ElectricalSeries{stream_type.upper()}_* streams")
 
+        channel_locations = (
+            self._channel_locations_by_series(streams.values()) if load_channel_properties else {}
+        )
         bundles: dict[str, NWBRecordingBundle] = {}
         for probe_id, series_name in sorted(streams.items()):
             series_path = f"acquisition/{series_name}"
@@ -225,6 +228,9 @@ class NWBLoader:
                 raise NWBInputError(
                     f"Failed to load {series_path} as a SpikeInterface recording: {exc}"
                 ) from exc
+            locations = channel_locations.get(series_name)
+            if locations is not None and locations.shape[0] == recording.get_num_channels():
+                recording.set_channel_locations(locations)
             bundles[probe_id] = NWBRecordingBundle(
                 probe_id=probe_id,
                 recording=recording,
@@ -281,6 +287,31 @@ class NWBLoader:
                 f"Failed to inspect AP sampling frequencies in {self.nwb_path}: {exc}"
             ) from exc
         return rates
+
+    def _channel_locations_by_series(self, series_names) -> dict[str, np.ndarray]:  # noqa: ANN001
+        self._validate_path()
+        requested = set(series_names)
+        locations_by_series: dict[str, np.ndarray] = {}
+        try:
+            with NWBHDF5IO(self.nwb_path, "r") as io:
+                nwbfile = io.read()
+                for name in requested:
+                    if name not in nwbfile.acquisition:
+                        continue
+                    electrodes = getattr(nwbfile.acquisition[name], "electrodes", None)
+                    if electrodes is None:
+                        continue
+                    electrodes_df = electrodes.to_dataframe()
+                    if not {"x", "y"}.issubset(electrodes_df.columns):
+                        continue
+                    locations = electrodes_df[["x", "y"]].to_numpy(dtype=float)
+                    if locations.size > 0 and np.isfinite(locations).all():
+                        locations_by_series[name] = locations
+        except Exception as exc:  # noqa: BLE001
+            raise NWBInputError(
+                f"Failed to inspect channel locations in {self.nwb_path}: {exc}"
+            ) from exc
+        return locations_by_series
 
     @staticmethod
     def _attach_sorting_properties(sorting, probe_units: pd.DataFrame) -> None:  # noqa: ANN001

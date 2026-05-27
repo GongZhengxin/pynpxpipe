@@ -276,6 +276,16 @@ def test_load_recordings_returns_per_probe_ap_recordings(tmp_path: Path) -> None
     assert traces.tolist() == [[0, 1], [2, 3], [4, 5]]
 
 
+def test_load_recordings_restores_channel_locations(tmp_path: Path) -> None:
+    """ElectricalSeries electrode x/y coordinates become SI channel locations."""
+    nwb_path = _write_raw_electrical_series_nwb(tmp_path / "input.nwb", probe_ids=("imec0",))
+
+    bundles = NWBLoader(nwb_path).load_recordings()
+
+    locations = bundles["imec0"].recording.get_channel_locations()
+    assert np.allclose(locations, np.array([[0.0, 0.0], [1.0, 20.0]]))
+
+
 def test_load_recordings_requires_matching_stream(tmp_path: Path) -> None:
     """A clear error is raised when the requested raw stream family is absent."""
     nwb_path = _write_raw_electrical_series_nwb(tmp_path / "input.nwb")

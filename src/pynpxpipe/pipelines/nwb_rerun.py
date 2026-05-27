@@ -47,6 +47,7 @@ def rerun_from_nwb(
     overwrite: bool = False,
     pipeline_config: PipelineConfig | None = None,
     sorting_config: SortingConfig | None = None,
+    raw_time_range: tuple[float, float] | None = None,
 ) -> NWBRerunResult:
     """Run an NWB-based copy-on-write rerun workflow.
 
@@ -59,6 +60,7 @@ def rerun_from_nwb(
         overwrite: Whether an existing output NWB may be overwritten.
         pipeline_config: Optional preprocessing config for ``mode="raw"``.
         sorting_config: Optional sorter config for ``mode="raw"``.
+        raw_time_range: Optional ``(start_sec, end_sec)`` slice for raw reruns.
 
     Returns:
         Rerun result metadata.
@@ -107,6 +109,7 @@ def rerun_from_nwb(
                 rerun_dir,
                 pipeline_config=pipeline_config,
                 sorting_config=sorting_config,
+                raw_time_range=raw_time_range,
             )
             unit_update_source = "computed:raw-sorter"
         else:
@@ -394,12 +397,14 @@ def _run_raw_rerun_units(
     *,
     pipeline_config: PipelineConfig | None,
     sorting_config: SortingConfig | None,
+    raw_time_range: tuple[float, float] | None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     pipeline_config = pipeline_config or PipelineConfig()
     sorting_config = sorting_config or SortingConfig()
     if sorting_config.mode != "local":
         raise NWBRerunError("raw rerun requires SortingConfig.mode='local'")
 
+    raw_start_sec, raw_end_sec = _normalize_raw_time_range(raw_time_range)
     recording_bundles = loader.load_recordings(stream_type="ap")
     sorter_output_root = rerun_dir / "02_sorter_output_from_nwb"
     rows: list[dict[str, object]] = []
@@ -407,9 +412,16 @@ def _run_raw_rerun_units(
     next_unit_id = 1
 
     for probe_id, bundle in recording_bundles.items():
-        recording = _preprocess_raw_recording(bundle.recording, pipeline_config)
+        source_recording = bundle.recording
+        recording = (
+            _slice_raw_recording(source_recording, raw_start_sec, raw_end_sec)
+            if raw_start_sec is not None and raw_end_sec is not None
+            else source_recording
+        )
+        n_frames_used = int(recording.get_num_frames(segment_index=0))
+        recording = _preprocess_raw_recording(recording, pipeline_config)
         sorter_folder = sorter_output_root / probe_id
-        params = asdict(sorting_config.sorter.params)
+        params = _spikeinterface_sorter_params(sorting_config)
         try:
             sorting = ss.run_sorter(
                 sorting_config.sorter.name,
@@ -422,6 +434,7 @@ def _run_raw_rerun_units(
             raise NWBRerunError(f"raw rerun sorter failed for {probe_id}: {exc}") from exc
 
         fs = float(sorting.get_sampling_frequency())
+        spike_time_offset = float(raw_start_sec or 0.0)
         probe_unit_ids = list(sorting.get_unit_ids())
         for sorter_unit_id in probe_unit_ids:
             spike_samples = sorting.get_unit_spike_train(sorter_unit_id, segment_index=0)
@@ -430,7 +443,7 @@ def _run_raw_rerun_units(
                     "unit_id": next_unit_id,
                     "probe_id": probe_id,
                     "ks_id": _json_safe_unit_id(sorter_unit_id),
-                    "spike_times": np.asarray(spike_samples, dtype=float) / fs,
+                    "spike_times": spike_time_offset + np.asarray(spike_samples, dtype=float) / fs,
                     "unittype_string": "UNCLASSIFIED",
                     "is_visual": False,
                     "slay_score": np.nan,
@@ -442,6 +455,7 @@ def _run_raw_rerun_units(
                 "probe_id": probe_id,
                 "series_path": bundle.series_path,
                 "sampling_frequency": bundle.sampling_frequency,
+                "n_frames_used": n_frames_used,
                 "sorter_name": sorting_config.sorter.name,
                 "sorter_output": str(sorter_folder),
                 "n_units": len(probe_unit_ids),
@@ -456,14 +470,66 @@ def _run_raw_rerun_units(
             "probe_reports": probe_reports,
             "n_probes": len(probe_reports),
             "sorter_name": sorting_config.sorter.name,
+            "raw_time_range_sec": (
+                [raw_start_sec, raw_end_sec] if raw_start_sec is not None else None
+            ),
         }
     }
     return pd.DataFrame(rows), report
 
 
+def _normalize_raw_time_range(
+    raw_time_range: tuple[float, float] | None,
+) -> tuple[float | None, float | None]:
+    if raw_time_range is None:
+        return None, None
+    if len(raw_time_range) != 2:
+        raise NWBRerunError("raw_time_range must be a (start_sec, end_sec) pair")
+    start_sec = float(raw_time_range[0])
+    end_sec = float(raw_time_range[1])
+    if not math.isfinite(start_sec) or not math.isfinite(end_sec):
+        raise NWBRerunError("raw_time_range values must be finite seconds")
+    if start_sec < 0:
+        raise NWBRerunError("raw_time_range start_sec must be >= 0")
+    if end_sec <= start_sec:
+        raise NWBRerunError("raw_time_range end_sec must be greater than start_sec")
+    return start_sec, end_sec
+
+
+def _slice_raw_recording(recording, start_sec: float, end_sec: float):  # noqa: ANN001
+    fs = float(recording.get_sampling_frequency())
+    start_frame = int(round(start_sec * fs))
+    end_frame = int(round(end_sec * fs))
+    n_frames = int(recording.get_num_frames(segment_index=0))
+    if start_frame >= n_frames:
+        duration_sec = n_frames / fs
+        raise NWBRerunError(
+            f"raw_time_range start_sec={start_sec:g} exceeds recording duration {duration_sec:.6g}s"
+        )
+    if end_frame > n_frames:
+        duration_sec = n_frames / fs
+        raise NWBRerunError(
+            f"raw_time_range end_sec={end_sec:g} exceeds recording duration {duration_sec:.6g}s"
+        )
+    if end_frame <= start_frame:
+        raise NWBRerunError("raw_time_range selects zero recording frames")
+    return recording.frame_slice(start_frame=start_frame, end_frame=end_frame)
+
+
+def _spikeinterface_sorter_params(sorting_config: SortingConfig) -> dict[str, object]:
+    params = asdict(sorting_config.sorter.params)
+    try:
+        default_params = ss.get_default_sorter_params(sorting_config.sorter.name)
+    except Exception:
+        return params
+    return {key: value for key, value in params.items() if key in default_params}
+
+
 def _preprocess_raw_recording(recording, pipeline_config: PipelineConfig):  # noqa: ANN001
     cfg = pipeline_config
-    processed = spp.phase_shift(recording)
+    processed = recording
+    if "inter_sample_shift" in processed.get_property_keys():
+        processed = spp.phase_shift(processed)
     processed = spp.bandpass_filter(
         processed,
         freq_min=cfg.preprocess.bandpass.freq_min,

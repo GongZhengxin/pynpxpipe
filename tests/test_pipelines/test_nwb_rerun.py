@@ -14,6 +14,7 @@ import pytest
 from pynwb import NWBHDF5IO, NWBFile
 from pynwb.ecephys import ElectricalSeries
 
+from pynpxpipe.core.config import SorterConfig, SortingConfig
 from pynpxpipe.core.errors import NWBInputError, NWBRerunError
 from pynpxpipe.pipelines.nwb_rerun import rerun_from_nwb
 
@@ -371,3 +372,55 @@ def test_raw_mode_runs_sorter_and_rewrites_units(tmp_path: Path) -> None:
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     assert report["unit_update_source"] == "computed:raw-sorter"
     assert report["raw_rerun"]["probe_reports"][0]["probe_id"] == "imec0"
+
+
+def test_raw_mode_slices_recording_and_offsets_spike_times(tmp_path: Path) -> None:
+    """raw mode can sort a bounded time window while preserving absolute spike times."""
+    import spikeinterface.core as si
+
+    input_nwb = _write_raw_sort_nwb(tmp_path / "input.nwb")
+    sorting = si.NumpySorting.from_unit_dict(
+        [{10: np.array([0, 2], dtype=np.int64)}],
+        sampling_frequency=1000.0,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_sorter(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        recording = args[1]
+        captured["n_frames"] = int(recording.get_num_frames(segment_index=0))
+        captured["sorter_name"] = args[0]
+        captured["has_nblocks_param"] = int("nblocks" in kwargs)
+        return sorting
+
+    with (
+        patch("pynpxpipe.pipelines.nwb_rerun.spp.phase_shift", side_effect=lambda rec: rec),
+        patch(
+            "pynpxpipe.pipelines.nwb_rerun.spp.bandpass_filter", side_effect=lambda rec, **_: rec
+        ),
+        patch(
+            "pynpxpipe.pipelines.nwb_rerun.spp.detect_bad_channels",
+            return_value=(np.array([], dtype=int), None),
+        ),
+        patch(
+            "pynpxpipe.pipelines.nwb_rerun.spp.common_reference", side_effect=lambda rec, **_: rec
+        ),
+        patch("pynpxpipe.pipelines.nwb_rerun.spp.correct_motion", side_effect=lambda rec, **_: rec),
+        patch("pynpxpipe.pipelines.nwb_rerun.ss.run_sorter", side_effect=fake_run_sorter),
+    ):
+        result = rerun_from_nwb(
+            input_nwb,
+            tmp_path / "out",
+            mode="raw",
+            sorting_config=SortingConfig(sorter=SorterConfig(name="simple")),
+            raw_time_range=(0.002, 0.006),
+        )
+
+    units = _read_units(result.output_nwb)
+    assert captured["n_frames"] == 4
+    assert captured["sorter_name"] == "simple"
+    assert captured["has_nblocks_param"] == 0
+    assert np.allclose(units.iloc[0]["spike_times"], np.array([0.002, 0.004]))
+
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert report["raw_rerun"]["raw_time_range_sec"] == [0.002, 0.006]
+    assert report["raw_rerun"]["probe_reports"][0]["n_frames_used"] == 4

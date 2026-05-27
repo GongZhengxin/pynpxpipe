@@ -298,6 +298,13 @@ PR3 先实现 `mode="postprocess"` 的轻量版本：
    - `unittype_string="UNCLASSIFIED"`、`is_visual=False`、`slay_score=NaN`，后续可再用 `mode="postprocess"` 重算。
 6. copy-on-write 写出新 NWB，输入 NWB 不变。
 
+Real-data smoke follow-up:
+
+- `mode="raw"` accepts an optional `raw_time_range=(start_sec, end_sec)` so validation can run on a bounded AP slice while preserving absolute spike times in the rewritten `/units` table.
+- CLI exposes `--pipeline-config`, `--sorting-config`, `--raw-start-sec`, and `--raw-end-sec` for raw reruns.
+- `phase_shift()` is applied only when the loaded Recording carries SpikeGLX `inter_sample_shift`.
+- `NWBLoader.load_recordings()` restores channel locations from `ElectricalSeries.electrodes` x/y coordinates when SpikeInterface does not expose them automatically.
+
 开放问题：
 
 - PR4/PR5 已验证 pynpxpipe `ElectricalSeriesAP_{probe_id}` 可以重建 SpikeInterface Recording，并能接入 preprocess + sorter orchestration；channel geometry/gain 是否足以支持所有 preprocess/sort 参数仍需真实数据 smoke test。

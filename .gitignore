@@ -33,6 +33,7 @@ graphify-out/
 # Runtime / data outputs
 kilosort4_output/
 logs/
+.task2_smoke/
 *.nwb
 *.zarr/
 *.mat

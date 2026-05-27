@@ -268,12 +268,36 @@ def rerun_derivatives(output_dir: Path) -> None:
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="CSV file keyed by unit_id with units metadata updates.",
 )
+@click.option(
+    "--pipeline-config",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Optional pipeline config for --mode raw.",
+)
+@click.option(
+    "--sorting-config",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Optional sorting config for --mode raw.",
+)
+@click.option(
+    "--raw-start-sec",
+    type=float,
+    help="Optional raw rerun slice start time in seconds; raw mode only.",
+)
+@click.option(
+    "--raw-end-sec",
+    type=float,
+    help="Optional raw rerun slice end time in seconds; raw mode only.",
+)
 @click.option("--overwrite", is_flag=True, default=False, help="Overwrite selected output NWB.")
 def rerun_from_nwb_command(
     input_nwb: Path,
     mode: str,
     output_dir: Path,
     unit_updates: Path | None,
+    pipeline_config: Path | None,
+    sorting_config: Path | None,
+    raw_start_sec: float | None,
+    raw_end_sec: float | None,
     overwrite: bool,
 ) -> None:
     """Re-run selected processing from an existing NWB file.
@@ -283,14 +307,50 @@ def rerun_from_nwb_command(
     if mode == "rewrite-units" and unit_updates is None:
         click.echo("Error: --unit-updates is required for rewrite-units", err=True)
         sys.exit(1)
+    raw_only_options = {
+        "--pipeline-config": pipeline_config,
+        "--sorting-config": sorting_config,
+        "--raw-start-sec": raw_start_sec,
+        "--raw-end-sec": raw_end_sec,
+    }
+    if mode != "raw":
+        unexpected = [name for name, value in raw_only_options.items() if value is not None]
+        if unexpected:
+            click.echo(
+                f"Error: {', '.join(unexpected)} can only be used with --mode raw",
+                err=True,
+            )
+            sys.exit(1)
+    if (raw_start_sec is None) != (raw_end_sec is None):
+        click.echo("Error: --raw-start-sec and --raw-end-sec must be provided together", err=True)
+        sys.exit(1)
+    raw_time_range = None
+    if raw_start_sec is not None and raw_end_sec is not None:
+        if raw_end_sec <= raw_start_sec:
+            click.echo("Error: --raw-end-sec must be greater than --raw-start-sec", err=True)
+            sys.exit(1)
+        raw_time_range = (raw_start_sec, raw_end_sec)
 
     try:
+        pipeline_cfg = (
+            load_pipeline_config(pipeline_config) if pipeline_config is not None else None
+        )
+        sorting_cfg = load_sorting_config(sorting_config) if sorting_config is not None else None
+        kwargs = {
+            "mode": mode,
+            "unit_updates": unit_updates,
+            "overwrite": overwrite,
+        }
+        if pipeline_cfg is not None:
+            kwargs["pipeline_config"] = pipeline_cfg
+        if sorting_cfg is not None:
+            kwargs["sorting_config"] = sorting_cfg
+        if raw_time_range is not None:
+            kwargs["raw_time_range"] = raw_time_range
         result = rerun_from_nwb(
             input_nwb,
             output_dir,
-            mode=mode,
-            unit_updates=unit_updates,
-            overwrite=overwrite,
+            **kwargs,
         )
         click.echo(f"NWB rerun complete. Output: {result.output_nwb}")
     except PynpxpipeError as e:
