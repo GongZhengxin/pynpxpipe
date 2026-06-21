@@ -4,10 +4,13 @@
 
 实现 CLI 薄壳入口，是 `click` 在整个项目中的**唯一导入位置**。
 
-提供三个命令：
+提供主要命令：
 - `run`：执行完整（或部分）pipeline
 - `status`：显示已有输出目录的 pipeline 状态
 - `reset-stage`：删除指定 stage 的 checkpoint 以强制重跑
+- `rerun-derivatives`：从已有 NWB 重新导出 Phase 2.5 derivatives
+- `verify-safe-to-delete`：验证 raw `.bin` 是否已安全写入 NWB
+- `rerun-from-nwb`：从已有 NWB 进行 copy-on-write 回炉处理（支持 `rewrite-units`、轻量 `postprocess` 与 `raw` sorting rerun）
 
 所有业务逻辑均在 `core/`、`io/`、`stages/`、`pipelines/` 层中；CLI 层只解析参数、构建对象、调用 `PipelineRunner`，不含任何计算逻辑。
 
@@ -46,6 +49,16 @@
 | `stage` | positional `click.Choice(STAGE_ORDER)` | 要重置的 stage 名称 |
 | `--yes / -y` | flag | 跳过确认提示 |
 
+### `rerun-from-nwb` 命令
+
+| 参数/选项 | 类型 | 说明 |
+|---|---|---|
+| `input_nwb` | positional `Path` (exists, file) | 输入 NWB 文件；不会被原地修改 |
+| `--mode` | `click.Choice(["rewrite-units", "postprocess", "raw"])` | `rewrite-units` 覆盖 `/units` metadata；`postprocess` 从 `/units` + trials 重算 `slay_score/is_visual`；`raw` 从 NWB AP `ElectricalSeries` 重新 preprocess/sort 并重写 `/units` |
+| `--output-dir` | option `Path` (file_okay=False), required | copy-on-write 回炉输出目录 |
+| `--unit-updates` | option `Path` (exists, file) | CSV，按 `unit_id` 更新 `/units` metadata |
+| `--overwrite` | flag | 允许覆盖所选输出 NWB |
+
 ---
 
 ## 3. 输出
@@ -83,6 +96,13 @@ Reset complete.
 ```
 
 若 `--yes` 跳过确认直接执行。
+
+### `rerun-from-nwb`
+
+- 成功：`click.echo(f"NWB rerun complete. Output: {result.output_nwb}")` + 退出 0
+- `mode == "rewrite-units"` 且缺少 `--unit-updates`：打印错误 + 退出 1
+- `PynpxpipeError`：`click.echo(f"Error: {e}", err=True)` + 退出 1
+- 其他异常：`click.echo(f"Unexpected error: {e}", err=True)` + 退出 2
 
 ---
 
@@ -190,6 +210,22 @@ def status(output_dir: Path) -> None:
 @click.option("--yes", "-y", is_flag=True, default=False, help="Skip confirmation prompt.")
 def reset_stage(output_dir: Path, stage: str, yes: bool) -> None:
     """Delete the checkpoint for STAGE to force it to re-run."""
+
+
+@cli.command("rerun-from-nwb")
+@click.argument("input_nwb", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--mode", type=click.Choice(["rewrite-units", "postprocess", "raw"]), default="rewrite-units")
+@click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
+@click.option("--unit-updates", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--overwrite", is_flag=True, default=False)
+def rerun_from_nwb_command(
+    input_nwb: Path,
+    mode: str,
+    output_dir: Path,
+    unit_updates: Path | None,
+    overwrite: bool,
+) -> None:
+    """Re-run selected processing from an existing NWB file."""
 ```
 
 ---
@@ -234,6 +270,14 @@ def reset_stage(output_dir: Path, stage: str, yes: bool) -> None:
 | `test_reset_confirms_without_yes` | 无 `--yes`，stdin 输入 "y" | 成功删除 |
 | `test_reset_aborts_without_yes_and_n` | 无 `--yes`，stdin 输入 "n" | 不删除，输出 "Aborted" |
 
+### `rerun-from-nwb` 命令
+
+| 测试名 | 输入构造 | 预期行为 |
+|---|---|---|
+| `test_calls_rerun_from_nwb_pipeline` | mock `rerun_from_nwb` | 参数传递正确 |
+| `test_calls_raw_without_unit_updates` | `--mode raw` | 调用 `rerun_from_nwb(..., mode="raw")` |
+| `test_success_message_includes_output_nwb` | mock result | 输出新 NWB 路径 |
+
 ### CLI 架构约束
 
 | 测试名 | 预期行为 |
@@ -253,6 +297,7 @@ def reset_stage(output_dir: Path, stage: str, yes: bool) -> None:
 | `pathlib.Path` | 标准库 | 路径操作 |
 | `pynpxpipe.pipelines.runner.PipelineRunner` | 项目内部 | 业务编排 |
 | `pynpxpipe.pipelines.runner.STAGE_ORDER` | 项目内部 | stage 名称列表，用于 `click.Choice` |
+| `pynpxpipe.pipelines.nwb_rerun.rerun_from_nwb` | 项目内部 | Task 2 NWB 回炉 copy-on-write 编排 |
 | `pynpxpipe.core.session.SessionManager` | 项目内部 | 创建 session 对象 |
 | `pynpxpipe.core.config.load_pipeline_config` | 项目内部 | 加载 pipeline.yaml |
 | `pynpxpipe.core.config.load_sorting_config` | 项目内部 | 加载 sorting.yaml |
