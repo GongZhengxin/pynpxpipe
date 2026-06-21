@@ -124,3 +124,11 @@ class MergeError(PynpxpipeError):
 
     Examples: sorted SortingAnalyzer cannot be loaded, auto_merge() raises.
     """
+
+
+class NWBInputError(PynpxpipeError):
+    """Raised when an NWB file cannot support a requested rerun workflow."""
+
+
+class NWBRerunError(PynpxpipeError):
+    """Raised when an NWB-based rerun workflow fails."""
