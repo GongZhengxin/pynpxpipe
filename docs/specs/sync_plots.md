@@ -341,18 +341,18 @@ def plot_sync_pulse_interval(
 
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
-| `test_sync_drift_saves_to_correct_path` | 合法 sync 数据，`output_dir=tmp_path` | 文件存在于 `tmp_path/sync/figures/sync_drift_imec0.png` |
-| `test_event_alignment_saves_to_correct_path` | 合法 trial_events_df | 文件存在于 `tmp_path/sync/figures/event_alignment.png` |
-| `test_photodiode_heatmap_saves_to_correct_path` | mock nidq_recording | 文件存在于 `tmp_path/sync/figures/photodiode_heatmap.png` |
-| `test_onset_latency_histogram_saves_to_correct_path` | calibrated_onsets 有 good trial | 文件存在于 `tmp_path/sync/figures/onset_latency_histogram.png` |
-| `test_photodiode_mean_signal_saves_to_correct_path` | mock nidq_recording + calibrated_onsets | 文件存在于 `tmp_path/sync/figures/photodiode_mean_signal.png` |
-| `test_sync_pulse_interval_saves_to_correct_path` | ap_sync_times 有 10 个脉冲 | 文件存在于 `tmp_path/sync/figures/sync_pulse_interval_{probe_id}.png` |
+| `test_sync_drift_saves_to_correct_path` | 合法 sync 数据，`output_dir=tmp_path` | 文件存在于 `tmp_path/04_sync/figures/sync_drift_imec0.png` |
+| `test_event_alignment_saves_to_correct_path` | 合法 trial_events_df | 文件存在于 `tmp_path/04_sync/figures/event_alignment.png` |
+| `test_photodiode_heatmap_saves_to_correct_path` | mock nidq_recording | 文件存在于 `tmp_path/04_sync/figures/photodiode_heatmap.png` |
+| `test_onset_latency_histogram_saves_to_correct_path` | calibrated_onsets 有 good trial | 文件存在于 `tmp_path/04_sync/figures/onset_latency_histogram.png` |
+| `test_photodiode_mean_signal_saves_to_correct_path` | mock nidq_recording + calibrated_onsets | 文件存在于 `tmp_path/04_sync/figures/photodiode_mean_signal.png` |
+| `test_sync_pulse_interval_saves_to_correct_path` | ap_sync_times 有 10 个脉冲 | 文件存在于 `tmp_path/04_sync/figures/sync_pulse_interval_{probe_id}.png` |
 
 ### 目录自动创建
 
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
-| `test_figures_dir_created_if_not_exists` | `output_dir` 指向不存在的目录 | 调用后 `output_dir/sync/figures/` 目录存在 |
+| `test_figures_dir_created_if_not_exists` | `output_dir` 指向不存在的目录 | 调用后 `output_dir/04_sync/figures/` 目录存在 |
 
 ### `generate_all_plots` 容错
 

@@ -57,7 +57,7 @@ uv run python tools/install_sort_stack.py
 ```bash
 git clone https://github.com/GongZhengxin/pynpxpipe.git
 cd pynpxpipe
-uv sync --all-groups
+uv sync --inexact --all-groups
 
 # One-time sort stack install (see Mode A step 2 for why)
 uv run python tools/install_sort_stack.py
@@ -283,9 +283,11 @@ D:/output/my_session/
     discover.json                # Stage checkpoint
     preprocess_imec0.json        # Per-probe checkpoint
     preprocess_imec1.json        # (if multi-probe)
-  preprocessed/
-    imec0/                       # Zarr recording (chunked, memory-efficient)
-    imec1/                       # (if multi-probe)
+  01_preprocessed/
+    imec0.zarr/                  # Zarr recording (chunked, memory-efficient)
+    imec0/
+      figures/                   # Optional preprocess QC figures
+    imec1.zarr/                  # (if multi-probe)
 ```
 
 ### Preprocessing Steps (per probe)
@@ -385,16 +387,16 @@ Subject:
 
 | Problem | Solution |
 |---------|----------|
-| `ModuleNotFoundError: No module named 'panel'` | Install UI extra: `uv sync --extra ui` |
+| `ModuleNotFoundError: No module named 'panel'` | Install UI extra: `uv sync --inexact --extra ui` |
 | `ModuleNotFoundError: No module named 'torch'` | Run `uv run python tools/install_sort_stack.py` (torch lives outside pyproject; see install guide) |
 | `The dredge method require torch: pip install torch` | Same — run the sort stack installer; DREDge needs `torch` |
 | `ModuleNotFoundError: No module named 'kilosort'` | Same — run the sort stack installer |
 | `TorchEnvError: torch_device='cuda' was requested ... CPU-only build` | Your torch is the CPU wheel. Run `uv run python tools/install_sort_stack.py --force` and pick a CUDA wheel matching your driver |
 | `TorchEnvError: torch_device='cuda' was requested but no NVIDIA GPU` | Set `torch_device: cpu` (or `auto`) in `config/sorting.yaml` |
-| `pynpxpipe-ui` command not found | Run via `uv run pynpxpipe-ui` or install with `uv sync` |
+| `pynpxpipe-ui` command not found | Run via `uv run pynpxpipe-ui` or install with `uv sync --inexact` |
 | UI doesn't open in browser | Navigate manually to `http://localhost:5006` |
 | Out of memory during preprocess | Reduce `chunk_duration` (e.g., `"0.5s"`) or lower `n_jobs` in `pipeline.yaml` |
 | Motion correction + KS4 nblocks conflict | These are mutually exclusive. Set motion correction to `null` if using KS4 nblocks > 0, or set nblocks to 0 if using DREDge |
-| GPU not detected for sorting | Install GPU extra: `uv sync --extra gpu`. Ensure CUDA drivers are installed |
+| GPU not detected for sorting | Install GPU extra: `uv sync --inexact --extra gpu`. Ensure CUDA drivers are installed |
 | Pipeline stuck on a stage | Check `logs/pipeline.jsonl` for errors. Use `reset-stage` to clear the checkpoint and retry |
 | BHV2 parsing errors | pynpxpipe uses a pure-Python parser by default. Set `BHV2_BACKEND=matlab` to use MATLAB Engine as fallback (requires MATLAB) |

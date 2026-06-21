@@ -151,7 +151,7 @@
 
 ### `_align_probe_to_nidq(probe_id, nidq_sync_times)`
 
-1. 从 `{output_dir}/01_01_preprocessed/{probe_id}/` 加载 Zarr recording（或直接从原始 AP 文件）
+1. 从 `{output_dir}/01_preprocessed/{probe_id}.zarr` 加载 Zarr recording（或直接从原始 AP 文件）
 2. 从 AP 数字通道按 `config.sync.imec_sync_bit` 提取上升沿 → `ap_sync_times`（用 `SpikeGLXLoader.extract_sync_edges` 或 `np.diff` 方法）
 3. 调用 `align_imec_to_nidq(probe_id, ap_sync_times, nidq_sync_times, max_time_error_ms=config.sync.max_time_error_ms, gap_threshold_ms=config.sync.gap_threshold_ms)` → `SyncResult`
 4. 返回 `(ap_sync_times, SyncResult)`（ap_sync_times 供诊断图使用）

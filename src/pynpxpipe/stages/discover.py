@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pynpxpipe.core.errors import DiscoverError, ProbeDeclarationMismatchError

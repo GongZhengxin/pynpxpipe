@@ -208,7 +208,7 @@ class CheckpointManager:
   "status": "completed",
   "completed_at": "2026-03-31T11:30:00",
   "bad_channels": [32, 45, 67],
-  "recording_path": "preprocessed/imec0",
+  "recording_path": "01_preprocessed/imec0.zarr",
   "n_channels_after": 381
 }
 ```
@@ -223,7 +223,7 @@ class CheckpointManager:
   "sorter": "kilosort4",
   "mode": "local",
   "n_units": 142,
-  "sorting_path": "sorting/imec0"
+  "sorting_path": "02_sorted/imec0"
 }
 ```
 
@@ -233,8 +233,8 @@ class CheckpointManager:
   "stage": "synchronize",
   "status": "completed",
   "completed_at": "2026-03-31T14:30:00",
-  "sync_tables_path": "sync/sync_tables.json",
-  "behavior_events_path": "sync/behavior_events.parquet",
+  "sync_tables_path": "04_sync/sync_tables.json",
+  "behavior_events_path": "04_sync/behavior_events.parquet",
   "n_trials": 480,
   "sync_residuals_ms": {"imec0": 0.8, "imec1": 1.2},
   "photodiode_calibrated": true,
@@ -252,7 +252,7 @@ class CheckpointManager:
   "completed_at": "2026-03-31T15:00:00",
   "n_units_before": 142,
   "n_units_after": 87,
-  "curated_path": "curated/imec0"
+  "curated_path": "05_curated/imec0"
 }
 ```
 
@@ -263,7 +263,7 @@ class CheckpointManager:
   "probe_id": "imec0",
   "status": "completed",
   "completed_at": "2026-03-31T17:00:00",
-  "analyzer_path": "postprocessed/imec0",
+  "analyzer_path": "06_postprocessed/imec0",
   "n_units": 87,
   "slay_computed": true,
   "eye_validation_computed": true

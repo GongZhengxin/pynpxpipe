@@ -11,7 +11,7 @@
 
 - [x] **I.1** 给 `pyproject.toml` 的 `[plots]` extra 追加 `"upsetplot>=0.9"`。 ✅ 2026-04-19
   - 现状：`src/pynpxpipe/plots/bombcell.py:138` 调用 `sw.plot_bombcell_labels_upset`，运行时报 `UpSet plots require 'upsetplot' package pip install upsetplot`。错误被 `try/except` 吞掉写 WARNING，不影响其他图。
-  - 动作：改 pyproject + `uv lock && uv sync --extra plots`。
+  - 动作：改 pyproject + `uv lock && uv sync --inexact --extra plots`。
   - 验证：重跑 curate stage，`05_curated/{probe}/figures/bombcell_labels_upset.png` 出现。
 
 ---

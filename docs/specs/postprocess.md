@@ -4,7 +4,7 @@
 
 实现 pipeline 第六个 stage：**后处理（Postprocess）**。
 
-对每个 probe 的 curated sorting 结果运行完整的 SortingAnalyzer 扩展流程（waveforms → templates → unit_locations → template_similarity），计算每个单元的 SLAY（Stimulus-Locked Activity Yield）分数，并执行眼动有效性验证（可选）。保存 SortingAnalyzer 到 `{output_dir}/06_06_postprocessed/{probe_id}/`，供 export stage 使用。
+对每个 probe 的 curated sorting 结果运行完整的 SortingAnalyzer 扩展流程（waveforms → templates → unit_locations → template_similarity），计算每个单元的 SLAY（Stimulus-Locked Activity Yield）分数，并执行眼动有效性验证（可选）。保存 SortingAnalyzer 到 `{output_dir}/06_postprocessed/{probe_id}/`，供 export stage 使用。
 
 **内存管理**：waveform 提取可能 OOM；遇到 `MemoryError` 时将 `chunk_duration` 减半，重试一次。若仍失败 → raise `PostprocessError`。
 
@@ -28,15 +28,15 @@
 | `config.postprocess.pre_onset_ms` | `float` | `50.0` | 动态 SLAY 窗口的 pre-stimulus（ms），`pre_s = pre_onset_ms / 1000` |
 | `config.postprocess.eye_validation.enabled` | `bool` | `True` | 是否执行眼动验证 |
 | `config.postprocess.eye_validation.eye_threshold` | `float` | `0.999` | 注视比例阈值（cf. MATLAB `eye_thres=0.999`） |
-| `config.resources.chunk_duration` | `str` | `"1s"` | 初始分块时间窗；OOM 时减半 |
+| `config.resources.chunk_duration` | `str` | `"auto"` | 初始分块时间窗；runner 层解析 `"auto"`，standalone stage fallback 为 `"1s"`；OOM 时减半 |
 
 ### 外部数据依赖
 
 | 文件 | 路径 | 说明 |
 |---|---|---|
 | behavior_events.parquet | `{output_dir}/04_sync/behavior_events.parquet` | 由 synchronize stage 写出，含 `stim_onset_nidq_s`、`stim_onset_imec_s` |
-| curated sorting | `{output_dir}/05_05_curated/{probe_id}/` | 由 curate stage 写出 |
-| preprocessed recording | `{output_dir}/01_01_preprocessed/{probe_id}/` | 由 preprocess stage 写出（Zarr） |
+| curated sorting | `{output_dir}/05_curated/{probe_id}/` | 由 curate stage 写出 |
+| preprocessed recording | `{output_dir}/01_preprocessed/{probe_id}.zarr` | 由 preprocess stage 写出（Zarr） |
 
 ---
 
@@ -46,8 +46,8 @@
 
 | 输出 | 路径 | 说明 |
 |---|---|---|
-| SortingAnalyzer | `{output_dir}/06_06_postprocessed/{probe_id}/` | binary_folder 格式，含所有扩展 |
-| SLAY 分数 | `{output_dir}/06_06_postprocessed/{probe_id}/slay_scores.json` | 每个 unit_id → SLAY float |
+| SortingAnalyzer | `{output_dir}/06_postprocessed/{probe_id}/` | binary_folder 格式，含所有扩展 |
+| SLAY 分数 | `{output_dir}/06_postprocessed/{probe_id}/slay_scores.json` | 每个 unit_id → SLAY float |
 | 诊断图（可选） | `{output_dir}/figs/postprocess_eye_density.png` | 眼位空间密度热图（见§4 诊断图） |
 | per-probe checkpoint | `{output_dir}/checkpoints/postprocess_{probe_id}.json` | 含 unit 数量和 SLAY 统计 |
 
@@ -63,7 +63,7 @@
   "n_units": 87,
   "slay_mean": 0.62,
   "slay_nan_count": 3,
-  "analyzer_path": "/output/postprocessed/imec0"
+  "analyzer_path": "/output/06_postprocessed/imec0"
 }
 ```
 
@@ -369,7 +369,7 @@ class PostprocessStage(BaseStage):
 | `pre_onset_ms` | `config.postprocess.pre_onset_ms` | `50.0` | 动态 SLAY 窗口 pre-stimulus（ms），**禁止硬编码** |
 | `eye_validation_enabled` | `config.postprocess.eye_validation.enabled` | `True` | 眼动验证开关 |
 | `eye_threshold` | `config.postprocess.eye_validation.eye_threshold` | `0.999` | 注视比例阈值，**禁止硬编码** |
-| `chunk_duration` | `config.resources.chunk_duration` | `"1s"` | 初始分块；OOM 时减半 |
+| `chunk_duration` | `config.resources.chunk_duration` | `"auto"` | 初始分块；runner 层解析 `"auto"`，standalone stage fallback 为 `"1s"`；OOM 时减半 |
 
 ---
 
@@ -397,8 +397,8 @@ class PostprocessStage(BaseStage):
 | 测试名 | 输入构造 | 预期行为 |
 |---|---|---|
 | `test_run_postprocesses_all_probes` | 2 probes | `_postprocess_probe` 各调用一次 |
-| `test_analyzer_saved_to_binary_folder` | 正常 | `postprocessed/imec0/` 存在 |
-| `test_slay_scores_json_written` | 正常 | `postprocessed/imec0/slay_scores.json` 存在 |
+| `test_analyzer_saved_to_binary_folder` | 正常 | `06_postprocessed/imec0/` 存在 |
+| `test_slay_scores_json_written` | 正常 | `06_postprocessed/imec0/slay_scores.json` 存在 |
 | `test_probe_checkpoint_written` | 正常 | `checkpoints/postprocess_imec0.json` status=completed |
 | `test_extension_order` | 正常 | extensions 按 random_spikes→waveforms→templates→unit_locations→template_similarity 顺序调用 |
 | `test_analyzer_uses_binary_folder_format` | 正常 | `create_sorting_analyzer` 以 `format="binary_folder"` 调用 |
@@ -474,6 +474,16 @@ class PostprocessStage(BaseStage):
 - 对每个 unit，在 stim onset 窗口内统计 spike count → 10ms bin → 逐 trial 向量
 - Python 的 SLAY 算法中 trial vector 构建等价于此步骤
 
+#### Legacy MATLAB PSTH 20 ms 偏移说明
+
+若在多 probe session 中看到 pynpxpipe 的 PSTH 相比 legacy MATLAB pipeline **提前约 20ms**，不要在 pynpxpipe 端加人为时间平移。交接审计中的结论是 legacy MATLAB 侧存在 probe 混用 bug：
+
+- legacy `PostProcess_function_raw.m` 在读取 meta/sync 时硬编码 `imec0`，导致非 `imec0` probe 可能用 `imec0` 的采样率和 `imec0↔NIDQ` 映射换算 spike time。
+- 用户数据中两 probe 采样率差约 1.94 ppm；在 9000s session 的中点附近可累计到约 18ms，和观测到的约 20ms PSTH 差异同量级。
+- pynpxpipe 在 synchronize/export 路径按 probe 独立维护 IMEC clock 与 IMEC↔NIDQ 拟合，因此 canonical 数值输出应以 per-probe spike times、NWB units 与 `07_derivatives` raster 为准。
+
+因此，这个 20ms 现象是 legacy MATLAB 对照中的已知偏移，不是 pynpxpipe 需要补偿的 offset。`psth_top_units.png` 只是 QC 诊断图，默认 10ms bin；不应拿它复刻 legacy `.mat` 里的滑动窗口 PSTH 结构。
+
 **Step #19 — 统计过滤：**
 - `mean(response) > mean(baseline)`：排除抑制性响应
 - Spearman 相关系数计算 trial-to-trial 一致性
@@ -488,4 +498,4 @@ class PostprocessStage(BaseStage):
 | 眼动数据逐 trial 分块读取 | MATLAB 预分配 3D 矩阵 `eye_matrix [2 × onsets × T]`；Python 避免 OOM |
 | SLAY 方向性过滤在计算函数内部 | MATLAB 在步骤 #19 独立做统计过滤；Python 将方向性检查集成到 `_compute_slay` 中，简化流程 |
 | KS4 时钟对齐推迟到 export | MATLAB 在 #15 做一次性转换；Python 在 export 按需转换（spike times 保持原始 IMEC 时钟直到写 NWB） |
-| Raster/PSTH 不单独生成 | MATLAB 生成 raster 和 PSTH 图；Python 的 SLAY 计算包含等价的 binned spike count 逻辑，可视化由下游 notebook 完成 |
+| 不复制 legacy `.mat` 的 Raster/PSTH 结构 | MATLAB 写 `Raster` 和 `response_matrix_img`；Python 以 NWB units、per-probe spike times 与 `07_derivatives` raster 作为 canonical 数值输出，`06_postprocessed/.../figures/psth_top_units.png` 仅用于 QC |

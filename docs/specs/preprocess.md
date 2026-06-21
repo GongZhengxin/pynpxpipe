@@ -23,11 +23,11 @@
 
 | 配置键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `config.pipeline.preprocess.freq_min` | `float` | `300.0` | 带通滤波低截止频率（Hz） |
-| `config.pipeline.preprocess.freq_max` | `float` | `6000.0` | 带通滤波高截止频率（Hz） |
-| `config.pipeline.preprocess.motion_correction.method` | `str \| None` | `None` | 运动校正方法，`None` 表示跳过；支持 `"dredge"` 等 SpikeInterface 内置方法 |
-| `config.pipeline.n_jobs` | `int \| str` | `"auto"` | SpikeInterface 内部并行 job 数；`"auto"` 由 ResourceDetector 在 runner 层解析 |
-| `config.pipeline.chunk_duration` | `str` | `"1s"` | SpikeInterface 分块处理时间窗（如 `"1s"`、`"30s"`） |
+| `config.preprocess.bandpass.freq_min` | `float` | `300.0` | 带通滤波低截止频率（Hz） |
+| `config.preprocess.bandpass.freq_max` | `float` | `6000.0` | 带通滤波高截止频率（Hz） |
+| `config.preprocess.motion_correction.method` | `str \| None` | `"dredge"` | 运动校正方法，`None` 表示跳过；支持 `"dredge"` 等 SpikeInterface 内置方法 |
+| `config.resources.n_jobs` | `int \| str` | `"auto"` | SpikeInterface 内部并行 job 数；`"auto"` 由 ResourceDetector 在 runner 层解析；standalone stage fallback 为 `4` |
+| `config.resources.chunk_duration` | `str` | `"auto"` | SpikeInterface 分块处理时间窗；`"auto"` 由 ResourceDetector 在 runner 层解析；standalone stage fallback 为 `"1s"` |
 
 ---
 
@@ -37,7 +37,7 @@
 
 | 输出 | 路径 | 说明 |
 |---|---|---|
-| 预处理后 Zarr 录制 | `{output_dir}/01_01_preprocessed/{probe_id}/` | lazy SpikeInterface recording，可被 sort stage 直接读取 |
+| 预处理后 Zarr 录制 | `{output_dir}/01_preprocessed/{probe_id}.zarr` | lazy SpikeInterface recording，可被 sort stage 直接读取 |
 | per-probe checkpoint | `{output_dir}/checkpoints/preprocess_{probe_id}.json` | 含处理参数和通道数量 |
 
 ### per-probe checkpoint payload
@@ -51,7 +51,7 @@
   "freq_min": 300.0,
   "freq_max": 6000.0,
   "motion_correction_method": null,
-  "zarr_path": "/output/preprocessed/imec0"
+  "zarr_path": "/output/01_preprocessed/imec0.zarr"
 }
 ```
 
@@ -85,13 +85,14 @@
 6. **移除坏通道**：若有坏通道，`recording = recording.remove_channels(bad_channel_ids)`
 7. **公共中值参考（CMR）**：`recording = si.common_reference(recording, reference="global", operator="median")`
    — 坏道已移除后再做 CMR，避免污染参考信号
-8. **运动校正（可选）**：若 `config.pipeline.preprocess.motion_correction.method is not None` → 调用 `si.correct_motion(recording, preset=method)` （或对应 API）；若方法不支持则 raise `PreprocessError`
+8. **运动校正（可选）**：若 `config.preprocess.motion_correction.method is not None` → 调用 `si.correct_motion(recording, preset=method)` （或对应 API）；若方法不支持则 raise `PreprocessError`
    — 注意：启用此步时 sort 阶段 Kilosort4 的 `nblocks` 必须设为 0，不能双重校正
 9. **保存为 Zarr**：
    ```python
-   zarr_path = output_dir / "preprocessed" / probe_id
-   recording.save(folder=zarr_path, format="zarr", chunk_duration=..., n_jobs=...)
+   zarr_path = output_dir / "01_preprocessed" / f"{probe_id}.zarr"
+   recording.save(folder=zarr_path, format="zarr")
    ```
+   `n_jobs` / `chunk_duration` 通过 `BaseStage._setup_spikeinterface_jobs()` 写入 SpikeInterface 全局 job kwargs，不在每次 `save()` 调用里重复传参。
    若磁盘空间不足或权限失败 → raise `PreprocessError("Failed to save Zarr for {probe_id}: {e}")`
 10. **写 per-probe checkpoint**：`_write_checkpoint(payload, probe_id=probe_id)`
 11. **释放内存**：`del recording; import gc; gc.collect()`
@@ -149,7 +150,7 @@ class PreprocessStage(BaseStage):
         4. Detect and remove bad channels (on filtered data).
         5. Common median reference.
         6. Motion correction if config.preprocess.motion_correction.method not None.
-        7. Save to Zarr at {output_dir}/01_01_preprocessed/{probe_id}/.
+        7. Save to Zarr at {output_dir}/01_preprocessed/{probe_id}.zarr.
         8. Write per-probe checkpoint; del recording + gc.collect().
 
         Raises:
@@ -171,11 +172,11 @@ class PreprocessStage(BaseStage):
 
 | 参数 | 配置键 | 默认值 | 说明 |
 |---|---|---|---|
-| `freq_min` | `config.pipeline.preprocess.freq_min` | `300.0` | 带通滤波低截止（Hz），**禁止硬编码** |
-| `freq_max` | `config.pipeline.preprocess.freq_max` | `6000.0` | 带通滤波高截止（Hz），**禁止硬编码** |
-| `motion_method` | `config.pipeline.preprocess.motion_correction.method` | `None` | `None` 跳过，`"dredge"` 启用 DREDge；启用时 sort 阶段 KS4 `nblocks` 必须为 0 |
-| `n_jobs` | `config.pipeline.n_jobs` | `"auto"` | SpikeInterface job 数（runner 层已解析 "auto"） |
-| `chunk_duration` | `config.pipeline.chunk_duration` | `"1s"` | 分块时间窗 |
+| `freq_min` | `config.preprocess.bandpass.freq_min` | `300.0` | 带通滤波低截止（Hz），**禁止硬编码** |
+| `freq_max` | `config.preprocess.bandpass.freq_max` | `6000.0` | 带通滤波高截止（Hz），**禁止硬编码** |
+| `motion_method` | `config.preprocess.motion_correction.method` | `"dredge"` | `None` 跳过，`"dredge"` 启用 DREDge；启用时 sort 阶段 KS4 `nblocks` 必须为 0 |
+| `n_jobs` | `config.resources.n_jobs` | `"auto"` | SpikeInterface job 数（runner 层解析 "auto"；standalone fallback 为 `4`） |
+| `chunk_duration` | `config.resources.chunk_duration` | `"auto"` | 分块时间窗（runner 层解析 "auto"；standalone fallback 为 `"1s"`） |
 
 注：`phase_shift` 无可配参数，始终执行（Neuropixels 硬件固定的 ADC 偏移特性决定此步不可跳过）。位置约束见 ADR-003：只需在 CMR 之前，相对 bandpass 不敏感。
 
@@ -194,7 +195,7 @@ class PreprocessStage(BaseStage):
 | `test_run_processes_all_probes` | 2 probes，全部成功 | `_preprocess_probe` 对每个 probe 被调用一次 |
 | `test_run_writes_stage_checkpoint` | 所有 probe 成功 | `checkpoints/preprocess.json` status=completed |
 | `test_probe_checkpoint_written_per_probe` | 2 probes | `checkpoints/preprocess_imec0.json` 和 `_imec1.json` 均存在 |
-| `test_zarr_saved_to_correct_path` | probe_id="imec0" | `recording.save` 调用路径含 `preprocessed/imec0` |
+| `test_zarr_saved_to_correct_path` | probe_id="imec0" | `recording.save` 调用路径为 `01_preprocessed/imec0.zarr` |
 | `test_bad_channels_removed` | `detect_bad_channels` 返回 2 个坏通道 | `remove_channels` 被调用 |
 | `test_no_bad_channels_skips_removal` | `detect_bad_channels` 返回空列表 | `remove_channels` 未被调用 |
 | `test_phase_shift_called` | 任意 probe | `si.phase_shift` 被调用一次 |
@@ -224,7 +225,7 @@ class PreprocessStage(BaseStage):
 | 测试名 | 预期行为 |
 |---|---|
 | `test_bandpass_freq_from_config` | `si.bandpass_filter` 以 config 中 freq_min/freq_max 调用 |
-| `test_n_jobs_passed_to_save` | `recording.save` 以 config 中 n_jobs 调用 |
+| `test_n_jobs_passed_to_save` | `si.set_global_job_kwargs` 以 config 中 n_jobs 调用，`recording.save` 继承全局设置 |
 
 ---
 

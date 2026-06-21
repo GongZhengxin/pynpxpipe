@@ -8,7 +8,7 @@
 
 **关键约束**：
 - **不可逆操作**：`auto_merge()` 合并后无法恢复，必须创建新 SortingAnalyzer（SI 官方建议）
-- **原始 sorting 保留**：sort stage 输出 `{output_dir}/02_02_sorted/{probe_id}/` 不被覆盖
+- **原始 sorting 保留**：sort stage 输出 `{output_dir}/02_sorted/{probe_id}/` 不被覆盖
 - **位于 curate 之前**：合并改变 unit 集合，Bombcell 分类必须在合并后运行
 - **默认关闭**：`config.merge.enabled = False`，跳过时立即 return
 
@@ -33,7 +33,7 @@
 
 | 文件 | 路径 | 说明 |
 |---|---|---|
-| sorted SortingAnalyzer | `{output_dir}/02_02_sorted/{probe_id}/` | 由 sort stage 写出（binary_folder 格式） |
+| sorted SortingAnalyzer | `{output_dir}/02_sorted/{probe_id}/` | 由 sort stage 写出（binary_folder 格式） |
 
 ---
 
@@ -183,7 +183,7 @@ class MergeStage(BaseStage):
 | 测试名 | 预期行为 |
 |---|---|
 | `test_merge_creates_new_analyzer` | `merged/imec0/` 目录存在（binary_folder） |
-| `test_original_sorted_preserved` | `sorted/imec0/` 目录未被修改 |
+| `test_original_sorted_preserved` | `02_sorted/imec0/` 目录未被修改 |
 | `test_merge_log_written` | `merged/imec0/merge_log.json` 存在，含 merges 列表 |
 | `test_probe_checkpoint_written` | `checkpoints/merge_imec0.json` status=completed |
 | `test_unit_count_decreases_or_equal` | n_units_after <= n_units_before |

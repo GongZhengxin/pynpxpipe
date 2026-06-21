@@ -68,7 +68,7 @@ class PreprocessStage(BaseStage):
         4. Detect and remove bad channels (on filtered data).
         5. Common median reference.
         6. Motion correction if config.preprocess.motion_correction.method not None.
-        7. Save to Zarr at {output_dir}/01_01_preprocessed/{probe_id}/.
+        7. Save to Zarr at {output_dir}/01_preprocessed/{probe_id}.zarr.
         8. Write per-probe checkpoint; del recording + gc.collect().
 
         Raises:
@@ -82,10 +82,12 @@ class PreprocessStage(BaseStage):
         self._setup_spikeinterface_jobs(self.pipeline_config)
 
         if not self.session.probes:
-            raise PreprocessError(
+            err = PreprocessError(
                 "No probes in session. The discover stage may not have run or "
                 "failed to populate probes. Re-run from discover."
             )
+            self._write_failed_checkpoint(err)
+            raise err
 
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):

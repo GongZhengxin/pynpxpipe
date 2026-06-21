@@ -430,10 +430,7 @@ class TestGetDatasetTsvPathPurePython:
             var_list=[*trials.keys(), "MLConfig", "FileInfo", "FileIndex", "IndexPosition"],
         )
         parser = BHV2Parser(minimal_bhv2)
-        assert (
-            parser.get_dataset_tsv_path()
-            == "C:/#Datasets/TripleN10k/stimuli/nsd1w.tsv"
-        )
+        assert parser.get_dataset_tsv_path() == "C:/#Datasets/TripleN10k/stimuli/nsd1w.tsv"
 
     @patch("pynpxpipe.io.bhv.BHV2Reader")
     def test_returns_none_when_all_empty(self, MockReader, minimal_bhv2):
@@ -452,9 +449,7 @@ class TestGetDatasetTsvPathPurePython:
     def test_ignores_non_string_values(self, MockReader, minimal_bhv2):
         trials = {
             "Trial1": _trial_with_user_vars(1, {"DatasetName": 42}),
-            "Trial2": _trial_with_user_vars(
-                2, {"DatasetName": "C:/valid/path.tsv"}
-            ),
+            "Trial2": _trial_with_user_vars(2, {"DatasetName": "C:/valid/path.tsv"}),
         }
         MockReader.return_value = _make_mock_reader(
             trial_dicts=trials,

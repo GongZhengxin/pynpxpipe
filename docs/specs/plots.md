@@ -110,7 +110,7 @@ UNITTYPE_COLORS: dict[str, str]  # "SUA"/"MUA"/"NON-SOMA"/"NOISE" → hex
 ### plots/curate.py — 由 `CurateStage` 每 probe 末尾触发
 输入：`analyzer`（已 compute templates + waveforms）、`qm` DataFrame、
 `unittype_map: dict[uid, str]`、`probe_id`。
-输出目录：`{output_dir}/05_05_curated/{probe_id}/figures/`。
+输出目录：`{output_dir}/05_curated/{probe_id}/figures/`。
 
 | 函数 | 覆盖 | 产出文件 |
 |------|------|----------|
@@ -121,7 +121,7 @@ UNITTYPE_COLORS: dict[str, str]  # "SUA"/"MUA"/"NON-SOMA"/"NOISE" → hex
 ### plots/postprocess.py — 由 `PostprocessStage` 每 probe 末尾触发
 输入：`analyzer`（含 templates + unit_locations）、`unit_scores`（含 slay + is_visual）、
 `behavior_events_df`、`probe_id`、可选 raster h5 路径。
-输出目录：`{output_dir}/06_06_postprocessed/{probe_id}/figures/`。
+输出目录：`{output_dir}/06_postprocessed/{probe_id}/figures/`。
 
 | 函数 | 覆盖 MATLAB# | 产出文件 |
 |------|--------------|----------|
@@ -132,7 +132,7 @@ UNITTYPE_COLORS: dict[str, str]  # "SUA"/"MUA"/"NON-SOMA"/"NOISE" → hex
 | `plot_raster_top_units` | 新 | `raster_top_units.png` |
 
 ### plots/preprocess.py（P1）— 由 `PreprocessStage` 每 probe 末尾触发
-输出目录：`{output_dir}/01_01_preprocessed/{probe_id}/figures/`。
+输出目录：`{output_dir}/01_preprocessed/{probe_id}/figures/`。
 
 | 函数 | 产出文件 |
 |------|----------|

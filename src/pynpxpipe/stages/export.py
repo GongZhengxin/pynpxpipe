@@ -176,11 +176,13 @@ class ExportStage(BaseStage):
         # Pre-flight: target_area must be populated on every probe (discover's job).
         for probe in self.session.probes:
             if not probe.target_area or probe.target_area == "unknown":
-                raise ExportError(
+                err = ExportError(
                     f"Probe {probe.probe_id} has target_area={probe.target_area!r}; "
                     "discover stage must populate target_area from session.probe_plan "
                     "before export"
                 )
+                self._write_failed_checkpoint(err)
+                raise err
 
         self._report_progress("Starting export", 0.0)
         nwb_path = self._get_output_path()

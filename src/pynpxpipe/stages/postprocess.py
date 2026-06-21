@@ -97,14 +97,27 @@ class PostprocessStage(BaseStage):
             return
 
         behavior_events_path = self.session.output_dir / "04_sync" / "behavior_events.parquet"
-        behavior_events_df = pd.read_parquet(behavior_events_path)
+        try:
+            behavior_events_df = pd.read_parquet(behavior_events_path)
+        except Exception as exc:
+            err = PostprocessError(f"Failed to load behavior_events.parquet: {exc}")
+            self._write_failed_checkpoint(err)
+            raise err from exc
 
         self._report_progress("Starting postprocess", 0.0)
         self._setup_spikeinterface_jobs()
 
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):
-            self._postprocess_probe(probe.probe_id, behavior_events_df)
+            try:
+                self._postprocess_probe(probe.probe_id, behavior_events_df)
+            except PostprocessError as exc:
+                self._write_failed_checkpoint(exc, probe_id=probe.probe_id)
+                raise
+            except Exception as exc:
+                err = PostprocessError(f"Failed to postprocess {probe.probe_id}: {exc}")
+                self._write_failed_checkpoint(err, probe_id=probe.probe_id)
+                raise err from exc
             self._report_progress(
                 f"Postprocessed {probe.probe_id}",
                 0.1 + 0.8 * (i + 1) / n_probes,
@@ -112,7 +125,15 @@ class PostprocessStage(BaseStage):
 
         eye_cfg = self.session.config.postprocess.eye_validation
         if eye_cfg.enabled:
-            self._run_eye_validation(behavior_events_df)
+            try:
+                self._run_eye_validation(behavior_events_df)
+            except PostprocessError as exc:
+                self._write_failed_checkpoint(exc)
+                raise
+            except Exception as exc:
+                err = PostprocessError(f"Failed eye validation: {exc}")
+                self._write_failed_checkpoint(err)
+                raise err from exc
 
         self._write_checkpoint({"n_probes": n_probes})
         self._report_progress("Postprocess complete", 1.0)

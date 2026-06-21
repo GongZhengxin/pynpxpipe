@@ -33,14 +33,14 @@ uv add git+https://github.com/GongZhengxin/pynpxpipe.git
 > The `sort` extra pulls `kilosort` which brings `torch` along — required for
 > both the `sort` stage (Kilosort4) and DREDge motion correction in `preprocess`.
 > CPU torch from pypi is installed by default; for GPU acceleration install a
-> CUDA build of torch from [pytorch.org](https://pytorch.org) after `uv sync`.
+> CUDA build of torch from [pytorch.org](https://pytorch.org) after `uv sync --inexact`.
 
 **For development / contributing:**
 
 ```bash
 git clone https://github.com/GongZhengxin/pynpxpipe.git
 cd pynpxpipe
-uv sync --all-groups
+uv sync --inexact --all-groups
 ```
 
 ### Optional extras
@@ -80,6 +80,17 @@ Full walkthrough: **[getting_started.md](getting_started.md)**
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestone plan and backlog |
 | [`docs/progress.md`](docs/progress.md) | Module-level status and test counts |
 
+## Legacy MATLAB PSTH Timing
+
+If pynpxpipe PSTHs appear about 20 ms earlier than the legacy MATLAB pipeline
+on a multi-probe session, do not compensate by shifting pynpxpipe timestamps.
+This is a known legacy-side timing bug: the MATLAB postprocess path hard-coded
+`imec0` as the meta/sync source for all probes, so non-`imec0` spikes could be
+converted with the wrong sample rate and IMEC to NIDQ fit. pynpxpipe keeps
+per-probe clocks and per-probe sync fits; compare the NWB units and
+`07_derivatives` rasters as the canonical outputs. See
+[`docs/specs/postprocess.md`](docs/specs/postprocess.md) for the detailed note.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
@@ -114,10 +125,10 @@ uv add git+https://github.com/GongZhengxin/pynpxpipe.git
 
 > `sort` extra 会拉 `kilosort`（及其依赖 `torch`），同时覆盖 `sort` 阶段的
 > Kilosort4 和 `preprocess` 阶段的 DREDge 运动校正。默认安装的是 pypi 上的 CPU
-> 版 torch；需要 GPU 加速的用户请在 `uv sync` 之后从 pytorch.org 安装 CUDA 版
+> 版 torch；需要 GPU 加速的用户请在 `uv sync --inexact` 之后从 pytorch.org 安装 CUDA 版
 > torch。
 
-开发者请 clone 仓库后运行 `uv sync --all-groups`。
+开发者请 clone 仓库后运行 `uv sync --inexact --all-groups`。
 
 ## 快速开始
 
@@ -126,6 +137,16 @@ uv run pynpxpipe-ui
 ```
 
 详细教程请参考 [`getting_started.md`](getting_started.md)。
+
+## 与 legacy MATLAB 的 PSTH 时间差
+
+如果在多探针 session 中看到 pynpxpipe 的 PSTH 比旧 MATLAB pipeline 提前约
+20 ms，不要在 pynpxpipe 端人为平移时间戳。这是 legacy MATLAB 侧的已知
+bug：旧 postprocess 路径把 `imec0` 硬编码为所有 probe 的 meta/sync 来源，
+非 `imec0` probe 可能被错误地用 `imec0` 采样率和 IMEC→NIDQ 拟合换算。
+pynpxpipe 按 probe 独立维护时钟和同步拟合；数值对比请以 NWB units 和
+`07_derivatives` raster 为准。详见
+[`docs/specs/postprocess.md`](docs/specs/postprocess.md)。
 
 ## 许可
 

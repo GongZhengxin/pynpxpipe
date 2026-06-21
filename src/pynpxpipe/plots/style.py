@@ -7,6 +7,7 @@ inside a fixture to stay deterministic.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -150,12 +151,8 @@ def savefig(
     if title:
         fig.suptitle(title)
 
-    try:
+    with suppress(Exception):
         fig.tight_layout()
-    except Exception:
-        # tight_layout occasionally complains about incompatible axes; the
-        # savefig still works — log-free swallow is fine for diagnostic plots.
-        pass
 
     fig.savefig(out, dpi=dpi)
     plt.close(fig)

@@ -256,7 +256,7 @@ uv add "pynpxpipe[ui,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.
 ```bash
 git clone https://github.com/GongZhengxin/pynpxpipe.git
 cd pynpxpipe
-uv sync --all-groups
+uv sync --inexact --all-groups
 ```
 
 ### Optional extras
@@ -327,7 +327,7 @@ uv add git+https://github.com/GongZhengxin/pynpxpipe.git
 uv add "pynpxpipe[ui,gpu,plots] @ git+https://github.com/GongZhengxin/pynpxpipe.git"
 ```
 
-开发者请 clone 仓库后运行 `uv sync --all-groups`。
+开发者请 clone 仓库后运行 `uv sync --inexact --all-groups`。
 
 ## 快速开始
 
@@ -424,9 +424,9 @@ Issues = "https://github.com/GongZhengxin/pynpxpipe/issues"
 Run: `cd F:/tools/pynpxpipe && uv run python -c "import tomllib; tomllib.loads(open('pyproject.toml','rb').read().decode())"`
 Expected: no output, exit code 0. Any `tomllib.TOMLDecodeError` = broken syntax, fix inline.
 
-- [ ] **Step 4: Verify `uv sync` still works with the new metadata**
+- [ ] **Step 4: Verify `uv sync --inexact` still works with the new metadata**
 
-Run: `cd F:/tools/pynpxpipe && uv sync --no-dev 2>&1 | tail -5`
+Run: `cd F:/tools/pynpxpipe && uv sync --inexact --no-dev 2>&1 | tail -5`
 Expected: "Resolved N packages" or "Audited N packages" — no errors.
 
 ---
@@ -451,13 +451,13 @@ git clone <repo-url>
 cd pynpxpipe
 
 # Install with uv (recommended)
-uv sync --all-groups
+uv sync --inexact --all-groups
 
 # If you only need the UI (no dev tools):
-uv sync --extra ui
+uv sync --inexact --extra ui
 
 # If you also need GPU support:
-uv sync --extra ui --extra gpu
+uv sync --inexact --extra ui --extra gpu
 ```
 
 Verify the installation:
@@ -500,7 +500,7 @@ pip install "pynpxpipe[ui,gpu] @ git+https://github.com/GongZhengxin/pynpxpipe.g
 \`\`\`bash
 git clone https://github.com/GongZhengxin/pynpxpipe.git
 cd pynpxpipe
-uv sync --all-groups
+uv sync --inexact --all-groups
 \`\`\`
 
 ### Verify the installation
