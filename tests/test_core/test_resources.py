@@ -16,10 +16,12 @@ from pynpxpipe.core.resources import (
     DiskInfo,
     GPUInfo,
     HardwareProfile,
+    MotionStrategy,
     RAMInfo,
     RecommendedParams,
     ResourceConfig,
     ResourceDetector,
+    recommend_motion_strategy,
 )
 
 # ---------------------------------------------------------------------------
@@ -511,3 +513,62 @@ class TestCachedDetect:
             p2 = ResourceDetector.cached_detect(tmp_path, tmp_path)
         assert p1 is p2  # same object from cache
         ResourceDetector._cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# recommend_motion_strategy — DREDge memory-vs-precision decision
+# ---------------------------------------------------------------------------
+
+_GB = 1024**3
+
+
+class TestRecommendMotionStrategy:
+    """Pure analytic DREDge memory predictor: pick min bin_s that fits, else nblocks."""
+
+    def test_abundant_ram_uses_bin_s_floor(self) -> None:
+        s = recommend_motion_strategy(duration_s=3600.0, n_windows=10, available_bytes=256 * _GB)
+        assert isinstance(s, MotionStrategy)
+        assert s.use_dredge is True
+        assert s.bin_s == 1.0  # clamped up to floor; no benefit going finer
+
+    def test_tight_ram_picks_fractional_bin_s_within_budget(self) -> None:
+        s = recommend_motion_strategy(duration_s=15120.0, n_windows=10, available_bytes=44 * _GB)
+        assert s.use_dredge is True
+        assert 1.0 < s.bin_s <= 3.0  # fractional, finest that fits
+        assert s.predicted_peak_bytes <= s.budget_bytes
+
+    def test_exceeds_bin_s_max_falls_back_to_nblocks(self) -> None:
+        s = recommend_motion_strategy(duration_s=18720.0, n_windows=10, available_bytes=32 * _GB)
+        assert s.use_dredge is False
+        assert s.bin_s is None
+        assert s.fallback_nblocks == 5
+
+    def test_budget_non_positive_falls_back(self) -> None:
+        s = recommend_motion_strategy(duration_s=18720.0, n_windows=10, available_bytes=16 * _GB)
+        assert s.use_dredge is False
+
+    def test_boundary_bin_s_equals_max_uses_dredge(self) -> None:
+        # coef/budget = 9 → bin_s_min == 3.0 == bin_s_max (inclusive → dredge)
+        s = recommend_motion_strategy(
+            duration_s=3.0,
+            n_windows=1,
+            available_bytes=1,
+            bytes_per_entry=1,
+            n_matrices=1,
+            overhead_reserve_bytes=0,
+            ram_safety_factor=1.0,
+            bin_s_max=3.0,
+        )
+        assert s.use_dredge is True
+        assert s.bin_s == 3.0
+
+    def test_safety_factor_shrinks_budget(self) -> None:
+        kw = {"duration_s": 15120.0, "n_windows": 10, "available_bytes": 80 * _GB}
+        loose = recommend_motion_strategy(ram_safety_factor=0.8, **kw)
+        tight = recommend_motion_strategy(ram_safety_factor=0.3, **kw)
+        assert tight.budget_bytes < loose.budget_bytes
+
+    def test_notes_and_reason_carry_numbers(self) -> None:
+        s = recommend_motion_strategy(duration_s=3600.0, n_windows=10, available_bytes=128 * _GB)
+        assert s.notes
+        assert isinstance(s.reason, str) and any(c.isdigit() for c in s.reason)

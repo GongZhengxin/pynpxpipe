@@ -571,3 +571,49 @@ class TestConfigParams:
         mock_si.set_global_job_kwargs.assert_called_once()
         global_kwargs = mock_si.set_global_job_kwargs.call_args
         assert global_kwargs.kwargs.get("n_jobs") == 8
+
+
+# ---------------------------------------------------------------------------
+# bin_s forwarding to correct_motion (motion memory advisor integration)
+# ---------------------------------------------------------------------------
+
+
+class TestBinSForwarding:
+    def test_bin_s_forwarded_to_correct_motion(self, single_session: Session) -> None:
+        cfg = PipelineConfig(
+            resources=ResourcesConfig(n_jobs=2, chunk_duration="1s"),
+            preprocess=PreprocessConfig(
+                motion_correction=MotionCorrectionConfig(method="dredge", bin_s=2.0)
+            ),
+        )
+        rec = _make_mock_recording()
+        stage = PreprocessStage(single_session, cfg, None)
+        with (
+            patch("pynpxpipe.stages.preprocess.SpikeGLXLoader.load_ap", return_value=rec),
+            patch("pynpxpipe.stages.preprocess.spp") as mock_spp,
+            patch("pynpxpipe.stages.preprocess.gc"),
+        ):
+            mock_spp.phase_shift.return_value = rec
+            mock_spp.bandpass_filter.return_value = rec
+            mock_spp.detect_bad_channels.return_value = ([], [])
+            mock_spp.common_reference.return_value = rec
+            mock_spp.correct_motion.return_value = rec
+            stage.run()
+        mock_spp.correct_motion.assert_called_once()
+        assert mock_spp.correct_motion.call_args.kwargs["estimate_motion_kwargs"]["bin_s"] == 2.0
+
+    def test_no_motion_skips_correct_motion(self, single_session: Session) -> None:
+        cfg = _make_config(motion_method=None)
+        rec = _make_mock_recording()
+        stage = PreprocessStage(single_session, cfg, None)
+        with (
+            patch("pynpxpipe.stages.preprocess.SpikeGLXLoader.load_ap", return_value=rec),
+            patch("pynpxpipe.stages.preprocess.spp") as mock_spp,
+            patch("pynpxpipe.stages.preprocess.gc"),
+        ):
+            mock_spp.phase_shift.return_value = rec
+            mock_spp.bandpass_filter.return_value = rec
+            mock_spp.detect_bad_channels.return_value = ([], [])
+            mock_spp.common_reference.return_value = rec
+            stage.run()
+        mock_spp.correct_motion.assert_not_called()

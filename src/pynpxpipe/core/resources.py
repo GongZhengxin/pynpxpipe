@@ -17,6 +17,7 @@ Design principles:
 
 from __future__ import annotations
 
+import math
 import os
 import platform
 import subprocess
@@ -269,6 +270,142 @@ class RecommendedParams:
     max_workers: int
     sorting_batch_size: int
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MotionStrategy:
+    """DREDge memory-vs-precision decision for the motion-correction step.
+
+    The dominant memory of DREDge AP registration is the pairwise
+    cross-correlation matrices ``Ds``/``Cs`` of shape ``(B, T, T)`` (see
+    spikeinterface ``sortingcomponents/motion/dredge.py``), where ``B`` is the
+    number of nonrigid windows and ``T = duration_s / bin_s`` the number of time
+    bins. Memory therefore scales ~``B * (duration_s / bin_s) ** 2`` and is
+    almost independent of firing rate. This object reports whether DREDge fits
+    available RAM at the highest temporal precision (smallest ``bin_s``), or
+    whether to fall back to Kilosort4 internal ``nblocks`` drift correction.
+
+    Attributes:
+        use_dredge: True → run DREDge at ``bin_s``; False → fall back to nblocks.
+        bin_s: Resolved estimation bin (s) when ``use_dredge`` (may be fractional);
+            None on fallback.
+        n_windows: Number of nonrigid windows (B) used in the estimate.
+        n_time_bins: Number of time bins (T) at the resolved/cap bin_s.
+        predicted_peak_bytes: Predicted dominant memory at the resolved bin_s.
+        available_bytes: System RAM available at decision time.
+        budget_bytes: Memory budget for the matrices (available*safety - overhead).
+        fallback_nblocks: nblocks to use for sort when ``use_dredge`` is False.
+        reason: One-line human-readable decision reason (with numbers).
+        notes: Detailed reasoning lines for structured logging.
+    """
+
+    use_dredge: bool
+    bin_s: float | None
+    n_windows: int
+    n_time_bins: int
+    predicted_peak_bytes: int
+    available_bytes: int
+    budget_bytes: int
+    fallback_nblocks: int
+    reason: str
+    notes: list[str] = field(default_factory=list)
+
+
+def recommend_motion_strategy(
+    *,
+    duration_s: float,
+    n_windows: int,
+    available_bytes: int,
+    bin_s_floor: float = 1.0,
+    bin_s_max: float = 3.0,
+    bytes_per_entry: int = 4,
+    n_matrices: int = 4,
+    overhead_reserve_bytes: int = 16 * 1024**3,
+    ram_safety_factor: float = 0.6,
+    fallback_nblocks: int = 5,
+) -> MotionStrategy:
+    """Pick the highest-precision DREDge ``bin_s`` that fits RAM, else fall back.
+
+    Pure analytic decision — no SpikeInterface, no sampling. Solves
+    ``M(bin_s) = bytes_per_entry * n_matrices * n_windows * (duration_s/bin_s)**2``
+    for the smallest ``bin_s`` (best temporal resolution) with ``M <= budget``,
+    where ``budget = available_bytes * ram_safety_factor - overhead_reserve_bytes``.
+    Clamps to ``[bin_s_floor, bin_s_max]``; if the smallest fitting bin_s exceeds
+    ``bin_s_max`` (or the budget is non-positive), recommends the nblocks fallback.
+
+    Args:
+        duration_s: Recording duration in seconds (longest probe).
+        n_windows: Number of nonrigid windows B (from probe geometry).
+        available_bytes: Available system RAM in bytes.
+        bin_s_floor: Finest allowed bin_s (do not go below DREDge's native value).
+        bin_s_max: Coarsest acceptable bin_s; beyond it, fall back to nblocks.
+        bytes_per_entry: Bytes per matrix entry (float32 → 4).
+        n_matrices: Effective matrix multiplicity (Ds + Cs + float64 cast + solver).
+        overhead_reserve_bytes: Flat reserve for non-quadratic memory.
+        ram_safety_factor: Fraction of available RAM usable as the budget base.
+        fallback_nblocks: nblocks for sort when falling back.
+
+    Returns:
+        MotionStrategy with the decision and supporting numbers.
+    """
+    available = int(available_bytes)
+    budget = int(available * ram_safety_factor - overhead_reserve_bytes)
+    coef = bytes_per_entry * n_matrices * n_windows * (duration_s**2)
+    gb = 1024**3
+    notes = [
+        f"duration={duration_s:.0f}s n_windows={n_windows} available={available / gb:.1f}GB",
+        f"budget={budget / gb:.1f}GB "
+        f"(safety={ram_safety_factor}, overhead={overhead_reserve_bytes / gb:.1f}GB)",
+    ]
+
+    def _fallback(reason: str, n_time_bins: int, predicted: int) -> MotionStrategy:
+        return MotionStrategy(
+            use_dredge=False,
+            bin_s=None,
+            n_windows=n_windows,
+            n_time_bins=n_time_bins,
+            predicted_peak_bytes=predicted,
+            available_bytes=available,
+            budget_bytes=budget,
+            fallback_nblocks=fallback_nblocks,
+            reason=reason,
+            notes=notes + [reason],
+        )
+
+    if budget <= 0:
+        reason = (
+            f"budget {budget / gb:.1f}GB <= 0 (overhead exceeds usable RAM) "
+            f"→ fall back to nblocks={fallback_nblocks}"
+        )
+        return _fallback(reason, int(duration_s / bin_s_max) if bin_s_max else 0, 0)
+
+    bin_s_min = math.sqrt(coef / budget) if coef > 0 else bin_s_floor
+    if bin_s_min > bin_s_max:
+        reason = (
+            f"smallest fitting bin_s={bin_s_min:.3f}s exceeds bin_s_max={bin_s_max}s "
+            f"→ fall back to nblocks={fallback_nblocks}"
+        )
+        return _fallback(reason, int(duration_s / bin_s_max), int(coef / (bin_s_max**2)))
+
+    bin_s_opt = min(max(bin_s_min, bin_s_floor), bin_s_max)
+    predicted = int(coef / (bin_s_opt**2))
+    reason = (
+        f"DREDge fits at bin_s={bin_s_opt:.3f}s "
+        f"(smallest fitting {bin_s_min:.3f}s, predicted {predicted / gb:.1f}GB "
+        f"<= budget {budget / gb:.1f}GB)"
+    )
+    return MotionStrategy(
+        use_dredge=True,
+        bin_s=bin_s_opt,
+        n_windows=n_windows,
+        n_time_bins=int(duration_s / bin_s_opt),
+        predicted_peak_bytes=predicted,
+        available_bytes=available,
+        budget_bytes=budget,
+        fallback_nblocks=fallback_nblocks,
+        reason=reason,
+        notes=notes + [reason],
+    )
 
 
 # ---------------------------------------------------------------------------

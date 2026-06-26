@@ -151,9 +151,13 @@ class PreprocessStage(BaseStage):
 
         # Step 7: optional motion correction
         if cfg.preprocess.motion_correction.method is not None:
+            # bin_s controls DREDge's temporal bin (T = duration/bin_s); memory of
+            # the (B, T, T) correlation matrices scales ~1/bin_s². The runner's
+            # motion advisor may raise bin_s to keep DREDge within RAM.
             recording = spp.correct_motion(
                 recording,
                 preset=cfg.preprocess.motion_correction.preset,
+                estimate_motion_kwargs={"bin_s": cfg.preprocess.motion_correction.bin_s},
             )
 
         # Step 8: save as Zarr
