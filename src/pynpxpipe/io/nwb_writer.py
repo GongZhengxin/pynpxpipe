@@ -508,6 +508,9 @@ class NWBWriter:
         probe: ProbeInfo,
         analyzer: si.SortingAnalyzer,
         rasters: dict | None = None,
+        *,
+        raw_channel_positions: list[tuple[float, float]] | None = None,
+        inter_sample_shift: np.ndarray | None = None,
     ) -> None:
         """Add all data for one probe to the NWBFile.
 
@@ -543,23 +546,41 @@ class NWBWriter:
             device=device,
         )
 
-        # Resolve channel positions: prefer ProbeInfo, fallback to analyzer probe
-        channel_positions = probe.channel_positions
-        if not channel_positions:
-            try:
-                pi_probe = analyzer.get_probe()
-                positions = pi_probe.contact_positions  # (n_contacts, 2)
-                channel_positions = [(float(x), float(y)) for x, y in positions]
-            except Exception:
-                channel_positions = []
+        # Resolve channel positions: raw geometry (full physical channels, from
+        # the raw AP recording) takes precedence so the stored electrode table
+        # matches the raw stream width and can carry inter_sample_shift; else
+        # fall back to ProbeInfo / analyzer (curated) geometry. cf. nwb_writer.md §9.
+        if raw_channel_positions is not None:
+            channel_positions = list(raw_channel_positions)
+        else:
+            channel_positions = probe.channel_positions
+            if not channel_positions:
+                try:
+                    pi_probe = analyzer.get_probe()
+                    positions = pi_probe.contact_positions  # (n_contacts, 2)
+                    channel_positions = [(float(x), float(y)) for x, y in positions]
+                except Exception:
+                    channel_positions = []
+
+        write_shift = inter_sample_shift is not None
 
         # Add electrode table columns and rows only if we have channel data
         if channel_positions:
             if self._nwbfile.electrodes is None:
                 self._nwbfile.add_electrode_column("probe_id", "Probe identifier")
                 self._nwbfile.add_electrode_column("channel_id", "Channel index within probe")
+                if write_shift:
+                    self._nwbfile.add_electrode_column(
+                        "inter_sample_shift",
+                        "Per-channel ADC sample shift (fraction of sample period) for phase_shift",
+                    )
 
             for ch_idx, (x, y) in enumerate(channel_positions):
+                # inter_sample_shift aligns with channel_positions order (both
+                # come from the same raw recording's channel order).
+                extra = (
+                    {"inter_sample_shift": float(inter_sample_shift[ch_idx])} if write_shift else {}
+                )
                 self._nwbfile.add_electrode(
                     x=float(x),
                     y=float(y),
@@ -569,6 +590,7 @@ class NWBWriter:
                     location=probe.target_area,
                     probe_id=probe.probe_id,
                     channel_id=ch_idx,
+                    **extra,
                 )
 
         # Extract extension data
@@ -1397,6 +1419,20 @@ class NWBWriter:
                 if nidq_info is not None:
                     streams_written.append("NIDQ_raw")
                     written_streams.append(nidq_info)
+
+            # Archive each probe's raw .ap.meta verbatim for full SpikeGLX
+            # provenance (channel map, gains, ADC layout). Lets NWB-input
+            # re-sort recover any SpikeGLX metadata. Idempotent. cf. §9.
+            for probe in session.probes:
+                scratch_key = f"ap_meta_{probe.probe_id}"
+                if scratch_key in nwbfile.scratch:
+                    continue
+                if probe.ap_meta is not None and Path(probe.ap_meta).exists():
+                    nwbfile.add_scratch(
+                        data=Path(probe.ap_meta).read_text(encoding="utf-8"),
+                        name=scratch_key,
+                        description=f"Raw SpikeGLX .ap.meta for {probe.probe_id}",
+                    )
 
             io.write(nwbfile)
 

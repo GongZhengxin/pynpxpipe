@@ -1883,3 +1883,58 @@ class TestMergedFromColumn:
         assert scratch_name in writer._nwbfile.scratch
         scratch_entry = writer._nwbfile.scratch[scratch_name]
         assert scratch_entry.data == raw_text
+
+
+# ===================================================================
+# K. Raw re-sort fidelity (nwb_writer.md §9) — inter_sample_shift,
+#    full geometry, .ap.meta archive
+# ===================================================================
+
+
+class TestRawResortFidelity:
+    """inter_sample_shift electrode column + full raw geometry + .ap.meta archive.
+
+    Closes the NWB-input re-sort gap: stored raw AP carries the per-channel ADC
+    sample shift so phase_shift can be reapplied on rerun (reader auto-restores
+    the column as a recording property via read_nwb_recording).
+    """
+
+    def test_add_probe_data_writes_inter_sample_shift_column(
+        self, writer: NWBWriter, probe: ProbeInfo
+    ) -> None:
+        writer.create_file()
+        shifts = np.linspace(0.0, 0.9, probe.n_channels)
+        writer.add_probe_data(probe, _make_mock_analyzer(n_units=2), inter_sample_shift=shifts)
+        electrodes = writer._nwbfile.electrodes
+        assert "inter_sample_shift" in electrodes.colnames
+        assert np.allclose(electrodes["inter_sample_shift"][:], shifts)
+
+    def test_add_probe_data_full_geometry_uses_raw_positions(
+        self, writer: NWBWriter, probe: ProbeInfo
+    ) -> None:
+        """Raw geometry (full physical channels) overrides the curated count."""
+        writer.create_file()
+        n_full = probe.n_channels + 1  # raw stream has one more channel than curated
+        raw_positions = [(float(i), float(i * 10)) for i in range(n_full)]
+        shifts = np.linspace(0.0, 0.9, n_full)
+        writer.add_probe_data(
+            probe,
+            _make_mock_analyzer(n_units=2),
+            raw_channel_positions=raw_positions,
+            inter_sample_shift=shifts,
+        )
+        assert len(writer._nwbfile.electrodes) == n_full
+
+    def test_append_raw_data_archives_ap_meta(self, session: Session, tmp_path: Path) -> None:
+        nwb_path = _create_nwb_with_electrodes(tmp_path, "imec0", n_channels=4)
+        rec, _ = _make_numpy_recording(n_samples=3000, n_channels=4)
+        writer = NWBWriter(session, nwb_path)
+        with patch("pynpxpipe.io.nwb_writer.SpikeGLXLoader.load_ap", return_value=rec):
+            writer.append_raw_data(session, nwb_path, time_range=(0.0, 0.1))
+
+        import pynwb
+
+        with pynwb.NWBHDF5IO(str(nwb_path), "r") as io:
+            nwbfile = io.read()
+            assert "ap_meta_imec0" in nwbfile.scratch
+            assert "fileCreateTime" in str(nwbfile.scratch["ap_meta_imec0"].data)
