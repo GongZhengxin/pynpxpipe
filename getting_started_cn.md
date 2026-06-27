@@ -95,6 +95,69 @@ uv run pynpxpipe --version
 uv run pynpxpipe --help
 ```
 
+## 1b. 部署到新设备（全量安装清单）
+
+在一台新机器上为生产预处理搭建 pynpxpipe 时用此清单。**全量**指装上所有运行期
+extra（UI + GPU 探测 + 诊断图 + chat）；只跳过 `matlab`（它需要 MATLAB 安装）。
+
+前置：Python 3.11/3.12（非 3.13）、uv、NVIDIA 驱动（Kilosort4 用）。
+
+```bash
+git clone https://github.com/GongZhengxin/pynpxpipe.git
+cd pynpxpipe
+
+# 全量 sync —— --inexact 是铁律；不要用 --all-extras（会拉进 matlab）
+uv sync --inexact --all-groups --extra ui --extra gpu --extra plots --extra chat
+
+# 一次性装 sort stack（按 GPU + 驱动选 CUDA wheel）
+uv run python tools/install_sort_stack.py
+
+# 自检
+uv run python tools/verify_gpu.py     # 必须 cuda=True，不能 MISMATCH
+uv run pynpxpipe --help
+uv run pynpxpipe-ui                    # 浏览器打开 http://localhost:5006
+```
+
+新机器上三个容易踩的坑：
+
+1. **之后每次 `uv sync` 都必须带 `--inexact`** —— 否则刚装好的 CUDA torch 会被
+   PyPI 的 CPU wheel 覆盖，sorting 静默退回 CPU。
+2. **长录制（> ~2 小时）有 DREDge OOM 风险** —— 运动校正 advisor（默认开）会自动
+   处理；见下面那节。
+3. **离线 / 隔离网络机器**需预先备好仓库 + wheel 缓存（安装会从 GitHub + PyPI +
+   pytorch.org 拉取）。
+
+> **NWB 完整性提示：** 要产出一个能日后仅凭单文件就重新预处理（phase_shift 可恢复）
+> 的自洽 NWB，需要 `inter_sample_shift` / 几何 / `.ap.meta` 持久化修复（commit
+> `687f2a3`）。请部署包含它的分支（2026-06-26 起在 `main`）。
+
+### 长录制（> ~2 小时）：DREDge 内存
+
+DREDge 的内存峰值是它在运动估计阶段构建的 `(B, T, T)` float32 互相关矩阵，其中
+`B` 是非刚性窗口数、`T = 时长 / bin_s`（默认 `bin_s = 1 秒`）。所以内存
+~随 `B · (时长 / bin_s)²` 增长 —— **对时长是二次的，且几乎与放电率无关**。
+实测 5.2 小时双探针就是这样在 91 GB 上 OOM 的。
+
+pynpxpipe 的**运动校正 advisor**（`motion_correction.auto_strategy`，默认开）会在
+预处理前预测这个内存，并在可用 RAM 内自动取**最高时间精度的 `bin_s`**；若连最粗
+可接受的 `bin_s` 都装不下，就关闭 DREDge、退回 Kilosort4 内部 `nblocks` 漂移校正。
+所以长 session 在大内存机器上"直接能跑"，在紧内存机器上优雅降级。详见
+`docs/specs/motion_memory_advisor.md`。
+
+手动控制（advisor 关闭，或要覆盖）：调大 `bin_s` 可把矩阵内存按 `1/bin_s²` 砍掉，
+代价是漂移的时间分辨率变粗；或改用 nblocks（与 DREDge 互斥）：
+
+```yaml
+# pipeline.yaml —— 调粗 DREDge bin（bin_s=2 时内存 ¼），或直接关掉
+motion_correction:
+  bin_s: 2.0
+  # method: null   # 改成彻底关闭 DREDge
+# sorting.yaml —— KS4 内部漂移分块（关闭 DREDge 时用）
+sorter:
+  params:
+    nblocks: 5
+```
+
 ## 2. 准备数据
 
 ### 2.1 SpikeGLX Session 目录
@@ -392,6 +455,7 @@ Subject:
 | `pynpxpipe-ui` 命令找不到 | 用 `uv run pynpxpipe-ui` 或先 `uv sync --inexact` |
 | UI 没自动打开浏览器 | 手动访问 `http://localhost:5006` |
 | 预处理阶段内存溢出 | 把 `pipeline.yaml` 里的 `chunk_duration` 调小（如 `"0.5s"`）或降低 `n_jobs` |
+| 长 session（> ~2 小时）运动校正时内存溢出 | DREDge 的 `(B,T,T)` 互相关矩阵 ~随 `(时长/bin_s)²` 增长。运动 advisor（`auto_strategy`，默认开）会自动调大 `bin_s` 或退回 `nblocks`；若已关闭，把 `motion_correction.bin_s` 调大或设 `method: null` + `sorter.params.nblocks: 5`（见 §1b） |
 | 运动校正 + KS4 nblocks 冲突 | 两者互斥。用 KS4 nblocks > 0 时把运动校正设为 `null`；用 DREDge 时把 nblocks 设为 0 |
 | Sorting 时检测不到 GPU | 装 GPU extra：`uv sync --inexact --extra gpu`。确保已装 CUDA 驱动 |
 | 管线卡在某个 stage | 检查 `logs/pipeline.jsonl` 看错误。用 `reset-stage` 清 checkpoint 重试 |
