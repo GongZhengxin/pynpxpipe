@@ -178,7 +178,11 @@ class BrowsableInput:
             visible=self.file_selector.visible,
         )
         new_fs.param.watch(self._on_file_selected, "value")
-        self._panel.objects[1] = new_fs
+        # Use Panel's __setitem__ (reassigns the `objects` param → triggers a
+        # re-render). Indexing into `self._panel.objects[1] = ...` mutates the
+        # list in place and does NOT re-render, so the drive switch silently did
+        # nothing on multi-drive Windows (the only place drive_select exists).
+        self._panel[1] = new_fs
         self.file_selector = new_fs
 
     def _on_file_selected(self, event) -> None:  # noqa: ANN001
