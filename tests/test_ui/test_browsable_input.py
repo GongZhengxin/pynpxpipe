@@ -175,3 +175,40 @@ def test_browsable_input_value_setter_triggers_text_input_watchers(tmp_path):
     bi.value = "/triggered/path"
 
     assert received == ["/triggered/path"]
+
+
+# ---------------------------------------------------------------------------
+# 14: Windows multi-drive switch (drive_select + _on_drive_change)
+#
+# Exercised on Linux by patching _detect_drives to report >1 drive so the
+# drive_select dropdown is created. Regression for the in-place
+# `self._panel.objects[1] = new_fs` mutation, which did NOT trigger a Panel
+# re-render — so switching the Drive dropdown silently did nothing on Windows.
+# ---------------------------------------------------------------------------
+
+
+class TestDriveSwitch:
+    def test_drive_change_remounts_file_selector_and_rerenders(self, tmp_path, monkeypatch):
+        from pynpxpipe.ui.components import browsable_input as bi_mod
+
+        sub = tmp_path / "drive_e"
+        sub.mkdir()
+        # "/" matches the anchor of root_directory=tmp_path; second entry makes len>1.
+        monkeypatch.setattr(bi_mod, "_detect_drives", lambda: ["/", str(sub)])
+
+        bi = bi_mod.BrowsableInput(name="x", root_directory=str(tmp_path))
+        assert bi.drive_select is not None  # multi-drive → dropdown created
+
+        fired: list[str] = []
+        bi._panel.param.watch(lambda e: fired.append(e.name), "objects")
+
+        class _Ev:
+            new = str(sub)
+
+        bi._on_drive_change(_Ev())
+
+        # The fix uses Panel __setitem__ (reassigns `objects` → re-render fires).
+        # The buggy `objects[1] = ...` mutates in place and leaves `fired` empty.
+        assert fired, "drive switch must trigger a _panel re-render"
+        assert bi.file_selector is bi._panel[1]
+        assert str(sub) in str(bi.file_selector.directory)
