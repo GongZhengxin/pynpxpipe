@@ -82,8 +82,14 @@ def _write_raw_electrical_series_nwb(
     path: Path,
     *,
     probe_ids: tuple[str, ...] = ("imec0", "imec1"),
+    inter_sample_shift: dict[str, list[float]] | None = None,
 ) -> Path:
-    """Write a tiny NWB with loadable per-probe ElectricalSeriesAP streams."""
+    """Write a tiny NWB with loadable per-probe ElectricalSeriesAP streams.
+
+    When ``inter_sample_shift`` maps a probe_id to per-channel shift values, an
+    ``inter_sample_shift`` electrode column is written (mirrors the writer
+    fix in nwb_writer.md §9 so the reader can restore phase_shift metadata).
+    """
     nwbfile = NWBFile(
         session_description="tiny raw fixture",
         identifier="tiny-raw-fixture",
@@ -91,6 +97,8 @@ def _write_raw_electrical_series_nwb(
         session_id="240101_Test_nsd1w_V4",
     )
     nwbfile.add_electrode_column("probe_id", "Probe identifier")
+    if inter_sample_shift is not None:
+        nwbfile.add_electrode_column("inter_sample_shift", "Per-channel ADC sample shift")
     electrode_offset = 0
     for probe_id in probe_ids:
         device = nwbfile.create_device(f"{probe_id}_device")
@@ -103,6 +111,11 @@ def _write_raw_electrical_series_nwb(
         electrode_indices = []
         for channel in range(2):
             row_id = electrode_offset + channel
+            extra = (
+                {"inter_sample_shift": float(inter_sample_shift[probe_id][channel])}
+                if inter_sample_shift is not None
+                else {}
+            )
             nwbfile.add_electrode(
                 id=row_id,
                 x=float(channel),
@@ -113,6 +126,7 @@ def _write_raw_electrical_series_nwb(
                 filtering="none",
                 group=group,
                 probe_id=probe_id,
+                **extra,
             )
             electrode_indices.append(row_id)
         electrode_offset += 2
@@ -292,3 +306,32 @@ def test_load_recordings_requires_matching_stream(tmp_path: Path) -> None:
 
     with pytest.raises(NWBInputError, match="ElectricalSeriesLF"):
         NWBLoader(nwb_path).load_recordings(stream_type="lf")
+
+
+def test_load_recordings_restores_inter_sample_shift(tmp_path: Path) -> None:
+    """nwb_reader.md §10: an inter_sample_shift electrode column becomes a
+    recording property so _preprocess_raw_recording applies phase_shift."""
+    nwb_path = _write_raw_electrical_series_nwb(
+        tmp_path / "input.nwb",
+        probe_ids=("imec0", "imec1"),
+        inter_sample_shift={"imec0": [0.0, 0.5], "imec1": [0.1, 0.6]},
+    )
+
+    bundles = NWBLoader(nwb_path).load_recordings(stream_type="ap")
+
+    shift0 = bundles["imec0"].recording.get_property("inter_sample_shift")
+    shift1 = bundles["imec1"].recording.get_property("inter_sample_shift")
+    assert shift0 is not None
+    assert np.allclose(shift0, [0.0, 0.5])
+    assert np.allclose(shift1, [0.1, 0.6])
+    assert len(shift0) == bundles["imec0"].recording.get_num_channels()
+
+
+def test_load_recordings_without_shift_column_no_raise(tmp_path: Path) -> None:
+    """Old NWBs lacking the inter_sample_shift column still load (no raise);
+    the property is simply absent (phase_shift then skipped, current behavior)."""
+    nwb_path = _write_raw_electrical_series_nwb(tmp_path / "input.nwb", probe_ids=("imec0",))
+
+    bundles = NWBLoader(nwb_path).load_recordings(stream_type="ap")
+
+    assert bundles["imec0"].recording.get_property("inter_sample_shift") is None

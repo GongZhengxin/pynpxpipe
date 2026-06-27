@@ -47,6 +47,22 @@ preprocess:
   motion_correction:
     method: dredge
     preset: dredge
+    bin_s: 1.0
+    # DREDge memory advisor (see docs/specs/motion_memory_advisor.md): for
+    # recordings > probe_threshold_s, predict the (B, T, T) correlation-matrix
+    # memory and either raise bin_s to the highest precision that fits RAM, or
+    # disable DREDge and fall back to Kilosort4 nblocks.
+    auto_strategy: true
+    bin_s_floor: 1.0
+    bin_s_max: 3.0
+    ram_safety_factor: 0.6
+    overhead_reserve_gb: 16.0
+    bytes_per_entry: 4
+    n_matrices: 4
+    win_step_um: 400.0
+    n_windows: null
+    probe_threshold_s: 7200.0
+    fallback_nblocks: 5
 resources:
   chunk_duration: auto
   max_memory: auto

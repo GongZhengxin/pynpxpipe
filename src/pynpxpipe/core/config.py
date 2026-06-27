@@ -101,10 +101,38 @@ class MotionCorrectionConfig:
             enable/disable toggle.
         preset: SpikeInterface motion correction preset name passed to
             ``spp.correct_motion(preset=...)``. See SI docs for full list.
+        bin_s: DREDge motion-estimation temporal bin (s), forwarded to
+            ``correct_motion(estimate_motion_kwargs={"bin_s": ...})``. Memory
+            scales ~``1/bin_s**2``; the advisor may raise it to fit RAM.
+        auto_strategy: If True, the runner predicts DREDge memory before
+            preprocess and either picks the highest-precision ``bin_s`` that fits
+            RAM or falls back to ``fallback_nblocks`` (see motion_memory_advisor).
+        bin_s_floor: Finest ``bin_s`` the advisor will choose.
+        bin_s_max: Coarsest acceptable ``bin_s``; beyond it → nblocks fallback.
+        ram_safety_factor: Fraction of available RAM used as the memory budget.
+        overhead_reserve_gb: Flat RAM reserve for non-quadratic DREDge memory.
+        bytes_per_entry: Bytes per correlation-matrix entry (float32 → 4).
+        n_matrices: Effective matrix multiplicity (Ds + Cs + float64 cast + solver).
+        win_step_um: Nonrigid window spacing (µm); used to estimate window count.
+        n_windows: Explicit override for the nonrigid window count B; None → derive.
+        probe_threshold_s: Recordings shorter than this skip the advisor.
+        fallback_nblocks: Kilosort4 ``nblocks`` used when DREDge is dropped.
     """
 
     method: str | None = "dredge"
     preset: str = "dredge"
+    bin_s: float = 1.0
+    auto_strategy: bool = False
+    bin_s_floor: float = 1.0
+    bin_s_max: float = 3.0
+    ram_safety_factor: float = 0.6
+    overhead_reserve_gb: float = 16.0
+    bytes_per_entry: int = 4
+    n_matrices: int = 4
+    win_step_um: float = 400.0
+    n_windows: int | None = None
+    probe_threshold_s: float = 7200.0
+    fallback_nblocks: int = 5
 
 
 @dataclass

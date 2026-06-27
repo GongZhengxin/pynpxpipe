@@ -27,10 +27,11 @@ import spikeinterface.core as si
 
 from pynpxpipe.core.errors import ExportError
 from pynpxpipe.io.nwb_writer import NWBWriter
+from pynpxpipe.io.spikeglx import SpikeGLXLoader
 from pynpxpipe.stages.base import BaseStage
 
 if TYPE_CHECKING:
-    from pynpxpipe.core.session import Session
+    from pynpxpipe.core.session import ProbeInfo, Session
 
 
 def compute_probe_rasters(
@@ -164,6 +165,36 @@ class ExportStage(BaseStage):
         super().__init__(session, progress_callback)
         self.wait_for_raw = wait_for_raw
 
+    def _raw_geometry_and_shift(
+        self, probe: ProbeInfo
+    ) -> tuple[list[tuple[float, float]] | None, np.ndarray | None]:
+        """Recover full raw AP channel geometry + per-channel inter_sample_shift.
+
+        Loads the probe's raw AP lazily (no data read) so the NWB electrode
+        table can carry the ADC sample shift needed to reapply ``phase_shift``
+        on an NWB-input re-sort (cf. nwb_writer.md §9). Returns ``(None, None)``
+        when the raw AP or its shift property is unavailable, so
+        ``add_probe_data`` falls back to the curated geometry unchanged.
+
+        Args:
+            probe: ProbeInfo with ap_bin/ap_meta pointing at the raw SpikeGLX AP.
+
+        Returns:
+            ``(channel_positions, inter_sample_shift)`` or ``(None, None)``.
+        """
+        try:
+            raw_ap = SpikeGLXLoader.load_ap(probe)
+            shift = raw_ap.get_property("inter_sample_shift")
+            if shift is None:
+                return None, None
+            positions = [(float(x), float(y)) for x, y in raw_ap.get_channel_locations()]
+            return positions, np.asarray(shift, dtype=float)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(
+                "Could not recover inter_sample_shift for %s: %s", probe.probe_id, exc
+            )
+            return None, None
+
     def run(self) -> None:
         """Run three-phase export.
 
@@ -211,7 +242,14 @@ class ExportStage(BaseStage):
                     continue
                 analyzer = si.load(postprocessed_dir)
                 rasters = compute_probe_rasters(analyzer, behavior_events, probe_id)
-                n_units = writer.add_probe_data(probe, analyzer, rasters=rasters)
+                raw_positions, inter_shift = self._raw_geometry_and_shift(probe)
+                n_units = writer.add_probe_data(
+                    probe,
+                    analyzer,
+                    rasters=rasters,
+                    raw_channel_positions=raw_positions,
+                    inter_sample_shift=inter_shift,
+                )
                 if isinstance(n_units, int):
                     n_units_total += n_units
                 del analyzer, rasters

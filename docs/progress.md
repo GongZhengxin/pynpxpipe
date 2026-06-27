@@ -110,6 +110,7 @@ M1 遗留项（不阻塞 M2）：集成验证待做。`sync_plots` 已由 M2 Pha
 | `fix(bhv_nidq_align)` | stim_onset 改为直接对齐到 NIDQ rising edge（MATLAB-style `bitand(CodeVal,64)`），替换旧 `trial_anchor + bhv_offset` 公式。旧公式因 BHV 实际 trial-zero 与 NIDQ trial_start rising 不同步，累积 ±120ms per-trial drift，导致光电 flag=3 的无效校准。新增 `stim_onset_bit` / `stim_count_tolerance` 配置项 + auto-detect 回退到旧公式。41 tests（含 9 new RED→GREEN） |
 | `fix(export)` | Phase 2.5 spec drift 修复：`io/derivatives.py` 已按 spec 实现但 `ExportStage._export_phase2` 仍写旧版 `07_export/{trials.csv,units.csv,raster_*.h5}` 且从未调 `derivatives` 模块。重写 `_export_phase2` 按 `docs/specs/derivatives.md` §5：读刚写的 NWB → `07_derivatives/{TrialRaster,UnitProp,TrialRecord}_{session_id}.{h5,csv}`；新增 `ExportConfig/DerivativesConfig`（PipelineConfig +1 字段，共 8）+ `pipeline.yaml` 新增 `export.derivatives` 块；PipelineForm 新增 5 个 widgets（Phase 2.5 Card）；旧 `07_export/` 路径严格删光不保留 fallback；+8 新测试 RED→GREEN（TestPhase25Derivatives），全回归 1462 passed（2026-04-18） |
 | `fix(curate)` | Bombcell 始终 fallback 根因修复 + 3 张官方诊断图落盘。根因两条：(a) `metric_names` 缺 `amplitude_median` / `num_spikes` / `rp_violation` / `drift`，bombcell 读不到所需列；(b) SI ≥0.104 在 `bombcell_label_units` 内部把 `label` 改名为 `bombcell_label`，旧代码仍读 `label` 静默 KeyError 退回 manual。`_curate_probe` 在 `use_bombcell=True` 下新增 `spike_locations`（monopolar triangulation，分钟级但 `drift` 必需）+ `template_metrics` + 9 项 metric_names；`_classify_bombcell` 改读 `bombcell_label` 列并返回 `(unittype_map, labels_df, thresholds)` 三元组。新增 `src/pynpxpipe/plots/bombcell.py::emit_bombcell_plots` 包装 `sw.plot_unit_labels` / `plot_metric_histograms` / `plot_bombcell_labels_upset`，输出到 `05_curated/{probe_id}/figures/`；bombcell 失败时降级只画 `bombcell_unit_labels.png`（用 manual `unittype_map` 反向映射到 bombcell 词表）。`docs/specs/curate.md` §1/§3/§4/§6/§7 同步更新。+12 新测试 RED→GREEN（test_curate.py Group G/H/I + test_plots/test_bombcell.py 4 tests），全回归 1473 passed（2026-04-18） |
+| `feat(resources/runner)` | **motion_memory_advisor**：DREDge 长录制 OOM 预测 + bin_s 自适应。源码实证 DREDge AP 内存峰值是 `xcorr_windows` 的 `(B,T,T)` float32 互相关矩阵（`dredge.py:1014`），∝ `B×(时长/bin_s)²` 且数据无关。`core/resources.py` 新增纯解析 `recommend_motion_strategy()` + `MotionStrategy`：在内存安全上限内解出最高精度（最小）`bin_s`，超 `bin_s_max` 才退 KS4 `nblocks`；`runner._resolve_motion_strategy()`（discover 后调用）按 `fileTimeSecs` 取最长 probe 时长 + psutil 可用 RAM 决策，一致地写回 `bin_s` 或 `method=None`+`nblocks`；`preprocess` 透传 `bin_s` 给 `correct_motion(estimate_motion_kwargs=...)`；`MotionCorrectionConfig` +12 字段（`auto_strategy` 仓库默认开）。spec `docs/specs/motion_memory_advisor.md`；+15 RED→GREEN（test_resources +7 / test_runner +5 / test_preprocess +2 / harness +1）（2026-06-26） |
 
 ### 轨道 B — Pure-Python BHV2（feature 分支）
 
@@ -128,7 +129,7 @@ M1 遗留项（不阻塞 M2）：集成验证待做。`sync_plots` 已由 M2 Pha
 
 ---
 
-**当前全量测试数（2026-04-18 Plots S1 + Output dirs S1 + Phase NWB + Phase 2.5 derivatives rewire + fix(curate) bombcell + Phase 3 UX）**：1492 collected（8 pre-existing failed / 1484 passed）。
+**当前全量测试数（2026-06-26 motion_memory_advisor）**：1591 passed / 0 failed / 46 skipped（`uv run pytest`）。注：2026-04-18 记录的 "8 pre-existing failed" 在 HEAD（含 687f2a3）已全绿，此为重新核实后的基线。
 
 **Phase NWB 完成状态（2026-04-18 核查）**：E1.1 / E2.1-E2.3 / E3.1-E3.3 全部代码实现并测试通过；harness 契约测试 7/7 绿（`test_nwb_clock_contract` / `test_nidq_export_contract` / `test_sync_tables_contract` / `test_export_safety_contract` / `test_verify_safe_contract` / `test_provenance_contract`），相关单元测试 145/145 绿。
 

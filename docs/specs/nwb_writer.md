@@ -450,3 +450,36 @@ class NWBWriter:
 | spike times 在写入时才做时钟转换 | MATLAB step #15 提前将 spike times 从 IMEC 转换到 NIDQ 时钟；Python 在 export 阶段按需转换，保持 postprocess 阶段 spike times 在原始 IMEC 时钟 |
 | 文件名与 `NWBFile.session_id` 统一由 `SessionID.canonical()` 驱动 | MATLAB 以 gate 目录名作为隐含标识；Python 引入 `{date}_{subject}_{experiment}_{region}` 规范化 ID，作为 DANDI 归档与多 session 比对的单一真源 |
 | `ElectrodeGroup.location` 取自 `probe.target_area`（probe_plan 注入） | MATLAB 无 target_area 概念；Python 要求用户在 UI 预声明 `probe_plan`，discover 时注入 ProbeInfo，export 时作为 NWB 电极组脑区的唯一来源，多 probe 场景下每组独立 |
+
+## 9. 增量：NWB 回炉 re-sort 保真（inter_sample_shift + 全量几何 + .ap.meta）
+
+### 9.1 动因（已确认的两处漏洞）
+
+`append_raw_data` 写入的 AP ElectricalSeries 是 **RAW** SpikeGLX 数据（`SpikeGLXLoader.load_ap(probe)`，**未做 phase_shift / bandpass / CMR**）。但当前写出存在两处漏洞，导致 NWB 回炉 re-sort（`pipelines/nwb_rerun.py mode="raw"` 及驱动工具）**无法忠实复现原始预处理**：
+
+1. **丢 `inter_sample_shift`。** `read_spikeglx` 从 `.ap.meta` 计算的 per-channel 亚采样 ADC 时移（NP1.0：384 通道经 32×12 ADC 顺序数字化），以 recording property + probe annotation 形式存在。`append_raw_data` 只序列化「数据 + x/y/z 几何」，丢弃 `inter_sample_shift` / `num_channels_per_adc` / `adc_sample_order`。回炉读出的 recording `"inter_sample_shift" not in get_property_keys()` → `_preprocess_raw_recording` 跳过 phase_shift → 回炉 CMR 在相位错位通道上执行，结果系统性劣于原始 sort（已在 260330 MSB 上实测确认）。
+2. **raw 数据宽度 ≠ electrode region。** `add_probe_data` 用 **curated 几何**（坏道剔除后，本例 383）填 electrode 表且 `channel_id` 重索引 0..382（丢失物理通道身份）；`append_raw_data` 写 RAW 全宽（384）却只能 `_find_electrode_indices` 找到 383 个 electrode → 默认 `get_traces` 泄漏未映射列（384 vs 383），且若坏道在阵列中部则 curated↔raw 映射有歧义。
+
+`.ap.meta` 原文也未存于 NWB（`scratch` 仅 `pipeline_config` / `stim_name_provenance` / `sync_tables`），原始 SpikeGLX 文件被清理后无法恢复任何 SpikeGLX 元数据。
+
+### 9.2 修复设计（三项 + reader 配套）
+
+**新增 electrode 列 `inter_sample_shift`（float，每通道）。**
+
+1. **全量几何 + shift（`add_probe_data`）。** electrode 表按该 probe **RAW AP 全部物理通道**（NP1.0=384）建行，每行带 `x/y/z`、`channel_id`（**真实物理通道 id，非重索引**）、`inter_sample_shift`。geometry + shift 由 export stage 经 `SpikeGLXLoader.load_ap(probe)` 取得（lazy，只读 probe 与 property，不读数据）后传入 `add_probe_data`（新增可选参数 `raw_geometry` / `inter_sample_shift`，缺省 None 时回落到当前 curated 行为以保后向兼容）。units 引用其 curated 子集（按物理 `channel_id` 匹配）。
+2. **raw region == 数据宽度（`append_raw_data`）。** AP ElectricalSeries 的 electrode region 覆盖其全部写入通道，长度严格等于写入数据列数（消除 384/383 不一致）。
+3. **归档 `.ap.meta`（`append_raw_data`）。** 每 probe 读 `probe.ap_meta` 原文写入 `scratch["ap_meta_{probe_id}"]`（纯文本，幂等：已存在则跳过）。
+
+### 9.3 不变量（TDD 锚点）
+
+- **INV1** 每个 raw AP ElectricalSeries 的数据列数 == 其 electrode region 行数。
+- **INV2** 每个 AP electrode 行带 `inter_sample_shift`（float），来自 RAW recording，按物理通道对齐；该值是回炉时 phase_shift 要施加到 RAW 数据上的时移。
+- **INV3** electrode `channel_id` == 真实物理通道 id（curated 子集 ↔ raw 全量映射无歧义）。
+- **INV4** `scratch["ap_meta_{probe_id}"]` 存在且为该 probe `.ap.meta` 原文。
+- **后向兼容**：未传 `raw_geometry`/`inter_sample_shift` 时 `add_probe_data` 行为不变（旧调用、纯 units 导出仍可用）。
+
+### 9.4 与现状偏离
+
+现状：`add_probe_data` 用 curated 几何（383）、`channel_id` 重索引、无 `inter_sample_shift`；`append_raw_data` 写 384 列引用 383 electrode、不存 `.ap.meta`。修复后：electrode=全量物理几何 + shift，raw region 与数据一致，`.ap.meta` 归档。
+
+> 配套 reader 变更见 `docs/specs/nwb_reader.md` 同名增量（`load_recordings` 恢复 `inter_sample_shift` 属性）。验收：用修复后的 writer 从可用 SpikeGLX（如 NPX_FLD260427 同型号 NP1.0）导出短切片 NWB → `NWBLoader.load_recordings` 读回 → `"inter_sample_shift" in recording.get_property_keys()` 为真 → `_preprocess_raw_recording` 施加 phase_shift。
