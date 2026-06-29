@@ -565,6 +565,120 @@ def test_pipeline_form_motion_preset_change_updates_state():
     assert state.pipeline_config.preprocess.motion_correction.preset == "rigid_fast"
 
 
+# ---------------------------------------------------------------------------
+# Resources utilization tuning + DREDge advisor widgets (Advanced subgroups)
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_form_has_resource_tuning_widgets():
+    """PipelineForm exposes the Advanced utilization-tuning widgets."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    form = PipelineForm(AppState())
+    assert isinstance(form.reserve_cores_input, pn.widgets.IntInput)
+    assert isinstance(form.n_jobs_cap_input, pn.widgets.IntInput)
+    assert isinstance(form.ram_safety_factor_input, pn.widgets.FloatInput)
+    assert isinstance(form.vram_safety_factor_input, pn.widgets.FloatInput)
+
+
+def test_pipeline_form_resource_tuning_change_updates_state():
+    """Changing tuning widgets updates state.pipeline_config.resources.*."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+    form.reserve_cores_input.value = 0
+    form.n_jobs_cap_input.value = 24
+    form.ram_safety_factor_input.value = 0.7
+    form.vram_safety_factor_input.value = 0.95
+    res = state.pipeline_config.resources
+    assert res.reserve_cores == 0
+    assert res.n_jobs_cap == 24
+    assert res.ram_safety_factor == pytest.approx(0.7)
+    assert res.vram_safety_factor == pytest.approx(0.95)
+
+
+def test_pipeline_form_has_dredge_advisor_widgets():
+    """PipelineForm exposes the Advanced DREDge advisor widgets."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    form = PipelineForm(AppState())
+    assert isinstance(form.motion_auto_strategy_checkbox, pn.widgets.Checkbox)
+    assert isinstance(form.motion_bin_s_max_input, pn.widgets.FloatInput)
+    assert isinstance(form.motion_fallback_nblocks_input, pn.widgets.IntInput)
+
+
+def test_pipeline_form_dredge_advisor_change_updates_state():
+    """Changing advisor widgets updates motion_correction fields."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+    form.motion_auto_strategy_checkbox.value = True
+    form.motion_bin_s_max_input.value = 5.0
+    form.motion_fallback_nblocks_input.value = 7
+    mc = state.pipeline_config.preprocess.motion_correction
+    assert mc.auto_strategy is True
+    assert mc.bin_s_max == pytest.approx(5.0)
+    assert mc.fallback_nblocks == 7
+
+
+def test_pipeline_form_n_windows_nullable_default_none():
+    """n_windows defaults to None (checkbox off) and the input is disabled."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+    assert form.motion_n_windows_enable_checkbox.value is False
+    assert form.motion_n_windows_input.disabled is True
+    assert state.pipeline_config.preprocess.motion_correction.n_windows is None
+
+
+def test_pipeline_form_n_windows_enable_sets_int():
+    """Enabling the n_windows override forwards the int and undisables the input."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    state = AppState()
+    form = PipelineForm(state)
+    form.motion_n_windows_enable_checkbox.value = True
+    form.motion_n_windows_input.value = 12
+    assert form.motion_n_windows_input.disabled is False
+    assert state.pipeline_config.preprocess.motion_correction.n_windows == 12
+
+
+def test_pipeline_form_apply_pipeline_restores_advanced_fields():
+    """apply_pipeline round-trips the new tuning + advisor fields into widgets."""
+    import dataclasses
+
+    from pynpxpipe.core.config import (
+        MotionCorrectionConfig,
+        PipelineConfig,
+        PreprocessConfig,
+        ResourcesConfig,
+    )
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+
+    cfg = dataclasses.replace(
+        PipelineConfig(),
+        resources=ResourcesConfig(reserve_cores=2, ram_safety_factor=0.7, n_jobs_cap=24),
+        preprocess=dataclasses.replace(
+            PreprocessConfig(),
+            motion_correction=MotionCorrectionConfig(
+                auto_strategy=True, bin_s_max=4.0, n_windows=15
+            ),
+        ),
+    )
+    form = PipelineForm(AppState())
+    form.apply_pipeline(cfg)
+    assert form.reserve_cores_input.value == 2
+    assert form.ram_safety_factor_input.value == pytest.approx(0.7)
+    assert form.n_jobs_cap_input.value == 24
+    assert form.motion_auto_strategy_checkbox.value is True
+    assert form.motion_bin_s_max_input.value == pytest.approx(4.0)
+    assert form.motion_n_windows_enable_checkbox.value is True
+    assert form.motion_n_windows_input.value == 15
+
+
 def test_pipeline_form_has_sync_widgets():
     """PipelineForm exposes sync parameter widgets."""
     from pynpxpipe.ui.components.pipeline_form import PipelineForm
@@ -1417,8 +1531,23 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     "resources.n_jobs": "n_jobs_input",
     "resources.chunk_duration": "chunk_duration_input",
     "resources.max_memory": "max_memory_input",
+    # Utilization tuning knobs — Resources Card "Advanced" subgroup
+    # (see docs/specs/resources.md §7.0).
+    "resources.reserve_cores": "reserve_cores_input",
+    "resources.n_jobs_cap": "n_jobs_cap_input",
+    "resources.ram_safety_factor": "ram_safety_factor_input",
+    "resources.ram_reserve_gb": "ram_reserve_gb_input",
+    "resources.chunk_ram_fraction": "chunk_ram_fraction_input",
+    "resources.chunk_max_s": "chunk_max_s_input",
+    "resources.max_workers_cap": "max_workers_cap_input",
+    "resources.max_workers_ram_fraction": "max_workers_ram_fraction_input",
+    "resources.vram_safety_factor": "vram_safety_factor_input",
+    "resources.vram_overhead_gb": "vram_overhead_gb_input",
     "parallel.enabled": "parallel_enabled_checkbox",
     "parallel.max_workers": "parallel_max_workers_input",
+    # Zarr disk knobs — operational, tuned in pipeline.yaml not the UI.
+    "preprocess.save_dtype": None,
+    "preprocess.delete_zarr_after_postprocess": None,
     "preprocess.bandpass.freq_min": "freq_min_input",
     "preprocess.bandpass.freq_max": "freq_max_input",
     "preprocess.bad_channel_detection.method": "bad_channel_method_input",
@@ -1427,20 +1556,21 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     "preprocess.common_reference.operator": "cmr_operator_select",
     "preprocess.motion_correction.method": "motion_enabled_checkbox",
     "preprocess.motion_correction.preset": "motion_preset_select",
-    # motion_memory_advisor knobs — automatic by default; advanced/calibration,
-    # tuned in pipeline.yaml not the UI (see docs/specs/motion_memory_advisor.md).
-    "preprocess.motion_correction.bin_s": None,
-    "preprocess.motion_correction.auto_strategy": None,
-    "preprocess.motion_correction.bin_s_floor": None,
-    "preprocess.motion_correction.bin_s_max": None,
-    "preprocess.motion_correction.ram_safety_factor": None,
-    "preprocess.motion_correction.overhead_reserve_gb": None,
+    # motion_memory_advisor knobs — Motion Card "Advanced" subgroup
+    # (see docs/specs/motion_memory_advisor.md). bytes_per_entry / n_matrices are
+    # pure internal calibration constants → pipeline.yaml only (not in UI).
+    "preprocess.motion_correction.bin_s": "motion_bin_s_input",
+    "preprocess.motion_correction.auto_strategy": "motion_auto_strategy_checkbox",
+    "preprocess.motion_correction.bin_s_floor": "motion_bin_s_floor_input",
+    "preprocess.motion_correction.bin_s_max": "motion_bin_s_max_input",
+    "preprocess.motion_correction.ram_safety_factor": "motion_ram_safety_factor_input",
+    "preprocess.motion_correction.overhead_reserve_gb": "motion_overhead_reserve_gb_input",
     "preprocess.motion_correction.bytes_per_entry": None,
     "preprocess.motion_correction.n_matrices": None,
-    "preprocess.motion_correction.win_step_um": None,
-    "preprocess.motion_correction.n_windows": None,
-    "preprocess.motion_correction.probe_threshold_s": None,
-    "preprocess.motion_correction.fallback_nblocks": None,
+    "preprocess.motion_correction.win_step_um": "motion_win_step_um_input",
+    "preprocess.motion_correction.n_windows": "motion_n_windows_input",
+    "preprocess.motion_correction.probe_threshold_s": "motion_probe_threshold_s_input",
+    "preprocess.motion_correction.fallback_nblocks": "motion_fallback_nblocks_input",
     "curation.isi_violation_ratio_max": "isi_max_input",
     "curation.amplitude_cutoff_max": "amp_cutoff_input",
     "curation.presence_ratio_min": "presence_min_input",

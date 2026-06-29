@@ -67,6 +67,80 @@ class PipelineForm:
             description="Max RAM budget (e.g. '4G', '8G'). 'auto' = use 75% of free RAM. Limits chunk allocation.",
         )
 
+        # ── Resources: Advanced utilization tuning (see resources.md §7.0) ──
+        _res = _DEFAULTS.resources
+        self.reserve_cores_input = pn.widgets.IntInput(
+            name="reserve_cores",
+            value=_res.reserve_cores,
+            start=0,
+            description="Physical cores left free for the OS/orchestrator. Lower = more n_jobs.",
+        )
+        self.n_jobs_cap_input = pn.widgets.IntInput(
+            name="n_jobs_cap",
+            value=_res.n_jobs_cap,
+            start=1,
+            description="Hard ceiling on auto-recommended n_jobs (parallel chunk workers).",
+        )
+        self.ram_safety_factor_input = pn.widgets.FloatInput(
+            name="ram_safety_factor",
+            value=_res.ram_safety_factor,
+            start=0.0,
+            end=1.0,
+            step=0.05,
+            description="Fraction of *available* RAM usable as the n_jobs budget. Lower = safer.",
+        )
+        self.ram_reserve_gb_input = pn.widgets.FloatInput(
+            name="ram_reserve_gb",
+            value=_res.ram_reserve_gb,
+            start=0.0,
+            step=1.0,
+            description="Absolute RAM headroom always kept free (hedges psutil.available volatility).",
+        )
+        self.chunk_ram_fraction_input = pn.widgets.FloatInput(
+            name="chunk_ram_fraction",
+            value=_res.chunk_ram_fraction,
+            start=0.0,
+            end=1.0,
+            step=0.05,
+            description="Fraction of available RAM used to size chunk_duration.",
+        )
+        self.chunk_max_s_input = pn.widgets.FloatInput(
+            name="chunk_max_s",
+            value=_res.chunk_max_s,
+            start=0.5,
+            step=0.5,
+            description="Largest chunk_duration (s) auto will pick.",
+        )
+        self.max_workers_cap_input = pn.widgets.IntInput(
+            name="max_workers_cap",
+            value=_res.max_workers_cap,
+            start=1,
+            description="Hard ceiling on auto-recommended parallel-probe workers.",
+        )
+        self.max_workers_ram_fraction_input = pn.widgets.FloatInput(
+            name="max_workers_ram_fraction",
+            value=_res.max_workers_ram_fraction,
+            start=0.0,
+            end=1.0,
+            step=0.05,
+            description="Fraction of available RAM for the parallel-probe worker budget.",
+        )
+        self.vram_safety_factor_input = pn.widgets.FloatInput(
+            name="vram_safety_factor",
+            value=_res.vram_safety_factor,
+            start=0.0,
+            end=1.0,
+            step=0.05,
+            description="Fraction of (free VRAM - overhead) used to size KS4 batch_size.",
+        )
+        self.vram_overhead_gb_input = pn.widgets.FloatInput(
+            name="vram_overhead_gb",
+            value=_res.vram_overhead_gb,
+            start=0.0,
+            step=0.5,
+            description="VRAM reserved for driver/context before sizing batch_size.",
+        )
+
         # ── Parallel ──
         self.parallel_enabled_checkbox = pn.widgets.Checkbox(
             name="Enable multi-probe parallelism (ProcessPoolExecutor)",
@@ -137,6 +211,79 @@ class PipelineForm:
             ],
             value=_mc.preset,
             description="SpikeInterface motion correction preset. 'dredge' = DREDge AP (recommended). 'nonrigid_accurate' = decentralized non-rigid. See SI docs for details.",
+        )
+
+        # ── Motion: Advanced DREDge memory advisor (see motion_memory_advisor.md) ──
+        self.motion_auto_strategy_checkbox = pn.widgets.Checkbox(
+            name="auto_strategy (predict DREDge OOM, auto-tune bin_s or fall back to nblocks)",
+            value=_mc.auto_strategy,
+        )
+        self.motion_bin_s_input = pn.widgets.FloatInput(
+            name="bin_s",
+            value=_mc.bin_s,
+            start=0.1,
+            step=0.1,
+            description="DREDge motion-estimation temporal bin (s). Memory ~1/bin_s². Advisor may raise it.",
+        )
+        self.motion_bin_s_floor_input = pn.widgets.FloatInput(
+            name="bin_s_floor",
+            value=_mc.bin_s_floor,
+            start=0.1,
+            step=0.1,
+            description="Finest bin_s the advisor will choose.",
+        )
+        self.motion_bin_s_max_input = pn.widgets.FloatInput(
+            name="bin_s_max",
+            value=_mc.bin_s_max,
+            start=0.1,
+            step=0.5,
+            description="Coarsest acceptable bin_s; beyond it the advisor drops DREDge for KS4 nblocks.",
+        )
+        self.motion_ram_safety_factor_input = pn.widgets.FloatInput(
+            name="DREDge ram_safety_factor",
+            value=_mc.ram_safety_factor,
+            start=0.0,
+            end=1.0,
+            step=0.05,
+            description="Fraction of available RAM used as the DREDge memory budget (distinct from resources.ram_safety_factor).",
+        )
+        self.motion_overhead_reserve_gb_input = pn.widgets.FloatInput(
+            name="overhead_reserve_gb",
+            value=_mc.overhead_reserve_gb,
+            start=0.0,
+            step=1.0,
+            description="Flat RAM reserve for non-quadratic DREDge memory.",
+        )
+        self.motion_probe_threshold_s_input = pn.widgets.FloatInput(
+            name="probe_threshold_s",
+            value=_mc.probe_threshold_s,
+            start=0.0,
+            step=600.0,
+            description="Recordings shorter than this skip the advisor entirely.",
+        )
+        self.motion_fallback_nblocks_input = pn.widgets.IntInput(
+            name="fallback_nblocks",
+            value=_mc.fallback_nblocks,
+            start=0,
+            description="Kilosort4 nblocks used when DREDge is dropped.",
+        )
+        self.motion_n_windows_enable_checkbox = pn.widgets.Checkbox(
+            name="Override n_windows (else derive from probe geometry)",
+            value=_mc.n_windows is not None,
+        )
+        self.motion_n_windows_input = pn.widgets.IntInput(
+            name="n_windows",
+            value=_mc.n_windows if _mc.n_windows is not None else 10,
+            start=1,
+            disabled=_mc.n_windows is None,
+            description="Explicit nonrigid window count B. Leave disabled to derive from geometry.",
+        )
+        self.motion_win_step_um_input = pn.widgets.FloatInput(
+            name="win_step_um",
+            value=_mc.win_step_um,
+            start=1.0,
+            step=10.0,
+            description="Nonrigid window spacing (µm); used to estimate window count B.",
         )
 
         # ── Curation ──
@@ -389,6 +536,10 @@ class PipelineForm:
             lambda e: setattr(self.stim_onset_bit_input, "disabled", not e.new),
             "value",
         )
+        self.motion_n_windows_enable_checkbox.param.watch(
+            lambda e: setattr(self.motion_n_windows_input, "disabled", not e.new),
+            "value",
+        )
 
         # ── Postprocess ──
         _post = _DEFAULTS.postprocess
@@ -465,6 +616,16 @@ class PipelineForm:
             self.n_jobs_input,
             self.chunk_duration_input,
             self.max_memory_input,
+            self.reserve_cores_input,
+            self.n_jobs_cap_input,
+            self.ram_safety_factor_input,
+            self.ram_reserve_gb_input,
+            self.chunk_ram_fraction_input,
+            self.chunk_max_s_input,
+            self.max_workers_cap_input,
+            self.max_workers_ram_fraction_input,
+            self.vram_safety_factor_input,
+            self.vram_overhead_gb_input,
             self.parallel_enabled_checkbox,
             self.parallel_max_workers_input,
             self.freq_min_input,
@@ -475,6 +636,17 @@ class PipelineForm:
             self.cmr_operator_select,
             self.motion_enabled_checkbox,
             self.motion_preset_select,
+            self.motion_auto_strategy_checkbox,
+            self.motion_bin_s_input,
+            self.motion_bin_s_floor_input,
+            self.motion_bin_s_max_input,
+            self.motion_ram_safety_factor_input,
+            self.motion_overhead_reserve_gb_input,
+            self.motion_probe_threshold_s_input,
+            self.motion_fallback_nblocks_input,
+            self.motion_n_windows_enable_checkbox,
+            self.motion_n_windows_input,
+            self.motion_win_step_um_input,
             self.use_bombcell_checkbox,
             self.isi_max_input,
             self.amp_cutoff_input,
@@ -549,6 +721,16 @@ class PipelineForm:
                 n_jobs=n_jobs,
                 chunk_duration=self.chunk_duration_input.value or "auto",
                 max_memory=self.max_memory_input.value or "auto",
+                reserve_cores=self.reserve_cores_input.value,
+                n_jobs_cap=self.n_jobs_cap_input.value,
+                ram_safety_factor=self.ram_safety_factor_input.value,
+                ram_reserve_gb=self.ram_reserve_gb_input.value,
+                chunk_ram_fraction=self.chunk_ram_fraction_input.value,
+                chunk_max_s=self.chunk_max_s_input.value,
+                max_workers_cap=self.max_workers_cap_input.value,
+                max_workers_ram_fraction=self.max_workers_ram_fraction_input.value,
+                vram_safety_factor=self.vram_safety_factor_input.value,
+                vram_overhead_gb=self.vram_overhead_gb_input.value,
             ),
             parallel=ParallelConfig(
                 enabled=self.parallel_enabled_checkbox.value,
@@ -570,6 +752,20 @@ class PipelineForm:
                 motion_correction=MotionCorrectionConfig(
                     method="dredge" if self.motion_enabled_checkbox.value else None,
                     preset=self.motion_preset_select.value,
+                    bin_s=self.motion_bin_s_input.value,
+                    auto_strategy=self.motion_auto_strategy_checkbox.value,
+                    bin_s_floor=self.motion_bin_s_floor_input.value,
+                    bin_s_max=self.motion_bin_s_max_input.value,
+                    ram_safety_factor=self.motion_ram_safety_factor_input.value,
+                    overhead_reserve_gb=self.motion_overhead_reserve_gb_input.value,
+                    win_step_um=self.motion_win_step_um_input.value,
+                    n_windows=(
+                        self.motion_n_windows_input.value
+                        if self.motion_n_windows_enable_checkbox.value
+                        else None
+                    ),
+                    probe_threshold_s=self.motion_probe_threshold_s_input.value,
+                    fallback_nblocks=self.motion_fallback_nblocks_input.value,
                 ),
             ),
             curation=CurationConfig(
@@ -659,6 +855,18 @@ class PipelineForm:
         self.n_jobs_input.value = str(cfg.resources.n_jobs)
         self.chunk_duration_input.value = str(cfg.resources.chunk_duration)
         self.max_memory_input.value = str(cfg.resources.max_memory)
+        # Resources advanced tuning
+        res = cfg.resources
+        self.reserve_cores_input.value = res.reserve_cores
+        self.n_jobs_cap_input.value = res.n_jobs_cap
+        self.ram_safety_factor_input.value = res.ram_safety_factor
+        self.ram_reserve_gb_input.value = res.ram_reserve_gb
+        self.chunk_ram_fraction_input.value = res.chunk_ram_fraction
+        self.chunk_max_s_input.value = res.chunk_max_s
+        self.max_workers_cap_input.value = res.max_workers_cap
+        self.max_workers_ram_fraction_input.value = res.max_workers_ram_fraction
+        self.vram_safety_factor_input.value = res.vram_safety_factor
+        self.vram_overhead_gb_input.value = res.vram_overhead_gb
         # Parallel
         self.parallel_enabled_checkbox.value = cfg.parallel.enabled
         self.parallel_max_workers_input.value = str(cfg.parallel.max_workers)
@@ -674,8 +882,22 @@ class PipelineForm:
         self.cmr_reference_select.value = cfg.preprocess.common_reference.reference
         self.cmr_operator_select.value = cfg.preprocess.common_reference.operator
         # Motion correction (None method → checkbox disabled, preset preserved)
-        self.motion_enabled_checkbox.value = cfg.preprocess.motion_correction.method is not None
-        self.motion_preset_select.value = cfg.preprocess.motion_correction.preset
+        mc = cfg.preprocess.motion_correction
+        self.motion_enabled_checkbox.value = mc.method is not None
+        self.motion_preset_select.value = mc.preset
+        # Motion advanced DREDge advisor
+        self.motion_auto_strategy_checkbox.value = mc.auto_strategy
+        self.motion_bin_s_input.value = mc.bin_s
+        self.motion_bin_s_floor_input.value = mc.bin_s_floor
+        self.motion_bin_s_max_input.value = mc.bin_s_max
+        self.motion_ram_safety_factor_input.value = mc.ram_safety_factor
+        self.motion_overhead_reserve_gb_input.value = mc.overhead_reserve_gb
+        self.motion_probe_threshold_s_input.value = mc.probe_threshold_s
+        self.motion_fallback_nblocks_input.value = mc.fallback_nblocks
+        self.motion_win_step_um_input.value = mc.win_step_um
+        self.motion_n_windows_enable_checkbox.value = mc.n_windows is not None
+        if mc.n_windows is not None:
+            self.motion_n_windows_input.value = mc.n_windows
         # Curation
         cur = cfg.curation
         self.use_bombcell_checkbox.value = cur.use_bombcell
@@ -748,6 +970,19 @@ class PipelineForm:
                 self.n_jobs_input,
                 self.chunk_duration_input,
                 self.max_memory_input,
+                pn.pane.Markdown(
+                    "**Advanced: utilization tuning** (how aggressively `auto` uses this machine)"
+                ),
+                self.reserve_cores_input,
+                self.n_jobs_cap_input,
+                self.ram_safety_factor_input,
+                self.ram_reserve_gb_input,
+                self.chunk_ram_fraction_input,
+                self.chunk_max_s_input,
+                self.max_workers_cap_input,
+                self.max_workers_ram_fraction_input,
+                self.vram_safety_factor_input,
+                self.vram_overhead_gb_input,
                 title="Resources",
                 collapsed=True,
             ),
@@ -774,6 +1009,20 @@ class PipelineForm:
             pn.Card(
                 self.motion_enabled_checkbox,
                 self.motion_preset_select,
+                pn.pane.Markdown(
+                    "**Advanced: DREDge memory advisor** (auto bin_s / nblocks for long recordings)"
+                ),
+                self.motion_auto_strategy_checkbox,
+                self.motion_bin_s_input,
+                self.motion_bin_s_floor_input,
+                self.motion_bin_s_max_input,
+                self.motion_ram_safety_factor_input,
+                self.motion_overhead_reserve_gb_input,
+                self.motion_probe_threshold_s_input,
+                self.motion_fallback_nblocks_input,
+                self.motion_n_windows_enable_checkbox,
+                self.motion_n_windows_input,
+                self.motion_win_step_um_input,
                 title="Motion Correction",
                 collapsed=True,
             ),

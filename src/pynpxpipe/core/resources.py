@@ -273,6 +273,44 @@ class RecommendedParams:
 
 
 @dataclass
+class ResourceTuning:
+    """How aggressively auto-detection should use the machine.
+
+    Mirrors the tuning fields of ``core.config.ResourcesConfig`` 1:1, so users
+    can override each knob per machine in ``pipeline.yaml`` (zero hardcoding).
+    Defaults target ~90% of CPU + GPU utilization while keeping a hard RAM
+    safety margin: AP preprocessing is CPU/IO-bound (each worker holds only one
+    chunk), so cores and GPU ``batch_size`` — not RAM — are the throughput
+    levers. RAM is gated by ``ram_safety_factor * available - ram_reserve_gb``,
+    a proportional cap plus an absolute headroom that hedges the volatility of
+    ``psutil.available`` (which includes reclaimable cache) to avoid OOM.
+
+    Attributes:
+        reserve_cores: Physical cores left free for the OS/orchestrator.
+        n_jobs_cap: Hard ceiling on recommended n_jobs.
+        ram_safety_factor: Fraction of available RAM usable as the n_jobs budget.
+        ram_reserve_gb: Absolute RAM headroom always kept free.
+        chunk_ram_fraction: Fraction of available RAM used to size chunk_duration.
+        chunk_max_s: Largest chunk_duration (s) auto will pick.
+        max_workers_cap: Hard ceiling on recommended parallel-probe workers.
+        max_workers_ram_fraction: Fraction of available RAM for the worker budget.
+        vram_safety_factor: Fraction of (free VRAM - overhead) for KS4 batch_size.
+        vram_overhead_gb: VRAM reserved for driver/context before sizing batch_size.
+    """
+
+    reserve_cores: int = 1
+    n_jobs_cap: int = 64
+    ram_safety_factor: float = 0.85
+    ram_reserve_gb: float = 10.0
+    chunk_ram_fraction: float = 0.40
+    chunk_max_s: float = 5.0
+    max_workers_cap: int = 8
+    max_workers_ram_fraction: float = 0.85
+    vram_safety_factor: float = 0.90
+    vram_overhead_gb: float = 2.0
+
+
+@dataclass
 class MotionStrategy:
     """DREDge memory-vs-precision decision for the motion-correction step.
 
@@ -497,31 +535,35 @@ class ResourceDetector:
         self,
         profile: HardwareProfile,
         probes: list[ProbeInfo] | None = None,
+        tuning: ResourceTuning | None = None,
     ) -> RecommendedParams:
         """Compute recommended parameter values from a HardwareProfile.
 
         Args:
             profile: HardwareProfile from detect().
             probes: List of ProbeInfo objects. If None, conservative defaults assumed.
+            tuning: Utilization knobs (reserve cores, RAM/VRAM safety factors,
+                caps). None → default ``ResourceTuning()``.
 
         Returns:
             RecommendedParams with computed values and human-readable notes.
         """
+        tuning = tuning or ResourceTuning()
         n_channels = probes[0].n_channels if probes else 384
         sample_rate = probes[0].sample_rate if probes else 30_000.0
         n_probes = len(probes) if probes else 1
 
         chunk_str, chunk_note = self._recommend_chunk_duration(
-            profile.ram, FALLBACK_N_JOBS, n_channels, sample_rate
+            profile.ram, FALLBACK_N_JOBS, n_channels, sample_rate, tuning
         )
         chunk_s = float(chunk_str[:-1])
 
         n_jobs, jobs_note = self._recommend_n_jobs(
-            profile.cpu, profile.ram, chunk_s, n_channels, sample_rate
+            profile.cpu, profile.ram, chunk_s, n_channels, sample_rate, tuning
         )
 
-        max_workers, workers_note = self._recommend_max_workers(profile.ram, n_probes)
-        batch_size, batch_note = self._recommend_batch_size(profile.primary_gpu)
+        max_workers, workers_note = self._recommend_max_workers(profile.ram, n_probes, tuning)
+        batch_size, batch_note = self._recommend_batch_size(profile.primary_gpu, tuning)
 
         return RecommendedParams(
             n_jobs=n_jobs,
@@ -743,17 +785,25 @@ class ResourceDetector:
         chunk_duration_s: float,
         n_channels: int,
         sample_rate: float,
+        tuning: ResourceTuning | None = None,
     ) -> tuple[int, str]:
         """Compute recommended n_jobs from CPU and RAM constraints."""
+        tuning = tuning or ResourceTuning()
         physical = cpu.physical_cores or max(1, (os.cpu_count() or 2) // 2)
-        n_jobs_cpu = max(1, physical - 2)
+        n_jobs_cpu = max(1, physical - tuning.reserve_cores)
 
         bytes_per_sec = n_channels * sample_rate * 4 * 5
         memory_per_job = bytes_per_sec * chunk_duration_s
         available_bytes = ram.available_gb * 1e9
-        n_jobs_mem = max(1, int(available_bytes * 0.60 / memory_per_job))
+        # Double gate: proportional budget minus an absolute headroom. The
+        # absolute reserve hedges psutil.available volatility (reclaimable cache)
+        # so we never claim the whole box and OOM.
+        usable_ram = max(
+            0.0, available_bytes * tuning.ram_safety_factor - tuning.ram_reserve_gb * 1e9
+        )
+        n_jobs_mem = max(1, int(usable_ram / memory_per_job))
 
-        n_jobs = min(n_jobs_cpu, n_jobs_mem, 16)
+        n_jobs = min(n_jobs_cpu, n_jobs_mem, tuning.n_jobs_cap)
 
         if n_jobs_cpu <= n_jobs_mem:
             note = f"n_jobs: CPU-bound ({physical} physical cores → {n_jobs})"
@@ -768,14 +818,16 @@ class ResourceDetector:
         n_jobs_estimate: int,
         n_channels: int,
         sample_rate: float,
+        tuning: ResourceTuning | None = None,
     ) -> tuple[str, str]:
         """Compute recommended chunk_duration from available RAM."""
+        tuning = tuning or ResourceTuning()
         bytes_per_sec = n_channels * sample_rate * 4 * 5
         available_bytes = ram.available_gb * 1e9
-        memory_budget = available_bytes * 0.40
+        memory_budget = available_bytes * tuning.chunk_ram_fraction
         bytes_per_chunk = memory_budget / max(1, n_jobs_estimate)
         chunk_raw_s = bytes_per_chunk / bytes_per_sec
-        chunk_raw_s = max(0.5, min(5.0, chunk_raw_s))
+        chunk_raw_s = max(0.5, min(tuning.chunk_max_s, chunk_raw_s))
 
         if chunk_raw_s >= 4.0:
             chunk_str = "5s"
@@ -793,19 +845,32 @@ class ResourceDetector:
         self,
         ram: RAMInfo,
         n_probes: int,
+        tuning: ResourceTuning | None = None,
     ) -> tuple[int, str]:
         """Compute recommended max_workers for parallel probe processing."""
-        max_by_memory = max(1, int(ram.available_gb * 0.70 / _PER_PROBE_PEAK_GB))
-        max_workers = min(max_by_memory, n_probes, 4)
+        tuning = tuning or ResourceTuning()
+        max_by_memory = max(
+            1, int(ram.available_gb * tuning.max_workers_ram_fraction / _PER_PROBE_PEAK_GB)
+        )
+        max_workers = min(max_by_memory, n_probes, tuning.max_workers_cap)
         note = f"max_workers: {max_workers} (RAM: {ram.available_gb:.1f} GB, probes: {n_probes})"
         return max_workers, note
 
-    def _recommend_batch_size(self, gpu: GPUInfo | None) -> tuple[int, str]:
+    def _recommend_batch_size(
+        self,
+        gpu: GPUInfo | None,
+        tuning: ResourceTuning | None = None,
+    ) -> tuple[int, str]:
         """Compute recommended Kilosort4 batch_size from available VRAM."""
+        tuning = tuning or ResourceTuning()
         if gpu is None:
             return FALLBACK_BATCH_SIZE, "batch_size: no GPU detected, using default (CPU mode)"
 
-        vram_for_batch = max(0.0, gpu.vram_free_gb - _VRAM_OVERHEAD_GB) * (1024**3) * 0.80
+        vram_for_batch = (
+            max(0.0, gpu.vram_free_gb - tuning.vram_overhead_gb)
+            * (1024**3)
+            * tuning.vram_safety_factor
+        )
         batch_raw = int(vram_for_batch / _BYTES_PER_SAMPLE_VRAM)
 
         if batch_raw >= 60_000:
@@ -917,7 +982,7 @@ class ResourceConfig:
         gpu = self._profile.primary_gpu
         batch = sorting_config.sorter.params.batch_size
         if isinstance(batch, int) and gpu is not None:
-            vram_safe = max(0.0, gpu.vram_free_gb - _VRAM_OVERHEAD_GB) * (1024**3) * 0.80
+            vram_safe = max(0.0, gpu.vram_free_gb - _VRAM_OVERHEAD_GB) * (1024**3) * 0.90
             safe_max = int(vram_safe / _BYTES_PER_SAMPLE_VRAM)
             if batch > safe_max and safe_max > 0:
                 warnings.append(

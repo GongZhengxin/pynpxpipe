@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,7 +17,11 @@ import psutil
 
 from pynpxpipe.core.checkpoint import CheckpointManager
 from pynpxpipe.core.config import save_pipeline_config, save_sorting_config
-from pynpxpipe.core.resources import ResourceDetector, recommend_motion_strategy
+from pynpxpipe.core.resources import (
+    ResourceDetector,
+    ResourceTuning,
+    recommend_motion_strategy,
+)
 from pynpxpipe.pipelines.constants import PER_PROBE_STAGES, STAGE_ORDER
 
 if TYPE_CHECKING:
@@ -90,7 +95,20 @@ class PipelineRunner:
         if needs_auto:
             detector = ResourceDetector(self.session.session_dir, self.session.output_dir)
             profile = detector.detect()
-            rec = detector.recommend(profile, session.probes or None)
+            rc = pipeline_config.resources
+            tuning = ResourceTuning(
+                reserve_cores=rc.reserve_cores,
+                n_jobs_cap=rc.n_jobs_cap,
+                ram_safety_factor=rc.ram_safety_factor,
+                ram_reserve_gb=rc.ram_reserve_gb,
+                chunk_ram_fraction=rc.chunk_ram_fraction,
+                chunk_max_s=rc.chunk_max_s,
+                max_workers_cap=rc.max_workers_cap,
+                max_workers_ram_fraction=rc.max_workers_ram_fraction,
+                vram_safety_factor=rc.vram_safety_factor,
+                vram_overhead_gb=rc.vram_overhead_gb,
+            )
+            rec = detector.recommend(profile, session.probes or None, tuning=tuning)
             if pipeline_config.resources.n_jobs == "auto":
                 pipeline_config.resources.n_jobs = rec.n_jobs
             if pipeline_config.resources.chunk_duration == "auto":
@@ -145,6 +163,8 @@ class PipelineRunner:
             if stage_name == "preprocess":
                 self._resolve_motion_strategy()
             self.run_stage(stage_name)
+            if stage_name == "postprocess":
+                self._cleanup_preprocessed_zarr()
 
     def run_stage(self, stage_name: str) -> None:
         """Instantiate and run a single stage by name.
@@ -182,6 +202,39 @@ class PipelineRunner:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _cleanup_preprocessed_zarr(self) -> None:
+        """Delete each probe's preprocessed Zarr once its postprocess is done.
+
+        Runs after the postprocess stage (the Zarr's last consumer). Frees the
+        ~half-of-raw intermediate before the export NWB is built. Only deletes a
+        probe's Zarr when that probe's postprocess checkpoint is complete, so it
+        is resume-safe and never removes data a pending stage still needs. Never
+        raises — a failed unlink only logs a warning.
+        """
+        if not self.pipeline_config.preprocess.delete_zarr_after_postprocess:
+            return
+        preprocessed_dir = self.session.output_dir / "01_preprocessed"
+        for probe in self.session.probes or []:
+            if not self._checkpoint.is_complete("postprocess", probe.probe_id):
+                continue
+            zarr_path = preprocessed_dir / f"{probe.probe_id}.zarr"
+            if not zarr_path.exists():
+                continue
+            try:
+                shutil.rmtree(zarr_path)
+                _LOG.info(
+                    "Deleted preprocessed Zarr after postprocess (%s): %s",
+                    probe.probe_id,
+                    zarr_path,
+                )
+            except OSError as exc:
+                _LOG.warning(
+                    "Failed to delete preprocessed Zarr (%s) at %s: %s",
+                    probe.probe_id,
+                    zarr_path,
+                    exc,
+                )
 
     def _resolve_motion_strategy(self) -> None:
         """Predict DREDge memory and set ``bin_s`` / fallback before preprocess.

@@ -21,6 +21,7 @@ from pynpxpipe.core.resources import (
     RecommendedParams,
     ResourceConfig,
     ResourceDetector,
+    ResourceTuning,
     recommend_motion_strategy,
 )
 
@@ -292,16 +293,17 @@ class TestRecommendNJobs:
         cpu = _make_cpu(physical=14)
         ram = _make_ram(available_gb=64.0)
         n_jobs, note = det._recommend_n_jobs(cpu, ram, 2.0, 384, 30000.0)
-        # n_jobs_cpu = 14 - 2 = 12; with 64GB that's memory-allowed too
-        assert n_jobs == 12
+        # n_jobs_cpu = 14 - reserve_cores(1) = 13; with 64GB RAM is not binding
+        assert n_jobs == 13
         assert isinstance(note, str)
 
-    def test_n_jobs_capped_at_16(self, tmp_path):
+    def test_n_jobs_capped_at_cap(self, tmp_path):
         det = _make_detector(tmp_path)
-        cpu = _make_cpu(physical=32)
-        ram = _make_ram(available_gb=256.0)
+        cpu = _make_cpu(physical=128)
+        ram = _make_ram(available_gb=1024.0)
         n_jobs, _ = det._recommend_n_jobs(cpu, ram, 2.0, 384, 30000.0)
-        assert n_jobs <= 16
+        # default n_jobs_cap=64 binds before CPU(127) and RAM
+        assert n_jobs == 64
 
     def test_n_jobs_minimum_1(self, tmp_path):
         det = _make_detector(tmp_path)
@@ -326,11 +328,12 @@ class TestRecommendMaxWorkers:
         # 32*0.70/5 = 4.48 → 4; capped by probes → 2
         assert workers == 2
 
-    def test_hard_cap_4(self, tmp_path):
+    def test_hard_cap_8(self, tmp_path):
         det = _make_detector(tmp_path)
         ram = _make_ram(available_gb=128.0)
         workers, _ = det._recommend_max_workers(ram, n_probes=10)
-        assert workers <= 4
+        # 128 * 0.85 / 5 = 21.76 → 21; capped by default max_workers_cap=8
+        assert workers == 8
 
 
 class TestRecommendBatchSize:
@@ -339,34 +342,96 @@ class TestRecommendBatchSize:
         bs, _ = det._recommend_batch_size(gpu=None)
         assert bs == FALLBACK_BATCH_SIZE
 
-    def test_4gb_free_vram_gives_30000(self, tmp_path):
+    def test_4gb_free_vram_gives_60000(self, tmp_path):
         det = _make_detector(tmp_path)
         gpu = _make_gpu(vram_free_gb=4.0)
-        # vram_for_batch = (4.0 - 2.0) * 1024^3 * 0.80 = 1.72 GB
-        # raw = 1.72e9 / (384*4*10) = 112000 → 60000? Let's compute:
-        # Actually: (4-2)*1024**3 * 0.80 = 1717986918.4
-        # raw = 1717986918 / 15360 = 111,848 → >= 60000 → 60000
-        # Wait, spec says 3-5GB → 30000. Let me re-check.
-        # 4GB free: vram_for_batch = (4-2)*1024^3*0.80 = 1.72GB → raw=111k → 60000
-        # For 30000 we need < 40000: vram_for_batch < 40000*15360 = 614MB
-        # vram_free - 2.0) * 0.8 < 0.614 → vram_free < 2.77GB
-        # So 4GB free → 60000. Let me adjust to use 2.5GB free for 30000.
+        # (4-2)*1024^3*0.90 = 1.93GB → raw = 1.93e9/15360 ≈ 125,829 → 60000
         bs, _ = det._recommend_batch_size(gpu=gpu)
-        assert bs == 60000  # 4GB free is enough for 60000
+        assert bs == 60000
 
     def test_low_vram_gives_30000(self, tmp_path):
         det = _make_detector(tmp_path)
         gpu = _make_gpu(vram_free_gb=2.6)
-        # (2.6-2.0)*1024^3*0.80 = 514MB → raw = 514e6/15360 = 33,463 → 30000
+        # (2.6-2.0)*1024^3*0.90 = 579MB → raw = 579e6/15360 ≈ 37,749 → 30000
         bs, _ = det._recommend_batch_size(gpu=gpu)
         assert bs == 30000
 
     def test_very_low_vram_gives_15000(self, tmp_path):
         det = _make_detector(tmp_path)
         gpu = _make_gpu(vram_free_gb=2.3)
-        # (2.3-2.0)*1024^3*0.80 = 257MB → raw=16,737 → 15000
+        # (2.3-2.0)*1024^3*0.90 = 290MB → raw ≈ 18,874 → 15000
         bs, _ = det._recommend_batch_size(gpu=gpu)
         assert bs == 15000
+
+
+class TestResourceTuning:
+    """Verify the utilization knobs (reserve cores, caps, RAM/VRAM factors)."""
+
+    def test_default_values(self):
+        t = ResourceTuning()
+        assert t.reserve_cores == 1
+        assert t.n_jobs_cap == 64
+        assert t.ram_safety_factor == 0.85
+        assert t.ram_reserve_gb == 10.0
+        assert t.chunk_ram_fraction == 0.40
+        assert t.chunk_max_s == 5.0
+        assert t.max_workers_cap == 8
+        assert t.max_workers_ram_fraction == 0.85
+        assert t.vram_safety_factor == 0.90
+        assert t.vram_overhead_gb == 2.0
+
+    def test_reserve_cores_zero_uses_all_cores(self, tmp_path):
+        det = _make_detector(tmp_path)
+        cpu = _make_cpu(physical=8)
+        ram = _make_ram(available_gb=256.0)  # RAM not binding
+        n_jobs, _ = det._recommend_n_jobs(
+            cpu, ram, 2.0, 384, 30000.0, ResourceTuning(reserve_cores=0)
+        )
+        assert n_jobs == 8
+
+    def test_n_jobs_cap_configurable(self, tmp_path):
+        det = _make_detector(tmp_path)
+        cpu = _make_cpu(physical=32)
+        ram = _make_ram(available_gb=256.0)
+        n_jobs, _ = det._recommend_n_jobs(cpu, ram, 2.0, 384, 30000.0, ResourceTuning(n_jobs_cap=4))
+        assert n_jobs == 4
+
+    def test_ram_reserve_lowers_jobs(self, tmp_path):
+        det = _make_detector(tmp_path)
+        cpu = _make_cpu(physical=64)  # CPU not binding
+        ram = _make_ram(available_gb=20.0)
+        no_reserve, _ = det._recommend_n_jobs(
+            cpu, ram, 2.0, 384, 30000.0, ResourceTuning(ram_reserve_gb=0.0)
+        )
+        with_reserve, _ = det._recommend_n_jobs(
+            cpu, ram, 2.0, 384, 30000.0, ResourceTuning(ram_reserve_gb=10.0)
+        )
+        assert with_reserve < no_reserve
+
+    def test_max_workers_cap_configurable(self, tmp_path):
+        det = _make_detector(tmp_path)
+        ram = _make_ram(available_gb=256.0)
+        workers, _ = det._recommend_max_workers(
+            ram, n_probes=10, tuning=ResourceTuning(max_workers_cap=2)
+        )
+        assert workers == 2
+
+    def test_vram_safety_factor_lifts_batch_bucket(self, tmp_path):
+        det = _make_detector(tmp_path)
+        gpu = _make_gpu(vram_free_gb=2.5)
+        # (2.5-2)*1024^3 = 536.9MB. ×0.90 → 31,457 raw → 30000; ×0.80 → 27,962 → 15000
+        hi, _ = det._recommend_batch_size(gpu, ResourceTuning(vram_safety_factor=0.90))
+        lo, _ = det._recommend_batch_size(gpu, ResourceTuning(vram_safety_factor=0.80))
+        assert hi == 30000
+        assert lo == 15000
+
+    def test_recommend_threads_tuning_end_to_end(self, tmp_path):
+        det = _make_detector(tmp_path)
+        profile = _make_profile(tmp_path)  # cpu physical=8, ram available 32GB
+        rec = det.recommend(
+            profile, probes=None, tuning=ResourceTuning(reserve_cores=0, n_jobs_cap=2)
+        )
+        assert rec.n_jobs == 2
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,7 @@ def _make_config(
     motion_method: str | None = None,
     n_jobs: int = 4,
     chunk_duration: str = "1s",
+    save_dtype: str = "int16",
 ) -> PipelineConfig:
     """Build a PipelineConfig with explicit preprocess and resource params."""
     return PipelineConfig(
@@ -71,6 +72,7 @@ def _make_config(
         preprocess=PreprocessConfig(
             bandpass=BandpassConfig(freq_min=freq_min, freq_max=freq_max),
             motion_correction=MotionCorrectionConfig(method=motion_method),
+            save_dtype=save_dtype,
         ),
     )
 
@@ -78,6 +80,9 @@ def _make_config(
 def _make_mock_recording() -> MagicMock:
     rec = MagicMock()
     rec.remove_channels.return_value = rec
+    # astype(...) returns the same rec so `.save()` lands on this mock (the save
+    # path is `recording.astype(save_dtype).save(...)`).
+    rec.astype.return_value = rec
     return rec
 
 
@@ -229,6 +234,45 @@ class TestNormalFlow:
         assert folder is not None
         assert "01_preprocessed" in str(folder)
         assert "imec0" in str(folder)
+
+    def test_save_dtype_int16_default(self, single_session: Session) -> None:
+        """Default save casts the recording to int16 before writing Zarr."""
+        mock_rec = _make_mock_recording()
+        config = _make_config()  # save_dtype defaults to int16
+
+        with (
+            patch("pynpxpipe.stages.preprocess.SpikeGLXLoader.load_ap", return_value=mock_rec),
+            patch("pynpxpipe.stages.preprocess.spp") as mock_spp,
+            patch("pynpxpipe.stages.preprocess.gc"),
+        ):
+            mock_spp.phase_shift.return_value = mock_rec
+            mock_spp.bandpass_filter.return_value = mock_rec
+            mock_spp.detect_bad_channels.return_value = ([], [])
+            mock_spp.common_reference.return_value = mock_rec
+
+            PreprocessStage(single_session, config).run()
+
+        mock_rec.astype.assert_called_with("int16")
+        assert mock_rec.save.call_count == 1
+
+    def test_save_dtype_float32_config(self, single_session: Session) -> None:
+        """save_dtype='float32' casts to float32 before writing Zarr."""
+        mock_rec = _make_mock_recording()
+        config = _make_config(save_dtype="float32")
+
+        with (
+            patch("pynpxpipe.stages.preprocess.SpikeGLXLoader.load_ap", return_value=mock_rec),
+            patch("pynpxpipe.stages.preprocess.spp") as mock_spp,
+            patch("pynpxpipe.stages.preprocess.gc"),
+        ):
+            mock_spp.phase_shift.return_value = mock_rec
+            mock_spp.bandpass_filter.return_value = mock_rec
+            mock_spp.detect_bad_channels.return_value = ([], [])
+            mock_spp.common_reference.return_value = mock_rec
+
+            PreprocessStage(single_session, config).run()
+
+        mock_rec.astype.assert_called_with("float32")
 
     def test_bad_channels_removed(self, single_session: Session) -> None:
         """remove_channels is called when detect_bad_channels returns bad channels."""

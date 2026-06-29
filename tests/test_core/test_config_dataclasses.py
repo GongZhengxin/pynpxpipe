@@ -40,6 +40,21 @@ def test_resources_config_default_instantiation():
     assert cfg is not None
 
 
+def test_resources_config_tuning_defaults():
+    """Utilization knobs default to the aggressive-but-RAM-safe values."""
+    cfg = ResourcesConfig()
+    assert cfg.reserve_cores == 1
+    assert cfg.n_jobs_cap == 64
+    assert cfg.ram_safety_factor == 0.85
+    assert cfg.ram_reserve_gb == 10.0
+    assert cfg.chunk_ram_fraction == 0.40
+    assert cfg.chunk_max_s == 5.0
+    assert cfg.max_workers_cap == 8
+    assert cfg.max_workers_ram_fraction == 0.85
+    assert cfg.vram_safety_factor == 0.90
+    assert cfg.vram_overhead_gb == 2.0
+
+
 def test_parallel_config_default_instantiation():
     cfg = ParallelConfig()
     assert cfg is not None
@@ -343,11 +358,19 @@ def test_preprocess_config_has_motion_correction_field():
     assert hasattr(cfg, "motion_correction")
 
 
-def test_preprocess_config_has_exactly_4_fields():
+def test_preprocess_config_has_exactly_6_fields():
     import dataclasses
 
     fields = dataclasses.fields(PreprocessConfig)
-    assert len(fields) == 4
+    names = {f.name for f in fields}
+    assert len(fields) == 6
+    assert {"save_dtype", "delete_zarr_after_postprocess"} <= names
+
+
+def test_preprocess_config_disk_defaults():
+    cfg = PreprocessConfig()
+    assert cfg.save_dtype == "int16"
+    assert cfg.delete_zarr_after_postprocess is True
 
 
 # ---------------------------------------------------------------------------

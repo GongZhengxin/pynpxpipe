@@ -160,10 +160,15 @@ class PreprocessStage(BaseStage):
                 estimate_motion_kwargs={"bin_s": cfg.preprocess.motion_correction.bin_s},
             )
 
-        # Step 8: save as Zarr
+        # Step 8: save as Zarr.
+        # Cast to save_dtype (default int16): with motion correction the chain is
+        # float32 (interpolation), so int16 halves disk at ~0.5-ADC-count cost.
+        # astype rounds to nearest and preserves gain_to_uV, so downstream µV is
+        # exact and KS4 (which re-whitens) is unaffected. The in-memory `recording`
+        # is left untouched for the diagnostic figures below.
         zarr_path = self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
         try:
-            recording.save(
+            recording.astype(cfg.preprocess.save_dtype).save(
                 folder=zarr_path,
                 format="zarr",
             )

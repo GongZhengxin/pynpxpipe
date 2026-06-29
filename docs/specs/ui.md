@@ -260,6 +260,21 @@ class ProgressBridge:
 | chunk_duration | TextInput | `"auto"` | `"auto"` 或时间字符串（如 `"1s"`） | 分块处理时间窗；auto 按可用 RAM 推算 |
 | max_memory | TextInput | `"auto"` | `"auto"` 或大小字符串（如 `"32G"`） | 内存上限提示（仅日志警告，不强制） |
 
+**Advanced: utilization tuning**（markdown 分隔的折叠子组，逐机覆盖 auto 推算的激进度，详见 `docs/specs/resources.md` §7.0 `ResourceTuning`）：
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| reserve_cores | IntInput | `1` | `>= 0` | 留给 OS/编排进程的物理核 |
+| n_jobs_cap | IntInput | `64` | `>= 1` | n_jobs 硬上限 |
+| ram_safety_factor | FloatInput | `0.85` | `(0, 1]` | n_jobs 内存预算占 available 的比例 |
+| ram_reserve_gb | FloatInput | `10.0` | `>= 0` | 永远保留的绝对 RAM 头寸 |
+| chunk_ram_fraction | FloatInput | `0.40` | `(0, 1]` | chunk 估算用的 available 比例 |
+| chunk_max_s | FloatInput | `5.0` | `> 0` | auto 选取的最大 chunk_duration (s) |
+| max_workers_cap | IntInput | `8` | `>= 1` | 多探针并行硬上限 |
+| max_workers_ram_fraction | FloatInput | `0.85` | `(0, 1]` | 多探针并行内存预算比例 |
+| vram_safety_factor | FloatInput | `0.90` | `(0, 1]` | KS4 batch_size 显存预算比例 |
+| vram_overhead_gb | FloatInput | `2.0` | `>= 0` | 预留显存（驱动/上下文） |
+
 #### Parallel (`ParallelConfig`)
 
 | 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
@@ -296,6 +311,23 @@ class ProgressBridge:
 | preset | Select | `"dredge"` | SI 合法 preset 名 | 实际算法 preset（传给 `spp.correct_motion(preset=...)`） |
 
 注：method 仅作 enable/disable 开关，算法由 preset 决定。
+
+**Advanced: DREDge memory advisor**（markdown 分隔的折叠子组，详见 `docs/specs/motion_memory_advisor.md`）：
+
+| 字段 | Widget 类型 | 默认值 | 约束 | 说明 |
+|------|-------------|--------|------|------|
+| auto_strategy | Checkbox | `False` | bool | 长录制预测 DREDge 内存并自适应 bin_s / 回退 nblocks |
+| bin_s | FloatInput | `1.0` | `> 0` | DREDge 运动估计时间 bin |
+| bin_s_floor | FloatInput | `1.0` | `> 0` | advisor 可选的最细 bin_s |
+| bin_s_max | FloatInput | `3.0` | `> 0` | 最粗可接受 bin_s，超出即回退 nblocks |
+| ram_safety_factor | FloatInput | `0.6` | `(0, 1]` | DREDge 内存预算占 available 的比例 |
+| overhead_reserve_gb | FloatInput | `16.0` | `>= 0` | 非二次内存的固定预留 |
+| probe_threshold_s | FloatInput | `7200.0` | `>= 0` | 短于此时长跳过 advisor |
+| fallback_nblocks | IntInput | `5` | `>= 0` | DREDge 放弃时 KS4 的 nblocks |
+| n_windows | Checkbox+IntInput | `None`（auto） | `None` 或 `>= 1` | 非刚性窗数 B 显式覆盖；未勾选→由几何推导 |
+| win_step_um | FloatInput | `400.0` | `> 0` | 非刚性窗间距 (µm)，用于估算窗数 |
+
+注：`bytes_per_entry`（float32 字节数=4）与 `n_matrices`（矩阵个数=4）是纯内部校准常量，**不进 UI**，仅 `pipeline.yaml` 可调（在覆盖 harness 映射为 `None`）。
 
 #### Curation (`CurationConfig`)
 
