@@ -6,6 +6,7 @@ All stage subclasses must inherit from BaseStage. No UI dependencies.
 
 from __future__ import annotations
 
+import traceback
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -102,10 +103,22 @@ class BaseStage(ABC):
     def _write_failed_checkpoint(self, error: Exception, probe_id: str | None = None) -> None:
         """Write a failed checkpoint recording the error message.
 
+        Also emits an ``error``-level structured log entry carrying the full
+        traceback, so stage failures are captured in the JSON Lines log rather
+        than surfacing only at the UI/CLI layer.
+
         Args:
             error: The exception that caused the failure.
             probe_id: Probe identifier for per-probe checkpoints, or None.
         """
+        tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        self.logger.error(
+            "stage_failed",
+            stage=self.STAGE_NAME,
+            probe_id=probe_id,
+            error=str(error),
+            traceback=tb,
+        )
         self.checkpoint_manager.mark_failed(self.STAGE_NAME, str(error), probe_id)
 
     def _setup_spikeinterface_jobs(self, config=None) -> tuple[int, str]:

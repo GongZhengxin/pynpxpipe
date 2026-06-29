@@ -180,6 +180,24 @@ class TestCheckpointIntegration:
         assert data is not None
         assert data.get("status") == "failed"
 
+    def test_write_failed_checkpoint_logs_traceback(self, tmp_path):
+        """A failed checkpoint also emits an error log carrying the traceback."""
+        from unittest.mock import MagicMock
+
+        stage = ConcreteStage(_make_session(tmp_path))
+        stage.logger = MagicMock()
+        try:
+            raise RuntimeError("inhomogeneous shape boom")
+        except RuntimeError as exc:
+            stage._write_failed_checkpoint(exc, probe_id="imec0")
+
+        stage.logger.error.assert_called_once()
+        kwargs = stage.logger.error.call_args.kwargs
+        assert kwargs["error"] == "inhomogeneous shape boom"
+        assert kwargs["probe_id"] == "imec0"
+        assert "RuntimeError" in kwargs["traceback"]
+        assert "Traceback" in kwargs["traceback"]
+
 
 # ---------------------------------------------------------------------------
 # Group D — STAGE_NAME guard

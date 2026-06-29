@@ -385,6 +385,41 @@ class TestAddProbeData:
         assert "imec1" in w._nwbfile.electrode_groups
         assert len(w._nwbfile.units.id.data) == 5  # 2 + 3
 
+    def test_two_probes_different_channel_counts_waveform_rectangular(
+        self,
+        session: Session,
+        tmp_path: Path,
+    ) -> None:
+        """Probes with different surviving-channel counts → rectangular waveform column.
+
+        preprocess removes a data-dependent number of bad channels per probe, so
+        each probe's templates have a different width. Without padding, the shared
+        units-table waveform_mean column is ragged and HDMF raises
+        "inhomogeneous shape" at write time. The writer pads to the full physical
+        channel count (probe.n_channels) so the column is rectangular.
+        """
+        (tmp_path / "probe0").mkdir(exist_ok=True)
+        (tmp_path / "probe1").mkdir(exist_ok=True)
+        meta0 = _make_meta_file(tmp_path / "probe0")
+        meta1 = _make_meta_file(tmp_path / "probe1")
+        probe0 = _make_probe("imec0", meta0, n_ch=_N_CHANNELS)  # full = 4
+        probe1 = _make_probe("imec1", meta1, n_ch=_N_CHANNELS)
+        session.probes = [probe0, probe1]
+
+        w = NWBWriter(session, tmp_path / "out.nwb")
+        w.create_file()
+        # imec0 kept 3 channels, imec1 kept 2 (different bad-channel counts)
+        w.add_probe_data(probe0, _make_mock_analyzer(n_units=2, n_channels=3))
+        w.add_probe_data(probe1, _make_mock_analyzer(n_units=3, n_channels=2))
+
+        wf = w._nwbfile.units["waveform_mean"].data
+        # Building a single ndarray over all 5 units must NOT raise (rectangular).
+        arr = np.array([np.asarray(x) for x in wf])
+        assert arr.shape == (5, _N_SAMPLES, _N_CHANNELS)
+        # padded (removed) channels are NaN-filled
+        assert np.isnan(arr[0, 0, _N_CHANNELS - 1])  # imec0 unit: ch 3 padded
+        assert np.isnan(arr[2, 0, _N_CHANNELS - 1])  # imec1 unit: chs 2,3 padded
+
     def test_add_probe_without_create_file_raises(
         self, session: Session, tmp_path: Path, probe: ProbeInfo
     ) -> None:
