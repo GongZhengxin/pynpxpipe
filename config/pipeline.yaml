@@ -35,6 +35,14 @@ parallel:
   enabled: false
   max_workers: auto
 preprocess:
+  # Preprocessed Zarr dtype. "int16" halves disk vs "float32" (motion correction
+  # makes the chain float32) at ~0.5-ADC-count (sub-µV) cost — below the AP noise
+  # floor, invisible to KS4 (re-whitens), gain_to_uV preserved so µV stays exact.
+  save_dtype: int16
+  # Delete each probe's preprocessed Zarr once its postprocess checkpoint is
+  # written (the Zarr's last consumer), freeing disk before the export NWB.
+  # Re-running a pre-postprocess stage afterward needs a re-preprocess.
+  delete_zarr_after_postprocess: true
   bad_channel_detection:
     dead_channel_threshold: 0.5
     method: coherence+psd
@@ -67,6 +75,22 @@ resources:
   chunk_duration: auto
   max_memory: auto
   n_jobs: auto
+  # --- Utilization tuning: how aggressively auto-detection uses THIS machine ---
+  # Defaults target ~90% of CPU + GPU while keeping a hard RAM safety margin.
+  # AP preprocessing is CPU/IO-bound (each worker holds one chunk ≈ 1.15GB), so
+  # cores + GPU batch_size — not RAM — are the throughput levers. Lower the
+  # factors / caps on a shared machine; raise reserve_cores if the box must stay
+  # responsive during a run.
+  reserve_cores: 1            # physical cores left free for OS/orchestrator
+  n_jobs_cap: 64              # hard ceiling on parallel chunk workers
+  ram_safety_factor: 0.85     # fraction of *available* RAM as the n_jobs budget
+  ram_reserve_gb: 10.0        # absolute RAM headroom always kept free
+  chunk_ram_fraction: 0.40    # fraction of available RAM for chunk sizing
+  chunk_max_s: 5.0            # largest chunk_duration auto will pick (s)
+  max_workers_cap: 8          # hard ceiling on parallel-probe workers
+  max_workers_ram_fraction: 0.85
+  vram_safety_factor: 0.90    # fraction of (free VRAM − overhead) for KS4 batch_size
+  vram_overhead_gb: 2.0
 sync:
   event_bits:
   - 1

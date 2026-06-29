@@ -316,13 +316,40 @@ pipeline_depth = 5     # 保守上限（5 个内存副本）
 bytes_per_sec_per_job = n_channels * sample_rate * bytes_per_sample * pipeline_depth
 ```
 
+### 7.0 利用率旋钮 `ResourceTuning`（核心设计）
+
+推算公式中所有"激进度"系数都集中在一个 `ResourceTuning` dataclass，由 `recommend()`
+接收（`tuning=None` → 用默认值）。`pipelines/runner.py` 从 `config.resources` 的同名
+字段构造它，因此用户可在 `pipeline.yaml` 逐机覆盖，**零硬编码**。
+
+```python
+@dataclass
+class ResourceTuning:
+    reserve_cores: int = 1            # 留给 OS/编排进程的物理核（旧值等效为 2）
+    n_jobs_cap: int = 64              # n_jobs 硬上限（旧值 16，在大核机器上焊死了利用率）
+    ram_safety_factor: float = 0.85   # n_jobs 内存预算占 available 的比例（旧 0.60）
+    ram_reserve_gb: float = 10.0      # 永远保留的 RAM 头寸（绝对值，对冲 available 波动）
+    chunk_ram_fraction: float = 0.40  # chunk 估算用的 available 比例
+    chunk_max_s: float = 5.0          # auto 选取的最大 chunk_duration
+    max_workers_cap: int = 8          # 多探针并行硬上限（旧值 4）
+    max_workers_ram_fraction: float = 0.85   # 旧 0.70
+    vram_safety_factor: float = 0.90  # KS4 batch_size 显存预算比例（旧 0.80）
+    vram_overhead_gb: float = 2.0     # 预留显存（驱动/上下文）
+```
+
+**设计取舍（见 docs/adr 与会话决策）**：AP 预处理是 CPU/IO-bound，每个 worker 只持有一个
+chunk（5s ≈ 1.15GB），RAM 天然跑不满——所以"用满 90% 算力"的真正杠杆是**核数**（解开 16
+封顶、保留核 2→1）与 **GPU batch_size**，而非把 RAM 推到 90%。RAM 侧用
+`ram_safety_factor × available − ram_reserve_gb` 双重闸门：系数给出比例上限，绝对头寸对冲
+`psutil.available`（含可回收缓存）的波动，确保不 OOM。
+
 ### 7.1 `_recommend_chunk_duration()` → (str, str)
 
 ```
-memory_budget_bytes = available_ram_bytes × 0.40
+memory_budget_bytes = available_ram_bytes × chunk_ram_fraction   # 默认 0.40
 bytes_per_chunk = memory_budget_bytes / n_jobs_estimate
 chunk_raw_s = bytes_per_chunk / bytes_per_sec_per_job
-chunk_raw_s = clamp(chunk_raw_s, min=0.5, max=5.0)
+chunk_raw_s = clamp(chunk_raw_s, min=0.5, max=chunk_max_s)        # 默认上限 5.0
 
 离散化规则：
   chunk_raw_s >= 4.0  → "5s"
@@ -334,17 +361,18 @@ chunk_raw_s = clamp(chunk_raw_s, min=0.5, max=5.0)
 ### 7.2 `_recommend_n_jobs()` → (int, str)
 
 ```
-# CPU 约束
+# CPU 约束（保留核可配，默认 1）
 physical = cpu.physical_cores or (os.cpu_count() // 2) or 1
-n_jobs_cpu = max(1, physical - 2)
+n_jobs_cpu = max(1, physical - reserve_cores)
 
-# 内存约束
+# 内存约束（双重闸门：比例系数 + 绝对头寸）
 chunk_s = float(chunk_str[:-1])  # "2s" → 2.0
 memory_per_job = bytes_per_sec_per_job × chunk_s
-n_jobs_mem = max(1, int(available_ram_bytes × 0.60 / memory_per_job))
+usable_ram = max(0, available_ram_bytes × ram_safety_factor - ram_reserve_gb × 1e9)
+n_jobs_mem = max(1, int(usable_ram / memory_per_job))
 
-# 取较小值，上限 16
-n_jobs = min(n_jobs_cpu, n_jobs_mem, 16)
+# 取较小值，上限 n_jobs_cap（默认 64）
+n_jobs = min(n_jobs_cpu, n_jobs_mem, n_jobs_cap)
 ```
 
 note_string 说明限制因素（CPU 还是内存）。
@@ -353,9 +381,9 @@ note_string 说明限制因素（CPU 还是内存）。
 
 ```
 PER_PROBE_PEAK_GB = 5.0
-max_by_memory = max(1, int(available_ram_gb × 0.70 / PER_PROBE_PEAK_GB))
+max_by_memory = max(1, int(available_ram_gb × max_workers_ram_fraction / PER_PROBE_PEAK_GB))
 max_by_probes = len(probes) if probes else 1
-max_workers = min(max_by_memory, max_by_probes, 4)
+max_workers = min(max_by_memory, max_by_probes, max_workers_cap)   # 默认上限 8
 ```
 
 **注意**：sort stage 始终强制串行（max_workers=1），由 SortStage 自身实现，ResourceDetector 推算的是 preprocess/curate/postprocess 阶段的建议值。
@@ -363,10 +391,9 @@ max_workers = min(max_by_memory, max_by_probes, 4)
 ### 7.4 `_recommend_batch_size()` → (int, str)
 
 ```
-VRAM_OVERHEAD_GB = 2.0
 BYTES_PER_SAMPLE_VRAM = 384 × 4 × 10  # ≈ 15,360 bytes/sample
 
-vram_for_batch_bytes = max(0, vram_free_gb - VRAM_OVERHEAD_GB) × 1024**3 × 0.80
+vram_for_batch_bytes = max(0, vram_free_gb - vram_overhead_gb) × 1024**3 × vram_safety_factor
 batch_size_raw = int(vram_for_batch_bytes / BYTES_PER_SAMPLE_VRAM)
 
 离散化规则：

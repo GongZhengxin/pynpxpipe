@@ -90,10 +90,13 @@
 9. **保存为 Zarr**：
    ```python
    zarr_path = output_dir / "01_preprocessed" / f"{probe_id}.zarr"
-   recording.save(folder=zarr_path, format="zarr")
+   recording.astype(cfg.preprocess.save_dtype).save(folder=zarr_path, format="zarr")
    ```
+   `save_dtype` 默认 `"int16"`。开启运动校正时插值使整条链变 float32，存 int16 把盘**减半**，代价仅 ~0.5 ADC count（亚 µV）量化噪声——在 AP 本底噪声之下、对 KS4 无影响（其内部重新白化）。`astype` 四舍五入且保留 `gain_to_uV`，因此 curate/postprocess 的 µV 波形/bombcell 阈值仍精确；NWB raw 导出读原始 `.ap.bin` 不受影响。无运动校正时链本就是 int16，存 float32 纯属浪费。
    `n_jobs` / `chunk_duration` 通过 `BaseStage._setup_spikeinterface_jobs()` 写入 SpikeInterface 全局 job kwargs，不在每次 `save()` 调用里重复传参。
    若磁盘空间不足或权限失败 → raise `PreprocessError("Failed to save Zarr for {probe_id}: {e}")`
+
+   **Zarr 生命周期与清理**：zarr 被 sort/curate/postprocess 读取（synchronize/export 不读，export 读原始 `.ap.bin`）。`delete_zarr_after_postprocess`（默认 `true`）令 `PipelineRunner` 在 **postprocess 阶段结束后**删除每根已完成 postprocess 的 probe 的 zarr，为 export 写 NWB 腾盘。只在该 probe 的 postprocess checkpoint 完成后才删（resume-safe）；删后若要重跑 postprocess 之前的阶段需重新 preprocess。注意 session 级 `synchronize` 屏障夹在 sort 与 postprocess 之间，因此**无法**把 sort 时峰值压到"单根 zarr"；峰值由 `save_dtype=int16` 减半来控制。
 10. **写 per-probe checkpoint**：`_write_checkpoint(payload, probe_id=probe_id)`
 11. **释放内存**：`del recording; import gc; gc.collect()`
 
@@ -175,6 +178,8 @@ class PreprocessStage(BaseStage):
 | `freq_min` | `config.preprocess.bandpass.freq_min` | `300.0` | 带通滤波低截止（Hz），**禁止硬编码** |
 | `freq_max` | `config.preprocess.bandpass.freq_max` | `6000.0` | 带通滤波高截止（Hz），**禁止硬编码** |
 | `motion_method` | `config.preprocess.motion_correction.method` | `"dredge"` | `None` 跳过，`"dredge"` 启用 DREDge；启用时 sort 阶段 KS4 `nblocks` 必须为 0 |
+| `save_dtype` | `config.preprocess.save_dtype` | `"int16"` | 预处理 Zarr 落盘 dtype，`"int16"` 或 `"float32"`；int16 减半盘、亚 µV 量化、保留 gain |
+| `delete_zarr_after_postprocess` | `config.preprocess.delete_zarr_after_postprocess` | `True` | postprocess 完成后删该 probe zarr 腾盘（runner 层执行，resume-safe） |
 | `n_jobs` | `config.resources.n_jobs` | `"auto"` | SpikeInterface job 数（runner 层解析 "auto"；standalone fallback 为 `4`） |
 | `chunk_duration` | `config.resources.chunk_duration` | `"auto"` | 分块时间窗（runner 层解析 "auto"；standalone fallback 为 `"1s"`） |
 

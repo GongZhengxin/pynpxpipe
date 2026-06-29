@@ -168,6 +168,55 @@ def test_n_jobs_zero_raises_config_error(tmp_path):
     assert exc_info.value.value == 0
 
 
+def test_resources_tuning_overrides_flow_through(tmp_path):
+    """Utilization knobs set in YAML reach the dataclass."""
+    yaml_content = "resources:\n  reserve_cores: 2\n  n_jobs_cap: 24\n  ram_safety_factor: 0.7\n"
+    config_file = tmp_path / "pipeline.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
+
+    config = load_pipeline_config(config_file)
+    assert config.resources.reserve_cores == 2
+    assert config.resources.n_jobs_cap == 24
+    assert config.resources.ram_safety_factor == 0.7
+    # untouched knob keeps its default
+    assert config.resources.vram_safety_factor == 0.90
+
+
+def test_preprocess_save_dtype_override_flows_through(tmp_path):
+    """preprocess.save_dtype set in YAML reaches the dataclass."""
+    yaml_content = "preprocess:\n  save_dtype: float32\n  delete_zarr_after_postprocess: false\n"
+    config_file = tmp_path / "pipeline.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
+
+    config = load_pipeline_config(config_file)
+    assert config.preprocess.save_dtype == "float32"
+    assert config.preprocess.delete_zarr_after_postprocess is False
+
+
+def test_preprocess_save_dtype_invalid_raises(tmp_path):
+    """An unsupported save_dtype → ConfigError."""
+    yaml_content = "preprocess:\n  save_dtype: int8\n"
+    config_file = tmp_path / "pipeline.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_pipeline_config(config_file)
+
+    assert exc_info.value.field == "preprocess.save_dtype"
+
+
+def test_ram_safety_factor_out_of_range_raises(tmp_path):
+    """ram_safety_factor > 1.0 → ConfigError (would over-claim RAM and OOM)."""
+    yaml_content = "resources:\n  ram_safety_factor: 1.5\n"
+    config_file = tmp_path / "pipeline.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_pipeline_config(config_file)
+
+    assert exc_info.value.field == "resources.ram_safety_factor"
+
+
 # ===========================================================================
 # 6. freq_min: 8000, freq_max: 6000 → raises ConfigError(field="preprocess.bandpass.freq_max")
 # ===========================================================================

@@ -295,6 +295,28 @@ class TestAutoConfig:
 
         mock_cls.assert_not_called()
 
+    def test_recommend_receives_tuning_from_config(self, session: Session) -> None:
+        """resources.* tuning fields flow into ResourceTuning passed to recommend()."""
+        mock_detector_cls = MagicMock()
+        mock_detector = mock_detector_cls.return_value
+        mock_detector.detect.return_value = MagicMock()
+        mock_detector.recommend.return_value = MagicMock(
+            n_jobs=4, chunk_duration="2s", max_workers=1, sorting_batch_size=65792
+        )
+
+        cfg = _make_pipeline_config(n_jobs="auto")
+        cfg.resources.reserve_cores = 0
+        cfg.resources.n_jobs_cap = 7
+        cfg.resources.vram_safety_factor = 0.95
+
+        with patch("pynpxpipe.pipelines.runner.ResourceDetector", mock_detector_cls):
+            PipelineRunner(session, cfg, _make_sorting_config(batch_size=65792))
+
+        tuning = mock_detector.recommend.call_args.kwargs["tuning"]
+        assert tuning.reserve_cores == 0
+        assert tuning.n_jobs_cap == 7
+        assert tuning.vram_safety_factor == 0.95
+
     def test_auto_batch_size_resolved(self, session: Session) -> None:
         """batch_size='auto' → ResourceDetector called and batch_size updated."""
         mock_detector_cls = MagicMock()
@@ -552,3 +574,50 @@ class TestMotionStrategyWiring:
         mc = runner.pipeline_config.preprocess.motion_correction
         assert mc.method is None
         assert runner.sorting_config.sorter.params.nblocks == 5
+
+
+# ---------------------------------------------------------------------------
+# Preprocessed-Zarr cleanup after postprocess
+# ---------------------------------------------------------------------------
+
+
+class TestPreprocessedCleanup:
+    def _make_zarr(self, session: Session, probe_id: str) -> Path:
+        z = session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
+        z.mkdir(parents=True, exist_ok=True)
+        (z / ".zattrs").write_text("{}", encoding="utf-8")
+        return z
+
+    def test_deletes_zarr_after_postprocess_complete(self, session: Session) -> None:
+        runner = _make_runner(session)
+        z0 = self._make_zarr(session, "imec0")
+        z1 = self._make_zarr(session, "imec1")
+        _write_checkpoint(session, "postprocess", probe_id="imec0")
+        _write_checkpoint(session, "postprocess", probe_id="imec1")
+
+        runner._cleanup_preprocessed_zarr()
+
+        assert not z0.exists()
+        assert not z1.exists()
+
+    def test_keeps_zarr_when_flag_off(self, session: Session) -> None:
+        runner = _make_runner(session)
+        runner.pipeline_config.preprocess.delete_zarr_after_postprocess = False
+        z0 = self._make_zarr(session, "imec0")
+        _write_checkpoint(session, "postprocess", probe_id="imec0")
+
+        runner._cleanup_preprocessed_zarr()
+
+        assert z0.exists()
+
+    def test_keeps_zarr_for_incomplete_probe(self, session: Session) -> None:
+        runner = _make_runner(session)
+        z0 = self._make_zarr(session, "imec0")
+        z1 = self._make_zarr(session, "imec1")
+        # only imec0 finished postprocess
+        _write_checkpoint(session, "postprocess", probe_id="imec0")
+
+        runner._cleanup_preprocessed_zarr()
+
+        assert not z0.exists()
+        assert z1.exists()

@@ -24,6 +24,13 @@ _log = structlog.get_logger(__name__)
 class ResourcesConfig:
     """Resource allocation settings.
 
+    The ``*_factor`` / ``*_cap`` / ``reserve_*`` fields control how aggressively
+    auto-detection uses the machine; they map 1:1 onto ``ResourceTuning`` in
+    ``core/resources.py``. Defaults target ~90% of CPU + GPU utilization while
+    keeping a hard RAM safety margin (AP preprocessing is CPU/IO-bound, so cores
+    and GPU batch_size — not RAM — are the throughput levers). Override per
+    machine in ``pipeline.yaml`` (zero hardcoding).
+
     Attributes:
         n_jobs: Number of parallel threads for SpikeInterface internals.
             "auto" = ResourceDetector recommends based on CPU and RAM.
@@ -31,11 +38,32 @@ class ResourcesConfig:
             "auto" = ResourceDetector recommends based on available RAM.
         max_memory: Memory ceiling hint for logging warnings (e.g. "32G").
             "auto" = advisory only; no enforcement.
+        reserve_cores: Physical cores left free for the OS/orchestrator.
+        n_jobs_cap: Hard ceiling on auto-recommended n_jobs.
+        ram_safety_factor: Fraction of *available* RAM usable as the n_jobs budget.
+        ram_reserve_gb: Absolute RAM headroom always kept free (hedges volatility).
+        chunk_ram_fraction: Fraction of available RAM used to size chunk_duration.
+        chunk_max_s: Largest chunk_duration auto will pick (seconds).
+        max_workers_cap: Hard ceiling on auto-recommended parallel-probe workers.
+        max_workers_ram_fraction: Fraction of available RAM for the worker budget.
+        vram_safety_factor: Fraction of (free VRAM - overhead) for KS4 batch_size.
+        vram_overhead_gb: VRAM reserved for driver/context before sizing batch_size.
     """
 
     n_jobs: int | str = "auto"
     chunk_duration: str = "auto"
     max_memory: str = "auto"
+    # --- Utilization tuning (see ResourceTuning in core/resources.py) ---
+    reserve_cores: int = 1
+    n_jobs_cap: int = 64
+    ram_safety_factor: float = 0.85
+    ram_reserve_gb: float = 10.0
+    chunk_ram_fraction: float = 0.40
+    chunk_max_s: float = 5.0
+    max_workers_cap: int = 8
+    max_workers_ram_fraction: float = 0.85
+    vram_safety_factor: float = 0.90
+    vram_overhead_gb: float = 2.0
 
 
 @dataclass
@@ -144,12 +172,23 @@ class PreprocessConfig:
         bad_channel_detection: Bad channel detection settings.
         common_reference: Common reference subtraction settings.
         motion_correction: Motion correction settings.
+        save_dtype: dtype for the preprocessed Zarr ("int16" or "float32").
+            "int16" halves disk vs float32 at the cost of ~0.5-ADC-count (~sub-µV)
+            quantization — below the AP noise floor and invisible to KS4 (which
+            re-whitens). gain_to_uV is preserved so curate/postprocess µV is exact.
+        delete_zarr_after_postprocess: If True, delete each probe's preprocessed
+            Zarr once that probe's postprocess checkpoint is written (the Zarr's
+            last consumer), freeing disk before the export NWB is built. The Zarr
+            is the only thing removed; re-running pre-postprocess stages then needs
+            a re-preprocess.
     """
 
     bandpass: BandpassConfig = field(default_factory=BandpassConfig)
     bad_channel_detection: BadChannelConfig = field(default_factory=BadChannelConfig)
     common_reference: CommonReferenceConfig = field(default_factory=CommonReferenceConfig)
     motion_correction: MotionCorrectionConfig = field(default_factory=MotionCorrectionConfig)
+    save_dtype: str = "int16"
+    delete_zarr_after_postprocess: bool = True
 
 
 @dataclass
@@ -606,8 +645,14 @@ def _build_preprocess(raw: dict) -> PreprocessConfig:
     common_ref = _build_common_reference(raw.get("common_reference") or {})
     motion_corr = _build_motion_correction(raw.get("motion_correction") or {})
 
+    # Top-level scalar fields (save_dtype, delete_zarr_after_postprocess).
+    sub_sections = {"bandpass", "bad_channel_detection", "common_reference", "motion_correction"}
+    top_known = _extract_known(
+        {k: v for k, v in raw.items() if k not in sub_sections}, PreprocessConfig
+    )
+
     # Log unknown top-level keys (not sub-section keys we handle explicitly).
-    handled = {"bandpass", "bad_channel_detection", "common_reference", "motion_correction"}
+    handled = sub_sections | set(top_known)
     for key in raw:
         if key not in handled:
             _log.debug("unknown config key ignored", key=key, section="PreprocessConfig")
@@ -617,6 +662,7 @@ def _build_preprocess(raw: dict) -> PreprocessConfig:
         bad_channel_detection=bad_channel,
         common_reference=common_ref,
         motion_correction=motion_corr,
+        **top_known,
     )
 
 
@@ -812,11 +858,41 @@ def _validate_pipeline_config(config: PipelineConfig) -> None:
             r.max_memory,
             r"must be 'auto' or match '^\d+[GM]$' (e.g. '32G', '512M')",
         )
+    # resources utilization tuning — guard against values that would OOM or stall
+    if r.reserve_cores < 0:
+        raise ConfigError("resources.reserve_cores", r.reserve_cores, "must be >= 0")
+    if r.n_jobs_cap < 1:
+        raise ConfigError("resources.n_jobs_cap", r.n_jobs_cap, "must be >= 1")
+    if r.max_workers_cap < 1:
+        raise ConfigError("resources.max_workers_cap", r.max_workers_cap, "must be >= 1")
+    if r.ram_reserve_gb < 0:
+        raise ConfigError("resources.ram_reserve_gb", r.ram_reserve_gb, "must be >= 0")
+    if r.vram_overhead_gb < 0:
+        raise ConfigError("resources.vram_overhead_gb", r.vram_overhead_gb, "must be >= 0")
+    if r.chunk_max_s <= 0:
+        raise ConfigError("resources.chunk_max_s", r.chunk_max_s, "must be > 0")
+    for _fname in (
+        "ram_safety_factor",
+        "chunk_ram_fraction",
+        "max_workers_ram_fraction",
+        "vram_safety_factor",
+    ):
+        _fval = getattr(r, _fname)
+        if not (0.0 < _fval <= 1.0):
+            raise ConfigError(f"resources.{_fname}", _fval, "must be in (0.0, 1.0]")
 
     p = config.parallel
     # parallel.max_workers
     if p.max_workers != "auto" and not (isinstance(p.max_workers, int) and p.max_workers >= 1):
         raise ConfigError("parallel.max_workers", p.max_workers, "must be 'auto' or int >= 1")
+
+    # preprocess.save_dtype
+    if config.preprocess.save_dtype not in ("int16", "float32"):
+        raise ConfigError(
+            "preprocess.save_dtype",
+            config.preprocess.save_dtype,
+            "must be 'int16' or 'float32'",
+        )
 
     bp = config.preprocess.bandpass
     # preprocess.bandpass.freq_min

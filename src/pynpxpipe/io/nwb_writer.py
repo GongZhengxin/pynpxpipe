@@ -603,6 +603,20 @@ class NWBWriter:
         except Exception:
             all_templates_std = np.zeros_like(all_templates)
 
+        # Pad templates to the probe's full physical channel count so the shared
+        # units-table `waveform_mean` / `waveform_std` columns stay rectangular
+        # ACROSS probes. preprocess removes a data-dependent number of bad
+        # channels per probe, so each probe's analyzer templates have a different
+        # width; without this padding, combining probes makes the column ragged
+        # and HDMF raises "setting an array element with a sequence ...
+        # inhomogeneous shape" at write time. Missing channels are NaN-filled.
+        # Assumes homogeneous probe channel counts (NP1.0/2.0 → 384).
+        n_full = max(int(getattr(probe, "n_channels", 0) or 0), all_templates.shape[2])
+        if all_templates.shape[2] < n_full:
+            pad = ((0, 0), (0, 0), (0, n_full - all_templates.shape[2]))
+            all_templates = np.pad(all_templates, pad, constant_values=np.nan)
+            all_templates_std = np.pad(all_templates_std, pad, constant_values=np.nan)
+
         all_locations = unit_locs_ext.get_data()  # (n_units, 2 or 3)
 
         qm_df: pd.DataFrame | None = None
