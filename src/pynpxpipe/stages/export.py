@@ -217,6 +217,22 @@ class ExportStage(BaseStage):
 
         self._report_progress("Starting export", 0.0)
         nwb_path = self._get_output_path()
+
+        # Resume: if a valid NWB skeleton already exists (Phase 1 done), skip
+        # Phase 1 + 2.5 and go straight to Phase 3 so the durably-written raw
+        # streams from an interrupted run survive (Phase 1 would recreate the
+        # file and wipe them). Phase 3 itself skips streams already present.
+        if self._nwb_phase1_done(nwb_path):
+            self.logger.info(
+                "Resuming export: valid NWB skeleton present at %s; "
+                "skipping Phase 1, appending missing raw streams",
+                nwb_path,
+            )
+            self._report_progress("Resuming export (raw data)", 0.65)
+            self._finalize_phase3(nwb_path)
+            self._report_progress("Export complete", 1.0)
+            return
+
         writer = NWBWriter(self.session, nwb_path)
 
         try:
@@ -226,7 +242,6 @@ class ExportStage(BaseStage):
             behavior_events_path = self.session.output_dir / "04_sync" / "behavior_events.parquet"
             behavior_events = pd.read_parquet(behavior_events_path)
 
-            n_units_total = 0
             n_probes = len(self.session.probes)
             for i, probe in enumerate(self.session.probes):
                 probe_id = probe.probe_id
@@ -243,15 +258,13 @@ class ExportStage(BaseStage):
                 analyzer = si.load(postprocessed_dir)
                 rasters = compute_probe_rasters(analyzer, behavior_events, probe_id)
                 raw_positions, inter_shift = self._raw_geometry_and_shift(probe)
-                n_units = writer.add_probe_data(
+                writer.add_probe_data(
                     probe,
                     analyzer,
                     rasters=rasters,
                     raw_channel_positions=raw_positions,
                     inter_sample_shift=inter_shift,
                 )
-                if isinstance(n_units, int):
-                    n_units_total += n_units
                 del analyzer, rasters
                 gc.collect()
                 self._report_progress(
@@ -369,35 +382,83 @@ class ExportStage(BaseStage):
         except Exception as exc:
             self.logger.warning("Phase 2.5 export failed (non-fatal): %s", exc)
 
-        n_trials = len(behavior_events)
-        self._write_checkpoint(
-            {
-                "nwb_path": str(nwb_path_written),
-                "n_probes": n_probes,
-                "n_units_total": n_units_total,
-                "n_trials": n_trials,
-            }
-        )
+        # ── Phase 3 + completed checkpoint (see _finalize_phase3) ───────────
+        self._finalize_phase3(nwb_path_written)
+        self._report_progress("Export complete", 1.0)
 
-        # ── Phase 3: raw data compression + E2.1 verification ───────────────
-        # wait_for_raw=True   → foreground, blocking, full bit-exact scan,
-        #                        checkpoint gets raw_data_verified_at + policy
-        # wait_for_raw=False  → legacy daemon thread, checkpoint unchanged
+    def _nwb_phase1_done(self, nwb_path: Path) -> bool:
+        """Return True if a complete NWB skeleton (Phase 1 output) already exists.
+
+        Phase 1 writes the skeleton in a single ``writer.write()``, so a file
+        that opens read-only without error implies Phase 1 finished durably.
+        Used to resume: skip Phase 1 (which would recreate the file and wipe any
+        raw streams a prior interrupted Phase 3 already wrote).
+        """
+        if not nwb_path.exists():
+            return False
+        try:
+            with pynwb.NWBHDF5IO(str(nwb_path), "r") as io:
+                io.read()
+            return True
+        except Exception:
+            return False
+
+    def _nwb_counts(self, nwb_path: Path) -> tuple[int, int]:
+        """Read ``(n_units, n_trials)`` from a written NWB for the checkpoint payload."""
+        try:
+            with pynwb.NWBHDF5IO(str(nwb_path), "r") as io:
+                nf = io.read()
+                n_units = len(nf.units.id) if nf.units is not None else 0
+                n_trials = len(nf.trials.id) if nf.trials is not None else 0
+            return int(n_units), int(n_trials)
+        except Exception:
+            return 0, 0
+
+    def _finalize_phase3(self, nwb_path_written: Path) -> None:
+        """Run Phase 3 (raw compression) and write the completed checkpoint.
+
+        Shared by the fresh and resume paths. The completed checkpoint is written
+        ONLY after Phase 3 succeeds (``wait_for_raw=True``), so an interrupted
+        Phase 3 is not mis-recorded as complete and re-runs resume. The legacy
+        daemon path (``wait_for_raw=False``) writes the checkpoint before starting
+        the background thread, preserving the old "stage returns while raw
+        continues" semantics.
+        """
+        n_probes = len(self.session.probes)
         if self.wait_for_raw:
-            self._export_phase3_background(
-                nwb_path_written,
-                verify_policy="full",
+            try:
+                self._export_phase3_background(nwb_path_written, verify_policy="full")
+            except Exception as exc:
+                self._write_failed_checkpoint(exc)
+                if isinstance(exc, ExportError):
+                    raise
+                raise ExportError(str(exc)) from exc
+            n_units, n_trials = self._nwb_counts(nwb_path_written)
+            self._write_checkpoint(
+                {
+                    "nwb_path": str(nwb_path_written),
+                    "n_probes": n_probes,
+                    "n_units_total": n_units,
+                    "n_trials": n_trials,
+                }
             )
             self._merge_verified_checkpoint("full")
         else:
+            n_units, n_trials = self._nwb_counts(nwb_path_written)
+            self._write_checkpoint(
+                {
+                    "nwb_path": str(nwb_path_written),
+                    "n_probes": n_probes,
+                    "n_units_total": n_units,
+                    "n_trials": n_trials,
+                }
+            )
             t = threading.Thread(
                 target=self._export_phase3_background,
                 args=(nwb_path_written,),
                 daemon=True,
             )
             t.start()
-
-        self._report_progress("Export complete", 1.0)
 
     def _merge_verified_checkpoint(
         self,
@@ -556,6 +617,12 @@ class ExportStage(BaseStage):
                 overall = 0.85 + 0.14 * bounded
                 self._report_progress(f"Phase 3: {msg}", overall)
 
+        # Self-heal config (default: on, fast shape check). Falls back to the
+        # safe defaults when session.config is absent (legacy callers).
+        export_cfg = getattr(getattr(self.session, "config", None), "export", None)
+        repair = bool(getattr(export_cfg, "repair_incomplete_streams", True))
+        repair_verify = str(getattr(export_cfg, "repair_verify", "shape"))
+
         try:
             writer = NWBWriter(self.session, nwb_path)
             result = writer.append_raw_data(
@@ -563,6 +630,8 @@ class ExportStage(BaseStage):
                 nwb_path,
                 time_range=time_range,
                 verify_policy=verify_policy,
+                repair=repair,
+                repair_verify=repair_verify,
                 progress_callback=phase3_callback,
             )
             self.logger.info("Phase 3 complete: %s", result)

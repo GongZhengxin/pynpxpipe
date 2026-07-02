@@ -1,4 +1,10 @@
 export:
+  # Self-heal raw streams before appending: delete any present-but-incomplete
+  # stream so it is rewritten (source .bin is the truth → no data loss).
+  repair_incomplete_streams: true
+  # Completeness check depth: "shape" (fast, compare stored sample count vs
+  # source .bin) or "full" (also bit-exact re-scan present streams; slow).
+  repair_verify: shape
   derivatives:
     enabled: true
     pre_onset_ms: 50

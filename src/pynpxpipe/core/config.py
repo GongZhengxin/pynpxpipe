@@ -383,9 +383,18 @@ class ExportConfig:
     Attributes:
         derivatives: Phase 2.5 session-level derivative export settings
             (see :class:`DerivativesConfig`).
+        repair_incomplete_streams: If True, before appending raw data the writer
+            self-heals — it deletes any present-but-incomplete raw stream so it is
+            rewritten (the source .bin is the truth, so no data is lost).
+        repair_verify: Completeness check depth for the repair pass. "shape"
+            (default) compares each present stream's stored sample count to its
+            source .bin (fast). "full" additionally bit-exact re-scans
+            length-matching present streams (slow; re-reads all raw).
     """
 
     derivatives: DerivativesConfig = field(default_factory=DerivativesConfig)
+    repair_incomplete_streams: bool = True
+    repair_verify: str = "shape"
 
 
 @dataclass
@@ -748,8 +757,10 @@ def _build_derivatives(raw: dict) -> DerivativesConfig:
 
 def _build_export(raw: dict) -> ExportConfig:
     """Build an ExportConfig (including nested derivatives) from raw YAML."""
+    top_known = _extract_known({k: v for k, v in raw.items() if k != "derivatives"}, ExportConfig)
     return ExportConfig(
         derivatives=_build_derivatives(raw.get("derivatives") or {}),
+        **top_known,
     )
 
 
@@ -892,6 +903,14 @@ def _validate_pipeline_config(config: PipelineConfig) -> None:
             "preprocess.save_dtype",
             config.preprocess.save_dtype,
             "must be 'int16' or 'float32'",
+        )
+
+    # export.repair_verify
+    if config.export.repair_verify not in ("shape", "full"):
+        raise ConfigError(
+            "export.repair_verify",
+            config.export.repair_verify,
+            "must be 'shape' or 'full'",
         )
 
     bp = config.preprocess.bandpass
