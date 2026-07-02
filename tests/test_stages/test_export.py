@@ -341,6 +341,9 @@ class TestErrorHandling:
 
         with (
             patch("pynpxpipe.stages.export.NWBWriter", return_value=mock_writer),
+            # pynwb is mocked here, which would defeat the file-based resume
+            # check; force the fresh Phase 1 path (this test's intent).
+            patch("pynpxpipe.stages.export.ExportStage._nwb_phase1_done", return_value=False),
             patch("pynpxpipe.stages.export.si"),
             patch("pynpxpipe.stages.export.pynwb"),
             patch("pynpxpipe.stages.export.gc"),
@@ -1102,6 +1105,9 @@ class TestPhase25Derivatives:
         mock_writer = _make_mock_writer(nwb_path)
         with (
             patch("pynpxpipe.stages.export.NWBWriter", return_value=mock_writer),
+            # _patch_phase2_nwb mocks NWB reads, which would trip the file-based
+            # resume check; force the fresh Phase 1 + 2.5 path (this test's intent).
+            patch("pynpxpipe.stages.export.ExportStage._nwb_phase1_done", return_value=False),
             patch("pynpxpipe.stages.export.si"),
             patch("pynpxpipe.stages.export.gc"),
             _patch_phase2_nwb(_fake_trials_df(), _fake_units_df(), session_id=sid),
@@ -1166,3 +1172,51 @@ class TestRerunPhase2Only:
         stage = ExportStage(single_session)
         with pytest.raises(ExportError, match="NWB"):
             stage.rerun_phase2_only(bogus)
+
+
+class TestResumeAndCheckpoint:
+    """Phase 3 checkpoint ordering + Phase 1 skip on resume (断点续传)."""
+
+    def test_completed_checkpoint_only_after_phase3_success(self, single_session: Session) -> None:
+        """On success the checkpoint is completed AND carries raw_data_verified_at."""
+        with (
+            patch("pynpxpipe.stages.export.ExportStage._nwb_phase1_done", return_value=True),
+            patch("pynpxpipe.stages.export.ExportStage._export_phase3_background"),
+            patch("pynpxpipe.stages.export.ExportStage._nwb_counts", return_value=(5, 10)),
+        ):
+            ExportStage(single_session).run()
+        cp = single_session.output_dir / "checkpoints" / "export.json"
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "completed"
+        assert "raw_data_verified_at" in data
+        assert data["n_units_total"] == 5
+        assert data["n_trials"] == 10
+
+    def test_no_completed_checkpoint_when_phase3_fails(self, single_session: Session) -> None:
+        """Phase 3 failure → failed checkpoint (not completed) → re-run resumes."""
+        with (
+            patch("pynpxpipe.stages.export.ExportStage._nwb_phase1_done", return_value=True),
+            patch(
+                "pynpxpipe.stages.export.ExportStage._export_phase3_background",
+                side_effect=RuntimeError("interrupted raw"),
+            ),
+            pytest.raises(ExportError),
+        ):
+            ExportStage(single_session).run()
+        cp = single_session.output_dir / "checkpoints" / "export.json"
+        data = json.loads(cp.read_text(encoding="utf-8"))
+        assert data["status"] == "failed"
+        # not marked complete → a re-run is NOT skipped
+        assert ExportStage(single_session)._is_complete() is False
+
+    def test_resume_skips_phase1_when_nwb_present(self, single_session: Session) -> None:
+        """A valid NWB skeleton → Phase 1 skipped, straight to Phase 3."""
+        with (
+            patch("pynpxpipe.stages.export.ExportStage._nwb_phase1_done", return_value=True),
+            patch("pynpxpipe.stages.export.ExportStage._finalize_phase3") as mock_fin,
+            patch("pynpxpipe.stages.export.NWBWriter") as mock_nwbwriter,
+        ):
+            ExportStage(single_session).run()
+        mock_fin.assert_called_once()
+        # Phase 1 constructs NWBWriter; the resume path must not.
+        mock_nwbwriter.assert_not_called()

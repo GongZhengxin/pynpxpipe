@@ -1591,6 +1591,9 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     "sync.trial_start_bit": "trial_start_bit_input",
     "sync.stim_onset_bit": "stim_onset_bit_input",
     "sync.stim_count_tolerance": "stim_count_tolerance_input",
+    # Raw-stream self-heal — operational, tuned in pipeline.yaml not the UI.
+    "export.repair_incomplete_streams": None,
+    "export.repair_verify": None,
     "export.derivatives.enabled": "derivatives_enabled_checkbox",
     "export.derivatives.pre_onset_ms": "derivatives_pre_onset_ms_input",
     "export.derivatives.post_onset_ms": "derivatives_post_onset_ms_input",

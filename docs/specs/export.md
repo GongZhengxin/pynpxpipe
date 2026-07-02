@@ -80,7 +80,19 @@
 
 #### Step 0：前置条件兜底校验
 
-1. 检查 stage 级 checkpoint；若完成 → return（在一切校验之前，避免重复工作）
+1. 检查 stage 级 checkpoint；若完成 → return（在一切校验之前，避免重复工作）。
+   **注意**：completed checkpoint 只在 **Phase 3 全部完成后**写（见步骤 20），因此 Phase 3
+   中途被打断时 `_is_complete()` 返回 False，重跑不会被跳过。
+
+#### Step 0.5：断点续传判定（Phase 1 跳过）
+
+`_nwb_phase1_done(nwb_path)`：若 `nwb_path` 存在且能被 `pynwb.NWBHDF5IO` 只读打开成功
+（Phase 1 是单次 `writer.write()`，可读 ⟹ 骨架已完整落盘），则视为 Phase 1 已完成。
+- **True**（续传）：跳过 Phase 1 + Phase 2.5，直接进 Phase 3 往已有 NWB 追加缺失的 raw 流。
+  这样上次中断前已持久化的 raw 流不会被 Phase 1 重建 NWB 抹掉。
+- **False**：正常执行 Phase 1（若存在残缺文件先 `unlink`）。
+
+
 2. **target_area 硬校验**（在任何 phase 之前）：遍历 `self.session.probes`，若任何 `probe.target_area` 为 `"unknown"` 或空字符串（`""`）：
    ```python
    raise ExportError(
@@ -115,15 +127,25 @@
 #### Phase 2.5：分析数据导出（秒级）
 
 13. **导出 derivatives**：读取刚写好的 NWB，写出 `07_derivatives/TrialRecord_{session_id}.csv`、`UnitProp_{session_id}_{probe_id}.csv`、`TrialRaster_{session_id}_{probe_id}.h5`
-14. **写 Phase 1+2.5 checkpoint**：`_write_checkpoint({nwb_path, n_probes, n_units_total, n_trials, phase: "analysis_ready"})`
-15. `_report_progress("Analysis data ready", 0.8)`
+14. `_report_progress("Phase 2.5 complete (derivatives)", 0.85)`
+    （**不**在此写 completed checkpoint —— 见步骤 20，只有 Phase 3 完成才算 complete）
 
 ← 用户已可开始分析（`07_derivatives/` 已就绪）
 
 #### Phase 3：原始数据压缩写入 + 全文件 bit-exact 校验（分钟级）
 
-16. **调用 `writer.append_raw_data(session, nwb_path, verify_policy="full", progress_callback=...)`**
-    - 流式 append AP+LF+NIDQ 到 NWB (`r+` 模式)，Blosc zstd clevel=6
+16. **调用 `writer.append_raw_data(session, nwb_path, verify_policy="full", repair=..., repair_verify=..., progress_callback=...)`**
+    - **自动检查并修复（self-heal）**：写循环之前先跑 `_repair_incomplete_streams`
+      （`export.repair_incomplete_streams`，默认 True）。逐条期望流对比 **NWB 已写
+      `data.shape[0]` vs 源 `.bin` 的 `get_num_samples()`**：缺失→留给写循环补；完整→跳过；
+      **残缺（样本数不足）→ 用 h5py 删掉该数据集**（源 `.bin` 是真值，删了重写无数据损失）。
+      检查深度 `export.repair_verify`：`"shape"`（默认，样本数对比，毫秒级）或 `"full"`
+      （对长度一致的已存在流再逐 chunk bit-exact 重扫，慢）。`time_range` 子集导出时跳过修复。
+    - **逐流持久化（断点续传核心）**：每个 raw 流（AP/LF per-probe + NIDQ）在**各自的
+      `open→write→close` 周期**里写，写完一条立即 flush 落盘。已存在于 `acquisition` 的流
+      跳过（`if series_name not in nwbfile.acquisition`）。中断 → 已完成的流持久保留，重跑只
+      追加缺失的流。**续传粒度 = 每个流**（被中断的单条流整条重写；不做流内续传）。
+    - 流式 append，Blosc zstd clevel=6
     - 每写一个 chunk 调用 `progress_callback(message, fraction)`
     - 内部再调 `verify_nwb(nwb_path, progress_callback=...)` 逐 chunk bit-exact 扫描
 17. **进度分段**（fraction 映射到 Phase 3 全段 0.7-1.0，前段 0-0.7 是 Phase 1+2.5）：
@@ -135,7 +157,11 @@
     - **UI（默认）**：`wait_for_raw=True` — ExportStage 的 `run()` 同步等 Phase 3 完成，UI PipelineRunner 线程阻塞但 UI event loop 不阻塞。`run_status="completed"` 后 UI 显示"✅ 处理完成，可安全关闭窗口"横幅
     - **CLI（默认）**：`wait_for_raw=True` — tqdm 进度条显示每个 chunk，tqdm 输出走 stderr 并同步写日志（让 `pynpx run` 的日志文件也能看到进度）
     - **Legacy daemon**：保留 `wait_for_raw=False` 后台 daemon thread 模式用于 harness 旧代码，新 UI/CLI 路径不再使用
-20. **更新 checkpoint**：`{phase: "complete", raw_data_verified_at: ISO8601, verify_policy: "full"}`
+20. **写 completed checkpoint（仅此处）**：Phase 3 成功后才 `_write_checkpoint({nwb_path,
+    n_probes, n_units_total, n_trials})`（units/trials 数从最终 NWB 读回），随后
+    `_merge_verified_checkpoint("full")` 追加 `raw_data_verified_at: ISO8601`。
+    `wait_for_raw=False`（legacy daemon）例外：checkpoint 在启动后台线程前写（stage 立即返回、
+    raw 后台继续，保留旧语义）。Phase 3 抛异常 → 写 failed checkpoint 并 re-raise（不写 completed）。
 
 若 Phase 1 步骤 6-12 中任何一步 raise：
 - `nwb_path.unlink(missing_ok=True)`（删除不完整文件）

@@ -205,6 +205,29 @@ def test_preprocess_save_dtype_invalid_raises(tmp_path):
     assert exc_info.value.field == "preprocess.save_dtype"
 
 
+def test_export_repair_settings_flow_through(tmp_path):
+    """export.repair_* set in YAML reach the dataclass."""
+    yaml_content = "export:\n  repair_incomplete_streams: false\n  repair_verify: full\n"
+    config_file = tmp_path / "pipeline.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
+
+    config = load_pipeline_config(config_file)
+    assert config.export.repair_incomplete_streams is False
+    assert config.export.repair_verify == "full"
+
+
+def test_export_repair_verify_invalid_raises(tmp_path):
+    """An unsupported repair_verify → ConfigError."""
+    yaml_content = "export:\n  repair_verify: partial\n"
+    config_file = tmp_path / "pipeline.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_pipeline_config(config_file)
+
+    assert exc_info.value.field == "export.repair_verify"
+
+
 def test_ram_safety_factor_out_of_range_raises(tmp_path):
     """ram_safety_factor > 1.0 → ConfigError (would over-claim RAM and OOM)."""
     yaml_content = "resources:\n  ram_safety_factor: 1.5\n"

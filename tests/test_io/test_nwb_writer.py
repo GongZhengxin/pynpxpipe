@@ -420,6 +420,123 @@ class TestAddProbeData:
         assert np.isnan(arr[0, 0, _N_CHANNELS - 1])  # imec0 unit: ch 3 padded
         assert np.isnan(arr[2, 0, _N_CHANNELS - 1])  # imec1 unit: chs 2,3 padded
 
+    def test_append_one_stream_skips_present_writes_absent(
+        self, session: Session, tmp_path: Path
+    ) -> None:
+        """_append_one_stream: durable per-stream cycle — skip present, write absent."""
+        import datetime as _dt
+
+        from pynwb import NWBHDF5IO, NWBFile, TimeSeries
+
+        nwb_path = tmp_path / "durable.nwb"
+        nf = NWBFile(
+            session_description="t",
+            identifier="id",
+            session_start_time=_dt.datetime.now(_dt.UTC),
+        )
+        nf.add_acquisition(TimeSeries(name="present", data=np.zeros(3), unit="v", rate=1.0))
+        with NWBHDF5IO(str(nwb_path), "w") as io:
+            io.write(nf)
+
+        w = NWBWriter(session, nwb_path)
+        calls = {"present": 0, "absent": 0}
+
+        def _add_present(nwbfile):
+            calls["present"] += 1
+            return {"stream": "present"}
+
+        def _add_absent(nwbfile):
+            calls["absent"] += 1
+            nwbfile.add_acquisition(TimeSeries(name="absent", data=np.ones(3), unit="v", rate=1.0))
+            return {"stream": "absent"}
+
+        # Present → skipped without invoking add_fn (the resume signal).
+        assert w._append_one_stream(nwb_path, "present", _add_present) is None
+        assert calls["present"] == 0
+
+        # Absent → written and durably committed (visible after reopen).
+        info = w._append_one_stream(nwb_path, "absent", _add_absent)
+        assert info == {"stream": "absent"}
+        with NWBHDF5IO(str(nwb_path), "r") as io:
+            assert "absent" in io.read().acquisition
+
+    def _make_nwb_with_stream(self, path: Path, name: str, n_samples: int, n_ch: int = 4) -> None:
+        import datetime as _dt
+
+        from pynwb import NWBHDF5IO, NWBFile, TimeSeries
+
+        nf = NWBFile(
+            session_description="t",
+            identifier="id",
+            session_start_time=_dt.datetime.now(_dt.UTC),
+        )
+        nf.add_acquisition(
+            TimeSeries(
+                name=name,
+                data=np.zeros((n_samples, n_ch), dtype=np.int16),
+                unit="v",
+                rate=30000.0,
+            )
+        )
+        with NWBHDF5IO(str(path), "w") as io:
+            io.write(nf)
+
+    def test_repair_deletes_truncated_stream(self, session: Session, tmp_path: Path) -> None:
+        """shape check: a present stream shorter than its source is deleted for rewrite."""
+        from pynwb import NWBHDF5IO
+
+        nwb_path = tmp_path / "r.nwb"
+        self._make_nwb_with_stream(nwb_path, "ElectricalSeriesAP_imec0", n_samples=50)
+        w = NWBWriter(session, nwb_path)
+        rec = MagicMock()
+        rec.get_num_samples.return_value = 100  # source longer → NWB stream is truncated
+        specs = [{"name": "ElectricalSeriesAP_imec0", "probe": None, "stream_type": "ap"}]
+        with (
+            patch.object(w, "_expected_stream_specs", return_value=specs),
+            patch.object(w, "_load_stream_source", return_value=rec),
+        ):
+            repaired = w._repair_incomplete_streams(session, nwb_path, verify="shape")
+        assert repaired == ["ElectricalSeriesAP_imec0"]
+        with NWBHDF5IO(str(nwb_path), "r") as io:
+            assert "ElectricalSeriesAP_imec0" not in io.read().acquisition
+
+    def test_repair_keeps_complete_stream(self, session: Session, tmp_path: Path) -> None:
+        """shape check: a present stream matching its source length is kept."""
+        from pynwb import NWBHDF5IO
+
+        nwb_path = tmp_path / "ok.nwb"
+        self._make_nwb_with_stream(nwb_path, "ElectricalSeriesAP_imec0", n_samples=50)
+        w = NWBWriter(session, nwb_path)
+        rec = MagicMock()
+        rec.get_num_samples.return_value = 50  # matches
+        specs = [{"name": "ElectricalSeriesAP_imec0", "probe": None, "stream_type": "ap"}]
+        with (
+            patch.object(w, "_expected_stream_specs", return_value=specs),
+            patch.object(w, "_load_stream_source", return_value=rec),
+        ):
+            repaired = w._repair_incomplete_streams(session, nwb_path, verify="shape")
+        assert repaired == []
+        with NWBHDF5IO(str(nwb_path), "r") as io:
+            assert "ElectricalSeriesAP_imec0" in io.read().acquisition
+
+    def test_repair_full_detects_content_mismatch(self, session: Session, tmp_path: Path) -> None:
+        """full check: right length but wrong content → deleted; shape check would keep it."""
+        nwb_path = tmp_path / "corrupt.nwb"
+        self._make_nwb_with_stream(nwb_path, "ElectricalSeriesAP_imec0", n_samples=50)
+        w = NWBWriter(session, nwb_path)
+        rec = MagicMock()
+        rec.get_num_samples.return_value = 50  # length matches (shape check passes)
+        rec.get_traces.return_value = np.ones((50, 4), dtype=np.int16)  # != stored zeros
+        specs = [{"name": "ElectricalSeriesAP_imec0", "probe": None, "stream_type": "ap"}]
+        with (
+            patch.object(w, "_expected_stream_specs", return_value=specs),
+            patch.object(w, "_load_stream_source", return_value=rec),
+        ):
+            assert w._repair_incomplete_streams(session, nwb_path, verify="shape") == []
+            assert w._repair_incomplete_streams(session, nwb_path, verify="full") == [
+                "ElectricalSeriesAP_imec0"
+            ]
+
     def test_add_probe_without_create_file_raises(
         self, session: Session, tmp_path: Path, probe: ProbeInfo
     ) -> None:

@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import h5py
 import numpy as np
 import pandas as pd
 from hdmf.backends.hdf5.h5_utils import H5DataIO
@@ -1314,6 +1315,158 @@ class NWBWriter:
                 )
             )
 
+    def _load_stream_source(self, session: Session, probe, stream_type: str):
+        """Load the SpikeInterface source recording for one raw stream, or None.
+
+        Used by the repair pass to learn a stream's true length / bytes. Any
+        loader failure returns None (the stream is then left untouched).
+        """
+        try:
+            if stream_type == "ap":
+                return SpikeGLXLoader.load_ap(probe)
+            if stream_type == "lf":
+                return SpikeGLXLoader.load_lf(probe)
+            if stream_type == "nidq":
+                discovery = SpikeGLXDiscovery(session.session_dir)
+                nidq_bin, nidq_meta = discovery.discover_nidq()
+                if not nidq_bin.exists() or not nidq_meta.exists():
+                    return None
+                return SpikeGLXLoader.load_nidq(nidq_bin, nidq_meta)
+        except Exception:
+            return None
+        return None
+
+    def _expected_stream_specs(self, session: Session) -> list[dict]:
+        """List every raw stream this session should contain: name + source kind."""
+        specs: list[dict] = []
+        for probe in session.probes:
+            specs.append(
+                {
+                    "name": f"ElectricalSeriesAP_{probe.probe_id}",
+                    "probe": probe,
+                    "stream_type": "ap",
+                }
+            )
+            if probe.lf_bin is not None:
+                specs.append(
+                    {
+                        "name": f"ElectricalSeriesLF_{probe.probe_id}",
+                        "probe": probe,
+                        "stream_type": "lf",
+                    }
+                )
+        specs.append({"name": "NIDQ_raw", "probe": None, "stream_type": "nidq"})
+        return specs
+
+    @staticmethod
+    def _stream_matches_source(dataset, rec, chunk: int = 200_000) -> bool:
+        """Bit-exact compare a present NWB raw dataset against its source recording."""
+        n = int(rec.get_num_samples())
+        if int(dataset.shape[0]) != n:
+            return False
+        for start in range(0, n, chunk):
+            stop = min(start + chunk, n)
+            src = rec.get_traces(start_frame=start, end_frame=stop, return_in_uV=False).astype(
+                np.int16, copy=False
+            )
+            if not np.array_equal(src, np.asarray(dataset[start:stop])):
+                return False
+        return True
+
+    def _repair_incomplete_streams(
+        self,
+        session: Session,
+        nwb_path: Path,
+        *,
+        time_range: tuple[float, float] | None = None,
+        verify: str = "shape",
+    ) -> list[str]:
+        """Delete present-but-incomplete raw streams so they get rewritten (self-heal).
+
+        ``"shape"`` flags a present stream whose stored sample count differs from
+        its source .bin (partial/truncated). ``"full"`` additionally bit-exact
+        re-scans length-matching present streams. Incomplete streams are removed
+        via h5py — the source .bin is the ground truth, so a delete+rewrite loses
+        no data (worst case: one stream is redone). Skipped when ``time_range`` is
+        set (subset exports legitimately differ in length).
+
+        Args:
+            session: Active session (source .bin locations, probe list).
+            nwb_path: NWB file to inspect/repair in place.
+            time_range: If set, the repair pass is skipped.
+            verify: ``"shape"`` (fast, default) or ``"full"`` (bit-exact rescan).
+
+        Returns:
+            Names of the streams that were deleted for rewrite.
+        """
+        if not nwb_path.exists() or time_range is not None:
+            return []
+        specs = self._expected_stream_specs(session)
+        incomplete: list[str] = []
+        with NWBHDF5IO(str(nwb_path), "r") as io:
+            nwbfile = io.read()
+            present = set(nwbfile.acquisition.keys())
+            for spec in specs:
+                name = spec["name"]
+                if name not in present:
+                    continue  # absent → the write loop will create it
+                rec = self._load_stream_source(session, spec["probe"], spec["stream_type"])
+                if rec is None:
+                    continue  # can't judge the source → leave as-is
+                dataset = nwbfile.acquisition[name].data
+                if (
+                    int(dataset.shape[0]) != int(rec.get_num_samples())
+                    or verify == "full"
+                    and not self._stream_matches_source(dataset, rec)
+                ):
+                    incomplete.append(name)
+
+        if incomplete:
+            with h5py.File(str(nwb_path), "a") as h5:
+                acq = h5.get("acquisition")
+                for name in incomplete:
+                    if acq is not None and name in acq:
+                        del acq[name]
+                    logger.warning(
+                        "Repaired incomplete raw stream %r (deleted for rewrite, verify=%s)",
+                        name,
+                        verify,
+                    )
+        return incomplete
+
+    def _append_one_stream(
+        self,
+        nwb_path: Path,
+        series_name: str,
+        add_fn: Callable[[object], dict | None],
+    ) -> dict | None:
+        """Append one raw stream to the NWB in its own durable open/write/close cycle.
+
+        Skips (returns None) if ``series_name`` is already present in the file's
+        ``acquisition`` — the resume signal, since a prior cycle only reaches
+        close (durably committing the stream) on full success. ``add_fn`` receives
+        the freshly-read NWBFile, adds its stream, and returns the stream's verify
+        info dict (or None to skip, e.g. NIDQ files absent).
+
+        Args:
+            nwb_path: Path to the existing NWB file (opened in append mode).
+            series_name: Acquisition key used for the present/absent resume check.
+            add_fn: Callable that adds the stream and returns its info dict or None.
+
+        Returns:
+            The stream's info dict, or None if skipped (already present / add_fn
+            returned None).
+        """
+        with NWBHDF5IO(str(nwb_path), "a") as io:
+            nwbfile = io.read()
+            if series_name in nwbfile.acquisition:
+                return None
+            info = add_fn(nwbfile)
+            if info is None:
+                return None
+            io.write(nwbfile)
+        return info
+
     def append_raw_data(
         self,
         session: Session,
@@ -1323,6 +1476,8 @@ class NWBWriter:
         buffer_gb: float = 0.5,
         chunk_mb: float = 5.0,
         verify_policy: Literal["full", "sample"] = "full",
+        repair: bool = True,
+        repair_verify: str = "shape",
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> dict[str, int | str | dict]:
         """Append compressed raw AP/LF/NIDQ voltage data to an existing NWB file.
@@ -1380,63 +1535,87 @@ class NWBWriter:
         # regenerating load_* calls or re-deriving chunk decomposition.
         written_streams: list[dict] = []
 
-        with NWBHDF5IO(str(nwb_path), "a") as io:
-            nwbfile = io.read()
+        # Self-heal: delete any present-but-incomplete stream so the loop below
+        # rewrites it (missing streams are handled by the loop's skip-if-present
+        # check). Runs before the write loop.
+        streams_repaired: list[str] = []
+        if repair:
+            streams_repaired = self._repair_incomplete_streams(
+                session, nwb_path, time_range=time_range, verify=repair_verify
+            )
 
-            for probe in session.probes:
-                # --- AP stream ---
-                ap_name = f"ElectricalSeriesAP_{probe.probe_id}"
-                if ap_name not in nwbfile.acquisition:
-                    info = self._append_recording_stream(
-                        nwbfile,
-                        probe,
-                        stream_type="ap",
-                        series_name=ap_name,
-                        time_range=time_range,
-                        buffer_gb=buffer_gb,
-                        chunk_mb=chunk_mb,
-                        comp=comp,
-                        reporter=reporter,
-                    )
-                    streams_written.append(ap_name)
-                    written_streams.append(info)
-
-                # --- LF stream ---
-                if probe.lf_bin is not None:
-                    lf_name = f"ElectricalSeriesLF_{probe.probe_id}"
-                    if lf_name not in nwbfile.acquisition:
-                        info = self._append_recording_stream(
-                            nwbfile,
-                            probe,
-                            stream_type="lf",
-                            series_name=lf_name,
-                            time_range=time_range,
-                            buffer_gb=buffer_gb,
-                            chunk_mb=chunk_mb,
-                            comp=comp,
-                            reporter=reporter,
-                        )
-                        streams_written.append(lf_name)
-                        written_streams.append(info)
-
-            # --- NIDQ stream (session-level, single TimeSeries) ---
-            if "NIDQ_raw" not in nwbfile.acquisition:
-                nidq_info = self._append_nidq_stream(
-                    nwbfile,
-                    session,
+        # Per-stream durability (resume): each raw stream is written in its own
+        # open -> add -> write -> close cycle, so a finished stream is flushed to
+        # disk before the next begins. An interrupt leaves completed streams
+        # intact; a re-run skips streams already present in ``acquisition`` and
+        # appends only the rest. (A single big io.write() over all streams would
+        # lose every in-progress stream on interrupt.) cf. export.md Phase 3.
+        for probe in session.probes:
+            ap_name = f"ElectricalSeriesAP_{probe.probe_id}"
+            info = self._append_one_stream(
+                nwb_path,
+                ap_name,
+                lambda nf, p=probe, nm=ap_name: self._append_recording_stream(
+                    nf,
+                    p,
+                    stream_type="ap",
+                    series_name=nm,
                     time_range=time_range,
                     buffer_gb=buffer_gb,
                     chunk_mb=chunk_mb,
                     comp=comp,
                     reporter=reporter,
-                )
-                if nidq_info is not None:
-                    streams_written.append("NIDQ_raw")
-                    written_streams.append(nidq_info)
+                ),
+            )
+            if info is not None:
+                streams_written.append(ap_name)
+                written_streams.append(info)
 
-            # Archive each probe's raw .ap.meta verbatim for full SpikeGLX
-            # provenance (channel map, gains, ADC layout). Lets NWB-input
-            # re-sort recover any SpikeGLX metadata. Idempotent. cf. §9.
+            if probe.lf_bin is not None:
+                lf_name = f"ElectricalSeriesLF_{probe.probe_id}"
+                info = self._append_one_stream(
+                    nwb_path,
+                    lf_name,
+                    lambda nf, p=probe, nm=lf_name: self._append_recording_stream(
+                        nf,
+                        p,
+                        stream_type="lf",
+                        series_name=nm,
+                        time_range=time_range,
+                        buffer_gb=buffer_gb,
+                        chunk_mb=chunk_mb,
+                        comp=comp,
+                        reporter=reporter,
+                    ),
+                )
+                if info is not None:
+                    streams_written.append(lf_name)
+                    written_streams.append(info)
+
+        # --- NIDQ stream (session-level, single TimeSeries) ---
+        nidq_info = self._append_one_stream(
+            nwb_path,
+            "NIDQ_raw",
+            lambda nf: self._append_nidq_stream(
+                nf,
+                session,
+                time_range=time_range,
+                buffer_gb=buffer_gb,
+                chunk_mb=chunk_mb,
+                comp=comp,
+                reporter=reporter,
+            ),
+        )
+        if nidq_info is not None:
+            streams_written.append("NIDQ_raw")
+            written_streams.append(nidq_info)
+
+        # Archive each probe's raw .ap.meta verbatim for full SpikeGLX provenance
+        # (channel map, gains, ADC layout). Lets NWB-input re-sort recover any
+        # SpikeGLX metadata. Idempotent; one final durable cycle. cf. §9.
+        with NWBHDF5IO(str(nwb_path), "a") as io:
+            nwbfile = io.read()
+            scratch_changed = False
             for probe in session.probes:
                 scratch_key = f"ap_meta_{probe.probe_id}"
                 if scratch_key in nwbfile.scratch:
@@ -1447,8 +1626,9 @@ class NWBWriter:
                         name=scratch_key,
                         description=f"Raw SpikeGLX .ap.meta for {probe.probe_id}",
                     )
-
-            io.write(nwbfile)
+                    scratch_changed = True
+            if scratch_changed:
+                io.write(nwbfile)
 
         # Run the post-write bit-exact scan. If NO streams were just written
         # (fully idempotent call) the scan is a no-op and we return without
@@ -1463,6 +1643,8 @@ class NWBWriter:
         return {
             "streams_written": len(streams_written),
             "stream_names": ", ".join(streams_written),
+            "streams_repaired": len(streams_repaired),
+            "repaired_names": ", ".join(streams_repaired),
             "verify_policy": verify_policy,
             "n_chunks_scanned_per_stream": n_chunks_per_stream,
         }

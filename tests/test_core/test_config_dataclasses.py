@@ -373,6 +373,14 @@ def test_preprocess_config_disk_defaults():
     assert cfg.delete_zarr_after_postprocess is True
 
 
+def test_export_config_repair_defaults():
+    from pynpxpipe.core.config import ExportConfig
+
+    cfg = ExportConfig()
+    assert cfg.repair_incomplete_streams is True
+    assert cfg.repair_verify == "shape"
+
+
 # ---------------------------------------------------------------------------
 # 7. AnalyzerConfig field structure
 # ---------------------------------------------------------------------------
