@@ -124,7 +124,7 @@ class PostprocessStage(BaseStage):
             )
 
         eye_cfg = self.session.config.postprocess.eye_validation
-        if eye_cfg.enabled:
+        if eye_cfg.enabled or "planned_event_id" in behavior_events_df:
             try:
                 self._run_eye_validation(behavior_events_df)
             except PostprocessError as exc:
@@ -475,9 +475,40 @@ class PostprocessStage(BaseStage):
         has_fix_win = "fixation_window" in behavior_events_df.columns
 
         trial_valid = behavior_events_df["trial_valid"].copy()
+        target_task = "planned_event_id" in behavior_events_df
+        reasons = pd.Series("", index=behavior_events_df.index, dtype=object)
+        intervals: dict[int, float] = {}
+        if target_task and "stim_offset_bhv_ms" not in behavior_events_df:
+            raise PostprocessError("Target-event attempts need actual image offsets")
 
         for idx, row in behavior_events_df.iterrows():
             tid = int(row["trial_id"])
+            if target_task:
+                # Same [on,off) samples and inclusive spatial boundary as the
+                # MonkeyLogic live/recovery queue. Legacy ratio thresholds do
+                # not redefine successful target completion.
+                trial_valid.loc[idx] = 0.0
+                reasons.loc[idx] = "incomplete_presentation"
+                on, off = float(row["stim_onset_bhv_ms"]), float(row["stim_offset_bhv_ms"])
+                if not np.isfinite(off):
+                    continue
+                if not np.isfinite(on) or off <= on:
+                    raise PostprocessError("Invalid target presentation times")
+                reasons.loc[idx] = "missing_eye_samples"
+                if tid not in eye_data:
+                    continue
+                if tid not in intervals:
+                    intervals[tid] = parser.get_sample_interval(trial_id=tid)
+                dt = intervals[tid]
+                first, last = int(np.ceil(on / dt)), int(np.ceil(off / dt))
+                data = np.asarray(eye_data[tid])
+                if data.ndim != 2 or data.shape[1] < 2 or first < 0 or last > len(data) or first >= last:
+                    continue
+                xy = data[first:last, :2]
+                valid = np.isfinite(xy).all() and np.all(np.sum(xy ** 2, axis=1) <= float(row["fixation_window"]) ** 2)
+                trial_valid.loc[idx] = float(valid)
+                reasons.loc[idx] = "success" if valid else "fixation_failure"
+                continue
             if tid not in eye_data:
                 continue
             data = eye_data[tid]
@@ -516,6 +547,8 @@ class PostprocessStage(BaseStage):
 
         result = behavior_events_df.copy()
         result["trial_valid"] = trial_valid
+        if target_task:
+            result["attempt_failure_reason"] = reasons
         parquet_path = self.session.output_dir / "04_sync" / "behavior_events.parquet"
         result.to_parquet(parquet_path)
         return result

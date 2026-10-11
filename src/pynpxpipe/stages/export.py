@@ -304,6 +304,17 @@ class ExportStage(BaseStage):
                 )
                 stim_map = None
 
+            if "planned_event_id" in behavior_events:
+                import hashlib
+                if resolved_tsv_path is None or stim_map is None or source_tag.endswith("(multi)"):
+                    raise ValueError("Target-event task needs one unambiguous stimulus TSV")
+                for column, path in (("stimulus_table_sha256", resolved_tsv_path),
+                                     ("stimulus_manifest_sha256", resolved_tsv_path.parent / "manifest.tsv")):
+                    expected = behavior_events[column].dropna().unique()
+                    if len(expected) != 1 or hashlib.sha256(path.read_bytes()).hexdigest() != expected[0]:
+                        raise ValueError(f"Target-event package hash mismatch: {column}")
+                if not behavior_events["stim_index"].isin(stim_map).all():
+                    raise ValueError("Global stimulus identity absent from resolved TSV")
             writer.add_trials(behavior_events, stim_map=stim_map)
             try:
                 writer.add_stim_provenance(

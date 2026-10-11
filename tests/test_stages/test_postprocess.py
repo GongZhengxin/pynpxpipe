@@ -860,3 +860,22 @@ class TestSlayJsonContent:
             assert "slay_score" in val
             assert "is_visual" in val
             assert val["slay_score"] is None or isinstance(val["slay_score"], float)
+
+
+def test_stim19k_fixation_matches_live_queue_and_preserves_partial(single_session):
+    single_session.config = _make_config(eye_enabled=False, eye_threshold=0.5)
+    frame = pd.DataFrame({'trial_id':[1,1,1,1], 'planned_event_id':[1,2,3,4],
+        'stim_onset_bhv_ms':[0.,300.,600.,900.], 'stim_offset_bhv_ms':[150.,450.,np.nan,1050.],
+        'onset_time_ms':[150.]*4, 'fixation_window':[1.]*4, 'trial_valid':[np.nan]*4})
+    eye = np.zeros((1000, 2))
+    eye[0] = [1., 0.]
+    eye[151] = [2., 0.]
+    eye[350] = [2., 0.]
+    parser = MagicMock()
+    parser.get_analog_data.return_value = {1: eye}
+    parser.get_sample_interval.return_value = 1.
+    (single_session.output_dir/'04_sync').mkdir(parents=True,exist_ok=True)
+    with patch('pynpxpipe.stages.postprocess.BHV2Parser', return_value=parser):
+        result=PostprocessStage(single_session)._run_eye_validation(frame)
+    assert result.trial_valid.tolist()==[1.,0.,0.,0.]
+    assert result.attempt_failure_reason.tolist()==['success','fixation_failure','incomplete_presentation','missing_eye_samples']

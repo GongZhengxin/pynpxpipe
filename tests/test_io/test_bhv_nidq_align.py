@@ -1207,3 +1207,66 @@ class TestAutoDetectStimOnsetBit:
         )
 
         assert result.detected_stim_onset_bit == 6
+
+
+def _stim19k_user_vars(planned=(48389, 48390), images=(10001, 19065)):
+    return {"Current_Image_Train": np.asarray(images), "PlannedEventIDs": np.asarray(planned),
+            "RunID": "run-a", "ManifestHash": "a" * 64, "SequenceHash": "b" * 64, "StimulusTableHash": "c" * 64,
+            "BatchID": 18, "SequencePlanHash": "d" * 64,
+            "ActualParameters": {"onset_time": 150, "offset_time": 150, "fixation_window": 1},
+            "ImageSequenceTimes": np.asarray([100., 250., 400., 550.])}
+
+
+def test_stim19k_high_ids_and_actual_parameters_survive_alignment():
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(100., 64), (250., 32), (400., 64), (550., 32)], "user_vars": _stim19k_user_vars(),
+        "variable_changes": {"onset_time": 200, "fixation_window": 5}}])
+    times, codes = np.array([10., 10.1, 10.4]), np.array([2, 64, 64])
+    df = align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1).trial_events_df
+    assert df.stim_index.tolist() == [10001, 19065]
+    assert df.planned_event_id.tolist() == [48389, 48390]
+    assert df.attempt_id.tolist() == ["run-a/1/1", "run-a/1/2"]
+    assert df.onset_time_ms.tolist() == [150, 150]
+    assert df.fixation_window.tolist() == [1, 1]
+    assert df.batch_id.tolist() == [18, 18]
+    assert df.sequence_plan_sha256.tolist() == ["d" * 64, "d" * 64]
+
+
+@pytest.mark.parametrize("planned,images", [((1,), (10001, 19065)), ((1, 1), (10001, 19065)),
+                                               ((1, 2), (10001, 0)), ((1, 2.5), (10001, 19065))])
+def test_stim19k_rejects_ambiguous_identity(planned, images):
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(100., 64), (250., 32), (400., 64), (550., 32)], "user_vars": _stim19k_user_vars(planned, images)}])
+    times, codes = np.array([10., 10.1, 10.4]), np.array([2, 64, 64])
+    with pytest.raises(SyncError):
+        align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1)
+
+
+def test_stim19k_partial_trial_preserves_only_actual_attempt_prefix():
+    user_vars = _stim19k_user_vars()
+    user_vars["ImageSequenceTimes"] = np.asarray([100., np.nan, np.nan, np.nan])
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(100., 64)], "user_vars": user_vars}])
+    times, codes = np.array([10., 10.1]), np.array([2, 64])
+    df = align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1).trial_events_df
+    assert df.stim_index.tolist() == [10001] and df.planned_event_id.tolist() == [48389]
+    assert np.isnan(df.stim_offset_bhv_ms.iloc[0])
+
+
+def test_stim19k_rejects_lost_complete_on_offset_pair():
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(400., 64), (550., 32)], "user_vars": _stim19k_user_vars()}])
+    times, codes = np.array([10., 10.1, 10.4]), np.array([2, 64, 64])
+    with pytest.raises(SyncError, match="ImageChanger/event"):
+        align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1)
+
+
+@pytest.mark.parametrize("batch,plan_hash", [(0,"d"*64),(1.5,"d"*64),(np.nan,"d"*64),([1,2],"d"*64),(1,"")])
+def test_stim19k_rejects_corrupt_batch_provenance(batch, plan_hash):
+    user_vars = _stim19k_user_vars()
+    user_vars.update(BatchID=batch, SequencePlanHash=plan_hash)
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(100.,64),(250.,32),(400.,64),(550.,32)], "user_vars": user_vars}])
+    times, codes = np.array([10.,10.1,10.4]), np.array([2,64,64])
+    with pytest.raises(SyncError, match="batch identity"):
+        align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1)

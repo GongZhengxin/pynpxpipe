@@ -259,13 +259,22 @@ class BHV2Parser:
                 break
         return first_value
 
-    def get_sample_interval(self) -> float:
-        """Read the analog SampleInterval (ms) from the first trial.
+    def get_sample_interval(self, trial_id: int | None = None) -> float:
+        """Read the analog SampleInterval (ms) from the requested or first trial.
+
+        Explicit trial IDs require a recorded, finite positive interval. Omitting
+        the ID preserves the legacy first-trial fallback behavior.
 
         Returns:
             SampleInterval in milliseconds (typically 4.0 for 250 Hz).
         """
         reader = self._get_reader()
+        if trial_id is not None:
+            analog = reader.read(f"Trial{trial_id}").get("AnalogData", {})
+            value = float(analog.get("SampleInterval", np.nan))
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError(f"Trial {trial_id} has no valid SampleInterval")
+            return value
         var_names = reader.list_variables()
         trial_names = sorted(v for v in var_names if re.fullmatch(r"Trial\d+", v))
         if not trial_names:

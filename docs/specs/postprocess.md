@@ -246,7 +246,11 @@ Mann-Whitney U 检验判断 unit 是否有视觉响应。与遗留 `data_integra
 
 ### `_run_eye_validation(behavior_events_df) -> pd.DataFrame`
 
-（若 `eye_validation.enabled=False`，跳过此方法）
+旧任务在 `eye_validation.enabled=False` 时跳过此方法，使用下面的比例阈值算法。
+含 `planned_event_id` 的新任务始终执行：用每个 trial 的实际 SampleInterval，
+取实际 `[stim_onset_bhv_ms, stim_offset_bhv_ms)` 内全部样本，要求有限且距离
+`<= fixation_window`；缺 offset 或缺样本不能算成功，并保存 `attempt_failure_reason`。
+它与实验任务的逐图完成规则一致，详见 [新任务字段](export.md#target-event-tasks-stim19k)。
 
 1. 通过 `BHV2Parser(session.bhv_file).get_analog_data("Eye")` 获取眼动数据（逐 trial 分块读取，不预分配 3D 矩阵）
 2. 对每个 trial，在 stim onset 窗口内检查 gaze 是否在注视窗口内（`fixation_window` 从 BHV2 TrialData 读取）

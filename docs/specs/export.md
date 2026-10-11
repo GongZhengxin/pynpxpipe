@@ -61,6 +61,40 @@
 | TrialRaster HDF5（每个 probe） | `{output_dir}/07_derivatives/TrialRaster_{session_id}_{probe_id}.h5` | per-probe spike raster 矩阵 |
 | stage checkpoint | `{output_dir}/checkpoints/export.json` | 含文件路径和统计数量 |
 
+### Target-event tasks (stim19k)
+
+BHV `UserVars.PlannedEventIDs` 启用新任务路径。TrialRecord 原有六列
+`id, start_time, stop_time, stim_index, stim_name, fix_success` 保留；旧任务不增加列。
+`stim_index` 仍为完整刺激表的 1-based 行号，不是缓存句柄。
+
+| 新列 | 用途 |
+|---|---|
+| `planned_event_id` | 所选序列的行号，标识一次计划成功呈现；失败重试沿用此号 |
+| `attempt_id` | `RunID/ML trial/图像位置`，标识一次实际 onset；同一目标可有多次尝试 |
+| `recording_run_id` | 从 attempt_id 可恢复的运行标识，单列保存便于跨文件分组 |
+| `stimulus_manifest_sha256` | 锁定图像身份、来源、角色与目标次数清单 |
+| `stimulus_table_sha256` | 锁定实际加载 TSV 的行号到文件名映射 |
+| `sequence_sha256` | 锁定所选呈现顺序，限定 planned_event_id 的含义 |
+| `attempt_failure_reason` | `success`、`fixation_failure`、`incomplete_presentation` 或 `missing_eye_samples` |
+| `batch_id`, `sequence_plan_sha256` | 新分批任务的批号及长序列表指纹；成对保留 |
+
+这些字段由任务和预处理自动生成，不是操作者填写的新实验参数。哈希是文件级元数据，
+平面 CSV 中逐行重复保存是为了拆分/合并后仍可追溯；它们不是每 trial 的测量量。
+跨文件对账必须同时限定同一次实验计划及其输入哈希，不能只按 planned_event_id 去重；
+同一刺激包在不同记录日的新实验可以合法复用序列编号。失败尝试保留，不能简单删除重复图号。
+
+旧版解析器能读取基本 BHV，但不会保留上述身份，也可能用旧注视比例阈值计数；
+因此新实验需要更新处理端代码，原因不只是导出列增加。新路径要求 BHV 的
+ImageChanger 时间与 64/32 事件一致、每个 trial 的实际 NIDQ onset 数相同，
+不采用旧近似时钟 fallback；无图像 onset 不制造空白尝试。注视成功按完整实际
+`[on, off)` 期间全部有限眼位样本在窗内计算，即使配置关闭 eye_validation 也执行。
+NWB/CSV 保留重试和判定；导出需唯一找到刺激 TSV，并核对其与相邻 manifest 的哈希。
+处理机的 subject `image_vault_paths` 应能解析到该包。
+
+部署后先用独立输出目录处理短的真实 BHV/NIDQ 测试记录，再核对失败重试、批次边界、
+高编号图像和成功计数。不要沿用旧版为该新任务生成的完成 checkpoint；无需重跑旧实验。
+本改动不增加依赖，不包含实验图像或工作机的 subject/信号线路配置。
+
 ### stage checkpoint payload
 
 ```json
