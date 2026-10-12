@@ -259,11 +259,16 @@ def align_bhv2_to_nidq(
             )
             if not all(np.isfinite(v) and v > 0 for v in (onset_time, offset_time, fix_win)):
                 raise SyncError("Invalid target-event timing/fixation parameters")
-            image_times = np.asarray(trial.user_vars.get("ImageSequenceTimes", []), dtype=float).ravel()
+            image_times = np.asarray(trial.user_vars.get("ImageSequenceTimes", []), dtype=float).ravel().copy()
             if len(image_times) != 2 * np.asarray(planned).size:
                 raise SyncError("Missing or invalid ImageChanger time vector")
             shown = np.flatnonzero(np.isfinite(image_times))
             event_pairs = [(t, c) for t, c in trial.events if c in (64, 32)]
+            if len(shown) and "ImageSceneFirstFlipTime" in trial.user_vars:
+                first_flip = np.asarray(trial.user_vars["ImageSceneFirstFlipTime"], dtype=float).ravel()
+                if len(first_flip) != 1 or not np.isfinite(first_flip[0]) or first_flip[0] < 0:
+                    raise SyncError("Missing or invalid image scene first flip")
+                image_times[0] = first_flip[0]
             if (not np.array_equal(shown, np.arange(len(shown)))
                     or len(event_pairs) != len(shown)
                     or any(c != (64 if k % 2 == 0 else 32)
@@ -390,7 +395,11 @@ def align_bhv2_to_nidq(
             rows_attempt_id.append(f"{run_id}/{trial.trial_id}/{stim_i + 1}" if has_target_ids else "")
             rows_manifest_hash.append(manifest_hash if has_target_ids else "")
             rows_sequence_hash.append(sequence_hash if has_target_ids else "")
-            rows_stim_offset_bhv_ms.append(float(image_times[2 * stim_i + 1]) if has_target_ids else np.nan)
+            offset_position = 2 * stim_i + 1
+            rows_stim_offset_bhv_ms.append(
+                float(event_pairs[offset_position][0])
+                if has_target_ids and offset_position < len(event_pairs) else np.nan
+            )
             rows_table_hash.append(table_hash if has_target_ids else "")
             rows_batch_id.append(batch_id if has_target_ids else None)
             rows_plan_hash.append(plan_hash if has_target_ids else "")

@@ -1261,6 +1261,33 @@ def test_stim19k_rejects_lost_complete_on_offset_pair():
         align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1)
 
 
+def test_stim19k_uses_independent_first_flip_without_mutating_native_times():
+    user_vars = _stim19k_user_vars()
+    user_vars["ImageSequenceTimes"] = np.asarray([116.75, 250., 400., 550.])
+    user_vars["ImageSceneFirstFlipTime"] = 100.
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(100.02, 64), (250.02, 32), (400.02, 64), (550.02, 32)], "user_vars": user_vars}])
+    times, codes = np.asarray([10., 10.1, 10.4]), np.asarray([2, 64, 64])
+    df = align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1).trial_events_df
+    assert df.stim_index.tolist() == [10001, 19065]
+    assert df.stim_onset_bhv_ms.tolist() == [100.02, 400.02]
+    assert df.stim_offset_bhv_ms.tolist() == [250.02, 550.02]
+    assert user_vars["ImageSequenceTimes"][0] == 116.75
+
+
+@pytest.mark.parametrize("first_flip,offset", [(120., 250.), (np.nan, 250.),
+                                               ([100., 101.], 250.), (100., 266.75)])
+def test_stim19k_first_flip_does_not_relax_other_timing_checks(first_flip, offset):
+    user_vars = _stim19k_user_vars()
+    user_vars["ImageSequenceTimes"] = np.asarray([116.75, offset, 400., 550.])
+    user_vars["ImageSceneFirstFlipTime"] = first_flip
+    parser = _make_bhv_parser([{"trial_id": 1, "condition_id": 1,
+        "events": [(100., 64), (250., 32), (400., 64), (550., 32)], "user_vars": user_vars}])
+    times, codes = np.asarray([10., 10.1, 10.4]), np.asarray([2, 64, 64])
+    with pytest.raises(SyncError):
+        align_bhv2_to_nidq(parser, times, codes, 64, trial_start_bit=1)
+
+
 @pytest.mark.parametrize("batch,plan_hash", [(0,"d"*64),(1.5,"d"*64),(np.nan,"d"*64),([1,2],"d"*64),(1,"")])
 def test_stim19k_rejects_corrupt_batch_provenance(batch, plan_hash):
     user_vars = _stim19k_user_vars()

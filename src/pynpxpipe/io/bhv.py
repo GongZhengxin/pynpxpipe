@@ -306,6 +306,15 @@ class BHV2Parser:
         user_vars = raw.get("UserVars", {})
         if not isinstance(user_vars, dict):
             user_vars = {}
+        if "PlannedEventIDs" in user_vars and "ImageSceneFirstFlipTime" not in user_vars:
+            # Existing stim19k scripts ran TTL, fixation, then the image scene.
+            # Scene.Time is run_scene's independently recorded first flip;
+            # ImageChanger.Time(1) can instead contain a later frame in ML 2.2.49.
+            status = raw.get("ObjectStatusRecord", {})
+            scenes = status.get("SceneParam", []) if isinstance(status, dict) else []
+            if isinstance(scenes, list) and len(scenes) >= 3 and isinstance(scenes[2], dict):
+                user_vars = dict(user_vars)
+                user_vars["ImageSceneFirstFlipTime"] = scenes[2].get("Time", np.nan)
 
         variable_changes = raw.get("VariableChanges", {})
         if not isinstance(variable_changes, dict):

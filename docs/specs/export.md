@@ -63,6 +63,13 @@
 
 ### Target-event tasks (stim19k)
 
+第一张图的翻转时间使用 `ImageSceneFirstFlipTime`（呈现 `run_scene` 的返回值）。
+`ImageSequenceTimes` 保留原始 ImageChanger 向量；第一项可能晚一帧，解析时仅以独立场景首帧时间替换该参考值。
+已有 stim19k 记录由保存的 `ObjectStatusRecord.SceneParam(3).Time` 提供同一参考
+（该任务场景顺序为 TTL、注视、图像）。事件数量、64/32 顺序及与翻转时间的 2 ms 检查仍严格执行；
+其他项异常继续拒绝。原始 BHV 和原始向量均不修改。
+成功判定的眼位窗口使用配对的 64/32 事件时间 `[on, off)`，与 MATLAB 在线及恢复判定一致。
+
 BHV `UserVars.PlannedEventIDs` 启用新任务路径。TrialRecord 原有六列
 `id, start_time, stop_time, stim_index, stim_name, fix_success` 保留；旧任务不增加列。
 `stim_index` 仍为完整刺激表的 1-based 行号，不是缓存句柄。
