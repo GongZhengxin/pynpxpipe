@@ -414,6 +414,22 @@ def _trial_with_user_vars(trial_id: int, user_vars: dict) -> dict:
     }
 
 
+def test_stim19k_existing_record_gets_first_flip_from_saved_image_scene():
+    raw = _trial_with_user_vars(1, {"PlannedEventIDs": np.asarray([1]),
+                                  "ImageSequenceTimes": np.asarray([116.75, 250.])})
+    raw["ObjectStatusRecord"] = {"SceneParam": [{"Time": 10.}, {"Time": 20.}, {"Time": 100.}]}
+    mapped = BHV2Parser._map_trial(raw)
+    assert mapped.user_vars["ImageSceneFirstFlipTime"] == 100.
+    assert "ImageSceneFirstFlipTime" not in raw["UserVars"]
+    assert mapped.user_vars["ImageSequenceTimes"][0] == 116.75
+
+
+def test_stim19k_explicit_first_flip_takes_precedence_over_scene_fallback():
+    raw = _trial_with_user_vars(1, {"PlannedEventIDs": np.asarray([1]), "ImageSceneFirstFlipTime": 100.})
+    raw["ObjectStatusRecord"] = {"SceneParam": [{"Time": 10.}, {"Time": 20.}, {"Time": 120.}]}
+    assert BHV2Parser._map_trial(raw).user_vars["ImageSceneFirstFlipTime"] == 100.
+
+
 class TestGetDatasetTsvPathPurePython:
     """BHV2Parser.get_dataset_tsv_path() — UserVars.DatasetName reader."""
 

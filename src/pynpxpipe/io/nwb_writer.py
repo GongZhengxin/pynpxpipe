@@ -892,6 +892,32 @@ class NWBWriter:
         has_stim_index = "stim_index" in behavior_events.columns
         has_onset_time = "onset_time_ms" in behavior_events.columns
         has_offset_time = "offset_time_ms" in behavior_events.columns
+        target_columns = {
+            "planned_event_id": "Target presentation ID within the frozen sequence (1-based)",
+            "attempt_id": "Unique recording run / ML trial / image-position attempt ID",
+            "recording_run_id": "Recording run UUID; recovery starts a new recording run",
+            "stimulus_manifest_sha256": "SHA-256 of the global stimulus manifest",
+            "stimulus_table_sha256": "SHA-256 of the row-ordered stimulus TSV",
+            "sequence_sha256": "SHA-256 of the selected target sequence",
+        }
+        present_targets = set(target_columns) & set(behavior_events.columns)
+        if present_targets and present_targets != set(target_columns):
+            raise ValueError("Incomplete target-event identity columns")
+        if present_targets:
+            if behavior_events[list(target_columns)].isna().any().any():
+                raise ValueError("Target-event identity contains missing values")
+            if not behavior_events["attempt_id"].is_unique:
+                raise ValueError("Duplicate presentation attempt identity")
+            if "attempt_failure_reason" not in behavior_events or behavior_events["trial_valid"].isna().any():
+                raise ValueError("Target-event fixation/completeness validation has not run")
+            target_columns["attempt_failure_reason"] = "Per-attempt completion/fixation verdict from persisted BHV"
+            batch_columns = {"batch_id": "Training batch; retries finish before the next batch",
+                             "sequence_plan_sha256": "SHA-256 of the target-event batch plan"}
+            present_batch = set(batch_columns) & set(behavior_events.columns)
+            if present_batch:
+                if present_batch != set(batch_columns) or behavior_events[list(batch_columns)].isna().any().any():
+                    raise ValueError("Incomplete target-event batch identity")
+                target_columns.update(batch_columns)
 
         # E3.3: stim_name column only materialises when both the map and the
         # stim_index column are available. Out-of-range positive indices raise
@@ -961,6 +987,9 @@ class NWBWriter:
                 self._nwbfile.add_trial_column(
                     "offset_time_ms", "Inter-stimulus interval in ms (from VariableChanges)"
                 )
+            if present_targets:
+                for name, description in target_columns.items():
+                    self._nwbfile.add_trial_column(name, description)
 
         smap = stim_map or {}
         for (_, row), imec_map in zip(behavior_events.iterrows(), parsed_imec, strict=True):
@@ -1006,6 +1035,9 @@ class NWBWriter:
                 kwargs["onset_time_ms"] = onset_ms
             if has_offset_time:
                 kwargs["offset_time_ms"] = float(row["offset_time_ms"])
+            if present_targets:
+                for name in target_columns:
+                    kwargs[name] = int(row[name]) if name in ("planned_event_id", "batch_id") else str(row[name])
             self._nwbfile.add_trial(**kwargs)
 
     def add_sync_tables(

@@ -259,13 +259,22 @@ class BHV2Parser:
                 break
         return first_value
 
-    def get_sample_interval(self) -> float:
-        """Read the analog SampleInterval (ms) from the first trial.
+    def get_sample_interval(self, trial_id: int | None = None) -> float:
+        """Read the analog SampleInterval (ms) from the requested or first trial.
+
+        Explicit trial IDs require a recorded, finite positive interval. Omitting
+        the ID preserves the legacy first-trial fallback behavior.
 
         Returns:
             SampleInterval in milliseconds (typically 4.0 for 250 Hz).
         """
         reader = self._get_reader()
+        if trial_id is not None:
+            analog = reader.read(f"Trial{trial_id}").get("AnalogData", {})
+            value = float(analog.get("SampleInterval", np.nan))
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError(f"Trial {trial_id} has no valid SampleInterval")
+            return value
         var_names = reader.list_variables()
         trial_names = sorted(v for v in var_names if re.fullmatch(r"Trial\d+", v))
         if not trial_names:
@@ -297,6 +306,15 @@ class BHV2Parser:
         user_vars = raw.get("UserVars", {})
         if not isinstance(user_vars, dict):
             user_vars = {}
+        if "PlannedEventIDs" in user_vars and "ImageSceneFirstFlipTime" not in user_vars:
+            # Existing stim19k scripts ran TTL, fixation, then the image scene.
+            # Scene.Time is run_scene's independently recorded first flip;
+            # ImageChanger.Time(1) can instead contain a later frame in ML 2.2.49.
+            status = raw.get("ObjectStatusRecord", {})
+            scenes = status.get("SceneParam", []) if isinstance(status, dict) else []
+            if isinstance(scenes, list) and len(scenes) >= 3 and isinstance(scenes[2], dict):
+                user_vars = dict(user_vars)
+                user_vars["ImageSceneFirstFlipTime"] = scenes[2].get("Time", np.nan)
 
         variable_changes = raw.get("VariableChanges", {})
         if not isinstance(variable_changes, dict):

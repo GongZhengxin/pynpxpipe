@@ -80,6 +80,16 @@ Full walkthrough: **[getting_started.md](getting_started.md)**
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestone plan and backlog |
 | [`docs/progress.md`](docs/progress.md) | Module-level status and test counts |
 
+## Target-event MonkeyLogic tasks
+
+For MonkeyLogic tasks with `PlannedEventIDs` (including the batched stim19k
+candidate), use the target-event support described in
+[`docs/specs/export.md`](docs/specs/export.md#target-event-tasks-stim19k).
+It retains planned presentations versus retry attempts through NWB and TrialRecord,
+and validates actual presentation/fixation completion. Older tasks retain their
+existing six-column TrialRecord output. Target-machine BHV/NIDQ validation is still
+required; synthetic regression tests do not establish hardware compatibility.
+
 ## Legacy MATLAB PSTH Timing
 
 If pynpxpipe PSTHs appear about 20 ms earlier than the legacy MATLAB pipeline

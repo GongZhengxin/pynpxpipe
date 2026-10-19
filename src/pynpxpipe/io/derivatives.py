@@ -344,7 +344,7 @@ def export_unit_prop(units_df: pd.DataFrame, out_path: Path) -> Path:
 
 
 def export_trial_record(trials_df: pd.DataFrame, out_path: Path) -> Path:
-    """Write the 6-column TrialRecord CSV aligned to the MATLAB reference layout.
+    """Write legacy columns and preserve optional target/attempt identity for new tasks.
 
     See ``docs/todo.md`` §II. Columns (in order):
     ``id, start_time, stop_time, stim_index, stim_name, fix_success``.
@@ -381,6 +381,21 @@ def export_trial_record(trials_df: pd.DataFrame, out_path: Path) -> Path:
             "fix_success": trials_df["trial_valid"].to_numpy(),
         }
     )
+    identity_columns = ["planned_event_id", "attempt_id", "recording_run_id",
+                        "stimulus_manifest_sha256", "stimulus_table_sha256", "sequence_sha256"]
+    if any(c in trials_df for c in identity_columns):
+        if not all(c in trials_df for c in identity_columns):
+            raise ValueError("Incomplete target-event identity at TrialRecord export")
+        for column in identity_columns:
+            out[column] = trials_df[column].to_numpy()
+        batch_columns = ["batch_id", "sequence_plan_sha256"]
+        if any(c in trials_df for c in batch_columns):
+            if not all(c in trials_df for c in batch_columns):
+                raise ValueError("Incomplete target-event batch identity at TrialRecord export")
+            for column in batch_columns:
+                out[column] = trials_df[column].to_numpy()
+        if "attempt_failure_reason" in trials_df:
+            out["attempt_failure_reason"] = trials_df["attempt_failure_reason"].to_numpy()
     out.to_csv(out_path, index=False)
     return out_path
 

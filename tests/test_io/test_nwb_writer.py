@@ -2090,3 +2090,35 @@ class TestRawResortFidelity:
             nwbfile = io.read()
             assert "ap_meta_imec0" in nwbfile.scratch
             assert "fileCreateTime" in str(nwbfile.scratch["ap_meta_imec0"].data)
+
+
+def test_stim19k_attempt_identity_survives_nwb_and_csv(writer, tmp_path):
+    from pynwb import NWBHDF5IO
+
+    from pynpxpipe.io.derivatives import export_trial_record
+    writer.create_file()
+    df = _make_behavior_df(n_trials=2)
+    df['stim_index'] = [10001, 19065]
+    df['planned_event_id'] = [48390, 48390]
+    df['attempt_id'] = ['run-a/1/1', 'run-a/2/1']
+    df['recording_run_id'] = 'run-a'
+    df['stimulus_manifest_sha256'] = 'a' * 64
+    df['stimulus_table_sha256'] = 'c' * 64
+    df['sequence_sha256'] = 'b' * 64
+    df['batch_id'] = 18
+    df['sequence_plan_sha256'] = 'd' * 64
+    df['trial_valid'] = [False, True]
+    df['attempt_failure_reason'] = ['fixation_failure', 'success']
+    writer.add_trials(df, stim_map={10001:'a.png', 19065:'b.png'})
+    path = writer.write()
+    with NWBHDF5IO(str(path), 'r') as io:
+        trials = io.read().trials.to_dataframe()
+        export_trial_record(trials, tmp_path/'trials.csv')
+    actual = pd.read_csv(tmp_path/'trials.csv')
+    assert actual.stim_index.tolist() == [10001, 19065]
+    assert actual.planned_event_id.tolist() == [48390, 48390]
+    assert actual.attempt_id.tolist() == ['run-a/1/1', 'run-a/2/1']
+    assert actual.fix_success.tolist() == [False, True]
+    assert actual.attempt_failure_reason.tolist() == ['fixation_failure', 'success']
+    assert actual.batch_id.tolist() == [18, 18]
+    assert actual.sequence_plan_sha256.tolist() == ['d' * 64, 'd' * 64]

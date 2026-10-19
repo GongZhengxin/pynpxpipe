@@ -231,6 +231,15 @@ def align_bhv2_to_nidq(
     rows_offset_time_ms: list[float] = []
     rows_fixation_window: list[float] = []
     rows_stim_onset_bhv_ms: list[float] = []
+    rows_planned_event_id: list[int | None] = []
+    rows_attempt_id: list[str] = []
+    rows_run_id: list[str] = []
+    rows_manifest_hash: list[str] = []
+    rows_sequence_hash: list[str] = []
+    rows_stim_offset_bhv_ms: list[float] = []
+    rows_table_hash: list[str] = []
+    rows_batch_id: list[int | None] = []
+    rows_plan_hash: list[str] = []
 
     for idx, trial in enumerate(trials):
         stim_times_ms = stim_times_by_trial.get(trial.trial_id, [])
@@ -238,8 +247,41 @@ def align_bhv2_to_nidq(
         onset_time = float(vc.get("onset_time", 150.0))
         offset_time = float(vc.get("offset_time", 150.0))
         fix_win = float(vc.get("fixation_window", 5.0))
+        planned = trial.user_vars.get("PlannedEventIDs")
+        has_target_ids = planned is not None
+        actual = trial.user_vars.get("ActualParameters", {})
+        if has_target_ids:
+            required = {"onset_time", "offset_time", "fixation_window"}
+            if not required.issubset(actual):
+                raise SyncError("Target-event trial is missing its actual timing/fixation parameters")
+            onset_time, offset_time, fix_win = (
+                float(actual[k]) for k in ("onset_time", "offset_time", "fixation_window")
+            )
+            if not all(np.isfinite(v) and v > 0 for v in (onset_time, offset_time, fix_win)):
+                raise SyncError("Invalid target-event timing/fixation parameters")
+            image_times = np.asarray(trial.user_vars.get("ImageSequenceTimes", []), dtype=float).ravel().copy()
+            if len(image_times) != 2 * np.asarray(planned).size:
+                raise SyncError("Missing or invalid ImageChanger time vector")
+            shown = np.flatnonzero(np.isfinite(image_times))
+            event_pairs = [(t, c) for t, c in trial.events if c in (64, 32)]
+            if len(shown) and "ImageSceneFirstFlipTime" in trial.user_vars:
+                first_flip = np.asarray(trial.user_vars["ImageSceneFirstFlipTime"], dtype=float).ravel()
+                if len(first_flip) != 1 or not np.isfinite(first_flip[0]) or first_flip[0] < 0:
+                    raise SyncError("Missing or invalid image scene first flip")
+                image_times[0] = first_flip[0]
+            if (not np.array_equal(shown, np.arange(len(shown)))
+                    or len(event_pairs) != len(shown)
+                    or any(c != (64 if k % 2 == 0 else 32)
+                           or abs(t - image_times[k]) > 2
+                           for k, (t, c) in enumerate(event_pairs))):
+                raise SyncError("ImageChanger/event identity or timestamps disagree")
+            if len(shown) > 1 and np.any(np.diff(image_times[shown]) <= 0):
+                raise SyncError("Nonpositive image/blank duration")
 
         if not stim_times_ms:
+            if has_target_ids:
+                # A fixation-only trial is not a fictitious image attempt.
+                continue
             logger.warning(
                 "Trial %d has no stim_onset_code=%d in BHV2; "
                 "adding one row with stim_onset_nidq_s=NaN",
@@ -255,13 +297,51 @@ def align_bhv2_to_nidq(
             rows_offset_time_ms.append(offset_time)
             rows_fixation_window.append(fix_win)
             rows_stim_onset_bhv_ms.append(np.nan)
+            rows_planned_event_id.append(None)
+            rows_attempt_id.append("")
+            rows_run_id.append("")
+            rows_manifest_hash.append("")
+            rows_sequence_hash.append("")
+            rows_stim_offset_bhv_ms.append(np.nan)
+            rows_table_hash.append("")
+            rows_batch_id.append(None)
+            rows_plan_hash.append("")
             continue
 
         cit = trial.user_vars.get("Current_Image_Train")
         cit_flat = np.asarray(cit).flatten() if cit is not None else None
         n_bhv_stim = len(stim_times_ms)
+        if has_target_ids:
+            planned_flat = np.asarray(planned, dtype=float).flatten()
+            if cit_flat is None or len(planned_flat) != len(cit_flat) or n_bhv_stim > len(planned_flat):
+                raise SyncError("PlannedEventIDs / global image IDs / onset count disagree")
+            if (not np.all(np.isfinite(planned_flat)) or np.any(planned_flat < 1)
+                    or np.any(planned_flat != np.floor(planned_flat))
+                    or len(np.unique(planned_flat)) != len(planned_flat)):
+                raise SyncError("Invalid or duplicated planned event IDs in one trial")
+            if (not np.all(np.isfinite(cit_flat)) or np.any(cit_flat < 1)
+                    or np.any(cit_flat != np.floor(cit_flat))):
+                raise SyncError("Invalid global stimulus IDs")
+            run_id = str(trial.user_vars.get("RunID", ""))
+            manifest_hash = str(trial.user_vars.get("ManifestHash", ""))
+            sequence_hash = str(trial.user_vars.get("SequenceHash", ""))
+            table_hash = str(trial.user_vars.get("StimulusTableHash", ""))
+            batch_id = trial.user_vars.get("BatchID")
+            plan_hash = str(trial.user_vars.get("SequencePlanHash", ""))
+            if batch_id is not None or plan_hash:
+                batch_values = np.asarray(batch_id, dtype=float).ravel()
+                if (len(batch_values) != 1 or not np.isfinite(batch_values[0])
+                        or batch_values[0] < 1 or batch_values[0] != int(batch_values[0])
+                        or len(plan_hash) != 64 or any(c not in '0123456789abcdef' for c in plan_hash)):
+                    raise SyncError("Invalid batch identity or sequence-plan hash")
+                batch_id = int(batch_values[0])
+            if not run_id or any(len(h) != 64 or any(c not in '0123456789abcdef' for c in h)
+                                 for h in (manifest_hash, sequence_hash, table_hash)):
+                raise SyncError("Missing run or package identity for target-event trial")
 
         # Compute per-stim NIDQ times
+        if has_target_ids and not use_nidq_rising:
+            raise SyncError("Target-event task requires recorded NIDQ stimulus edges; legacy clock fallback is not accepted")
         if use_nidq_rising:
             window_start = nidq_trial_onset_times[idx]
             window_end = nidq_trial_onset_times[idx + 1] if (idx + 1) < n_trials else np.inf
@@ -270,6 +350,8 @@ def align_bhv2_to_nidq(
             )
             nidq_stims_this_trial = nidq_stim_rising_times[in_window]
             n_nidq_stim = len(nidq_stims_this_trial)
+            if has_target_ids and n_nidq_stim != n_bhv_stim:
+                raise SyncError("Target-event BHV/NIDQ onset count differs within a trial")
 
             if abs(n_bhv_stim - n_nidq_stim) > stim_count_tolerance:
                 logger.warning(
@@ -308,6 +390,19 @@ def align_bhv2_to_nidq(
             rows_offset_time_ms.append(offset_time)
             rows_fixation_window.append(fix_win)
             rows_stim_onset_bhv_ms.append(stim_ms)
+            rows_planned_event_id.append(int(planned_flat[stim_i]) if has_target_ids else None)
+            rows_run_id.append(run_id if has_target_ids else "")
+            rows_attempt_id.append(f"{run_id}/{trial.trial_id}/{stim_i + 1}" if has_target_ids else "")
+            rows_manifest_hash.append(manifest_hash if has_target_ids else "")
+            rows_sequence_hash.append(sequence_hash if has_target_ids else "")
+            offset_position = 2 * stim_i + 1
+            rows_stim_offset_bhv_ms.append(
+                float(event_pairs[offset_position][0])
+                if has_target_ids and offset_position < len(event_pairs) else np.nan
+            )
+            rows_table_hash.append(table_hash if has_target_ids else "")
+            rows_batch_id.append(batch_id if has_target_ids else None)
+            rows_plan_hash.append(plan_hash if has_target_ids else "")
 
         if n_bhv_stim > 1:
             logger.info(
@@ -361,6 +456,19 @@ def align_bhv2_to_nidq(
             "stim_onset_bhv_ms": rows_stim_onset_bhv_ms,
         }
     )
+    if any(value is not None for value in rows_planned_event_id):
+        df["planned_event_id"] = pd.array(rows_planned_event_id, dtype="Int64")
+        df["attempt_id"] = rows_attempt_id
+        df["recording_run_id"] = rows_run_id
+        df["stimulus_manifest_sha256"] = rows_manifest_hash
+        df["sequence_sha256"] = rows_sequence_hash
+        df["stim_offset_bhv_ms"] = rows_stim_offset_bhv_ms
+        df["stimulus_table_sha256"] = rows_table_hash
+        if any(v is not None for v in rows_batch_id):
+            if any(v is None for v in rows_batch_id):
+                raise SyncError("Mixed batch identities within target-event recording")
+            df["batch_id"] = pd.array(rows_batch_id, dtype="Int64")
+            df["sequence_plan_sha256"] = rows_plan_hash
 
     return TrialAlignment(
         trial_events_df=df,
