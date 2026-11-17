@@ -219,6 +219,14 @@ def _select_top_units(
 def _get_spike_times_s(analyzer: SortingAnalyzer, uid: Any, fs: float) -> np.ndarray:
     """Return spike times in seconds for ``uid`` from segment 0."""
     try:
+        from pynpxpipe.core.segments import SegmentManifest
+
+        mapping = analyzer.sorting.get_annotation("segment_manifest")
+        if isinstance(mapping, dict):
+            manifest = SegmentManifest.from_dict(mapping)
+            return manifest.unit_times(
+                analyzer.sorting, analyzer.sorting.get_annotation("probe_id"), uid
+            )
         samples = analyzer.sorting.get_unit_spike_train(uid, segment_index=0)
     except Exception:
         return np.array([], dtype=float)

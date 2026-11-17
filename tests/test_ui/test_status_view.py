@@ -72,7 +72,7 @@ class TestStatusRendering:
         view.load_status()
 
         # Should have 8 stage rows (merge added)
-        assert len(view.stage_rows) == 8
+        assert len(view.stage_rows) == 9
 
     def test_stage_status_text_shows_correctly(self, state, mock_status, tmp_path):
         """Each stage row should display the stage name and its status."""
@@ -232,7 +232,7 @@ class TestOutputDirChange:
         view = StatusView(state, get_status_fn=lambda output_dir: mock_status)
         view._on_load_click(None)
 
-        assert len(view.stage_rows) == 8
+        assert len(view.stage_rows) == 9
 
     def test_load_with_no_output_dir_shows_message(self, state):
         """Loading when output_dir is empty should show an error message."""

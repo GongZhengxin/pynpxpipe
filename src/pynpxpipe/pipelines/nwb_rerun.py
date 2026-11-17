@@ -413,13 +413,20 @@ def _run_raw_rerun_units(
 
     for probe_id, bundle in recording_bundles.items():
         source_recording = bundle.recording
-        recording = (
-            _slice_raw_recording(source_recording, raw_start_sec, raw_end_sec)
-            if raw_start_sec is not None and raw_end_sec is not None
-            else source_recording
-        )
+        if bundle.manifest is not None:
+            recording, rerun_manifest = _prepare_segmented_raw(
+                bundle, pipeline_config, raw_time_range
+            )
+        else:
+            rerun_manifest = None
+            recording = (
+                _slice_raw_recording(source_recording, raw_start_sec, raw_end_sec)
+                if raw_start_sec is not None and raw_end_sec is not None
+                else source_recording
+            )
         n_frames_used = int(recording.get_num_frames(segment_index=0))
-        recording = _preprocess_raw_recording(recording, pipeline_config)
+        if rerun_manifest is None:
+            recording = _preprocess_raw_recording(recording, pipeline_config)
         sorter_folder = sorter_output_root / probe_id
         params = _spikeinterface_sorter_params(sorting_config)
         try:
@@ -434,6 +441,10 @@ def _run_raw_rerun_units(
             raise NWBRerunError(f"raw rerun sorter failed for {probe_id}: {exc}") from exc
 
         fs = float(sorting.get_sampling_frequency())
+        if rerun_manifest is not None:
+            from pynpxpipe.io.segment_recordings import split_analysis_sorting
+
+            sorting = split_analysis_sorting(sorting, rerun_manifest, probe_id, recording)
         spike_time_offset = float(raw_start_sec or 0.0)
         probe_unit_ids = list(sorting.get_unit_ids())
         for sorter_unit_id in probe_unit_ids:
@@ -443,7 +454,16 @@ def _run_raw_rerun_units(
                     "unit_id": next_unit_id,
                     "probe_id": probe_id,
                     "ks_id": _json_safe_unit_id(sorter_unit_id),
-                    "spike_times": spike_time_offset + np.asarray(spike_samples, dtype=float) / fs,
+                    "spike_times": (
+                        rerun_manifest.unit_times(sorting, probe_id, sorter_unit_id)
+                        if rerun_manifest is not None
+                        else spike_time_offset + np.asarray(spike_samples, dtype=float) / fs
+                    ),
+                    **(
+                        {"obs_intervals": rerun_manifest.observation_intervals(probe_id)}
+                        if rerun_manifest is not None
+                        else {}
+                    ),
                     "unittype_string": "UNCLASSIFIED",
                     "is_visual": False,
                     "slay_score": np.nan,
@@ -476,6 +496,62 @@ def _run_raw_rerun_units(
         }
     }
     return pd.DataFrame(rows), report
+
+
+def _prepare_segmented_raw(bundle, cfg, time_range):
+    """Filter retained NWB blocks separately and map a new joint rerun to real time."""
+    from dataclasses import replace
+
+    import spikeinterface.core as si
+
+    from pynpxpipe.core.segments import SegmentManifest
+
+    blocks, segments, bad = [], [], set()
+    concat_start = 0
+    for i, s in enumerate(bundle.manifest.for_probe(bundle.probe_id)):
+        start, stop = s.start_frame, s.stop_frame
+        if time_range is not None:
+            start = max(
+                start, int(np.ceil((time_range[0] - s.time_offset) / s.time_scale * s.sample_rate))
+            )
+            stop = min(
+                stop, int(np.ceil((time_range[1] - s.time_offset) / s.time_scale * s.sample_rate))
+            )
+        if stop <= start:
+            continue
+        block = si.select_segment_recording(bundle.recording, i).frame_slice(
+            start - s.start_frame, stop - s.start_frame
+        )
+        if "inter_sample_shift" in block.get_property_keys():
+            block = spp.phase_shift(block)
+        block = spp.bandpass_filter(
+            block,
+            freq_min=cfg.preprocess.bandpass.freq_min,
+            freq_max=cfg.preprocess.bandpass.freq_max,
+        )
+        ids, _ = spp.detect_bad_channels(block, method=cfg.preprocess.bad_channel_detection.method)
+        bad.update(ids)
+        blocks.append(block)
+        segments.append(replace(s, start_frame=start, stop_frame=stop, concat_start=concat_start))
+        concat_start += stop - start
+    if not blocks:
+        raise NWBRerunError("Requested real-time interval contains no retained raw samples")
+    blocks = [
+        spp.common_reference(
+            b.remove_channels(list(bad)) if bad else b,
+            reference=cfg.preprocess.common_reference.reference,
+            operator=cfg.preprocess.common_reference.operator,
+        )
+        for b in blocks
+    ]
+    recording = si.concatenate_recordings(blocks)
+    if cfg.preprocess.motion_correction.method is not None:
+        recording = spp.correct_motion(
+            recording,
+            preset=cfg.preprocess.motion_correction.preset,
+            estimate_motion_kwargs={"bin_s": cfg.preprocess.motion_correction.bin_s},
+        )
+    return recording, SegmentManifest(segments, cfg.task_windows.join_guard_s)
 
 
 def _normalize_raw_time_range(

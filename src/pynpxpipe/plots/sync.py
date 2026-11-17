@@ -470,7 +470,11 @@ def _build_pd_trial_matrix(
             step).
     """
     _ = align_to  # documentation-only; internal logic is identical
-    pd_v = np.asarray(pd_signal, dtype=np.float64) * voltage_range / 32767.0
+    pd_v = (
+        pd_signal.voltage(voltage_range / 32767.0)
+        if hasattr(pd_signal, "voltage")
+        else np.asarray(pd_signal, dtype=np.float64) * voltage_range / 32767.0
+    )
     sr = float(nidq_sample_rate)
     pre_samples = int(round(pre_ms / 1000.0 * sr))
     post_samples = int(round(post_ms / 1000.0 * sr))

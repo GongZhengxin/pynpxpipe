@@ -111,6 +111,25 @@ class SessionForm:
         self.detect_date_alert = pn.pane.Alert(
             "", alert_type="warning", visible=False, sizing_mode="stretch_width"
         )
+        import pandas as pd
+
+        self.source_id_input = pn.widgets.TextInput(name="记录名称", value="source0")
+        self.source_offset_input = pn.widgets.TextInput(name="起始偏移秒（留空读取采集时间）")
+        self.add_pair_btn = pn.widgets.Button(name="添加当前神经–行为配对")
+        self.remove_pair_btn = pn.widgets.Button(name="移除所选配对")
+        self.pairs_table = pn.widgets.Tabulator(
+            pd.DataFrame(columns=["source_id", "session_dir", "bhv_file", "start_offset_s"]),
+            selectable=1,
+            disabled=True,
+            show_index=False,
+            height=180,
+        )
+        self.pairs_alert = pn.pane.Alert(
+            "同一动物、同一天、探针位置及配置未改变；按采集顺序添加。", alert_type="info"
+        )
+        self.add_pair_btn.on_click(self._add_pair)
+        self.remove_pair_btn.on_click(self._remove_pair)
+        state.param.watch(self._refresh_pairs, "recordings")
 
         # Hide advanced inputs initially
         self.session_dir_input.visible = False
@@ -129,6 +148,45 @@ class SessionForm:
         state.param.watch(self._on_state_recording_date, "recording_date")
 
     # ── Mode switching ──
+
+    def _refresh_pairs(self, event=None) -> None:
+        import pandas as pd
+
+        self.pairs_table.value = pd.DataFrame(
+            self._state.recordings,
+            columns=["source_id", "session_dir", "bhv_file", "start_offset_s"],
+        )
+
+    def _add_pair(self, event=None) -> None:
+        from pynpxpipe.core.session import RecordingSource
+
+        try:
+            if not self._state.session_dir or not self._state.bhv_file:
+                raise ValueError("先选择神经记录目录和配对 BHV2 文件")
+            source = RecordingSource(
+                self.source_id_input.value.strip(),
+                Path(self._state.session_dir),
+                Path(self._state.bhv_file),
+                float(self.source_offset_input.value)
+                if self.source_offset_input.value.strip()
+                else None,
+            )
+            if any(s["source_id"] == source.source_id for s in self._state.recordings):
+                raise ValueError("记录名称不能重复")
+            self._state.recordings = [*self._state.recordings, source.to_dict()]
+            self.source_id_input.value = f"source{len(self._state.recordings)}"
+            self.pairs_alert.object = "已添加；表格顺序即联合处理顺序。"
+            self.pairs_alert.alert_type = "success"
+        except ValueError as exc:
+            self.pairs_alert.object = str(exc)
+            self.pairs_alert.alert_type = "danger"
+
+    def _remove_pair(self, event=None) -> None:
+        selected = set(self.pairs_table.selection)
+        self._state.recordings = [
+            s for i, s in enumerate(self._state.recordings) if i not in selected
+        ]
+        self.pairs_table.selection = []
 
     def _on_mode_change(self, event) -> None:
         advanced = event.new
@@ -264,4 +322,13 @@ class SessionForm:
             self.experiment_input,
             pn.Row(self.recording_date_input, self.detect_date_btn),
             self.detect_date_alert,
+            pn.Card(
+                self.pairs_alert,
+                self.source_id_input,
+                self.source_offset_input,
+                pn.Row(self.add_pair_btn, self.remove_pair_btn),
+                self.pairs_table,
+                title="多段记录配对（单段可直接运行）",
+                collapsed=True,
+            ),
         )

@@ -8,7 +8,7 @@ from pynpxpipe.pipelines.constants import STAGE_ORDER
 from pynpxpipe.ui.state import AppState
 
 # Stages that depend on sort output being present
-_SORT_DEPENDENTS = {"synchronize", "curate", "postprocess", "export"}
+_SORT_DEPENDENTS = {"merge", "curate", "postprocess", "export"}
 
 # Stages that are off by default — opt-in only (irreversible side effects).
 _OPT_IN_STAGES = {"merge"}

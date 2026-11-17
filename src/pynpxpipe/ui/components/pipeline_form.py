@@ -23,6 +23,7 @@ from pynpxpipe.core.config import (
     PreprocessConfig,
     ResourcesConfig,
     SyncConfig,
+    TaskWindowConfig,
 )
 from pynpxpipe.ui.state import AppState
 
@@ -611,6 +612,29 @@ class PipelineForm:
             step=1,
         )
 
+        self.crop_enabled = pn.widgets.Checkbox(name="只处理任务时段", value=True)
+        self.task_max_idle = pn.widgets.FloatInput(name="最大连续空闲 (s)", value=180.0, start=0)
+        self.task_pre = pn.widgets.FloatInput(name="任务前保留 (s)", value=30.0, start=0)
+        self.task_post = pn.widgets.FloatInput(name="任务后保留 (s)", value=30.0, start=0)
+        self.task_join_guard = pn.widgets.FloatInput(
+            name="拼接保护区，每侧 (s)", value=0.1, start=0
+        )
+        self.task_filter_margin = pn.widgets.FloatInput(name="滤波上下文 (s)", value=0.1, start=0)
+        self.task_timezone = pn.widgets.TextInput(
+            name="采集时区 (IANA)", placeholder="例如 Asia/Shanghai"
+        )
+        self.task_start_code = pn.widgets.TextInput(name="BHV 试次起始码（留空自动推导）", value="")
+        self._task_widgets = [
+            self.crop_enabled,
+            self.task_max_idle,
+            self.task_pre,
+            self.task_post,
+            self.task_join_guard,
+            self.task_filter_margin,
+            self.task_timezone,
+            self.task_start_code,
+        ]
+
         # Watch all widgets
         all_widgets = [
             self.n_jobs_input,
@@ -687,7 +711,7 @@ class PipelineForm:
             self.derivatives_bin_size_ms_input,
             self.derivatives_n_jobs_input,
         ]
-        for w in all_widgets:
+        for w in all_widgets + self._task_widgets:
             w.param.watch(self._rebuild_config, "value")
 
         # Initialize state
@@ -717,6 +741,18 @@ class PipelineForm:
 
         self._state.pipeline_config = dataclasses.replace(
             _DEFAULTS,
+            task_windows=TaskWindowConfig(
+                enabled=self.crop_enabled.value,
+                max_idle_s=self.task_max_idle.value,
+                padding_before_s=self.task_pre.value,
+                padding_after_s=self.task_post.value,
+                join_guard_s=self.task_join_guard.value,
+                filter_margin_s=self.task_filter_margin.value,
+                recording_timezone=self.task_timezone.value.strip() or None,
+                trial_start_code=int(self.task_start_code.value)
+                if self.task_start_code.value.strip()
+                else None,
+            ),
             resources=ResourcesConfig(
                 n_jobs=n_jobs,
                 chunk_duration=self.chunk_duration_input.value or "auto",
@@ -851,6 +887,17 @@ class PipelineForm:
         propagated; any other dataclass fields rely on the form's _DEFAULTS
         baseline (mirrors the existing _rebuild_config behaviour).
         """
+        task = cfg.task_windows
+        self.crop_enabled.value = task.enabled
+        self.task_max_idle.value = task.max_idle_s
+        self.task_pre.value = task.padding_before_s
+        self.task_post.value = task.padding_after_s
+        self.task_join_guard.value = task.join_guard_s
+        self.task_filter_margin.value = task.filter_margin_s
+        self.task_timezone.value = task.recording_timezone or ""
+        self.task_start_code.value = (
+            str(task.trial_start_code) if task.trial_start_code is not None else ""
+        )
         # Resources
         self.n_jobs_input.value = str(cfg.resources.n_jobs)
         self.chunk_duration_input.value = str(cfg.resources.chunk_duration)
@@ -966,6 +1013,7 @@ class PipelineForm:
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
             pn.pane.Markdown("### Pipeline Parameters"),
+            pn.Card(*self._task_widgets, title="任务时段截取", collapsed=False),
             pn.Card(
                 self.n_jobs_input,
                 self.chunk_duration_input,

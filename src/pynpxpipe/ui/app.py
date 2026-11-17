@@ -154,10 +154,10 @@ def create_app() -> pn.viewable.Viewable:
     sys.stdout = tee_stdout
     sys.stderr = tee_stderr
 
-    def pipeline_fn(st: AppState, bridge: ProgressBridge) -> None:
+    def pipeline_fn(st: AppState, bridge: ProgressBridge, preview: bool = False) -> None:
         """Execute the pipeline from UI state. Runs in a background thread."""
         from pynpxpipe.core.logging import setup_logging
-        from pynpxpipe.core.session import SessionManager
+        from pynpxpipe.core.session import RecordingSource, SessionManager
         from pynpxpipe.pipelines.runner import PipelineRunner
 
         if not st.session_dir:
@@ -174,10 +174,22 @@ def create_app() -> pn.viewable.Viewable:
         output_path = Path(str(st.output_dir))
         session_json = output_path / "session.json"
 
-        if session_json.exists():
+        if st.recordings:
+            session = SessionManager.create_from_recordings(
+                [RecordingSource.from_dict(s) for s in st.recordings],
+                st.subject_config,
+                output_path,
+                experiment=st.experiment,
+                probe_plan=dict(st.probe_plan),
+                date=st.recording_date,
+            )
+        elif session_json.exists():
             session = SessionManager.load(output_path)
             # Update subject in case the user changed it in the UI
             session.subject = st.subject_config
+            session.session_dir = Path(str(st.session_dir))
+            session.bhv_file = Path(str(st.bhv_file))
+            session.recordings = []
             SessionManager.save(session)
         else:
             session = SessionManager.create(
@@ -206,13 +218,17 @@ def create_app() -> pn.viewable.Viewable:
                 progress_callback=bridge.callback,
             )
             stages = st.selected_stages if st.selected_stages else None
+            if preview:
+                stages = ["discover", "synchronize", "select_segments"]
             runner.run(stages=stages)
         finally:
             tee_stdout.deactivate()
             tee_stderr.deactivate()
             root_logger.removeHandler(ui_handler)
 
-    run_panel = RunPanel(state, pipeline_fn=pipeline_fn)
+    run_panel = RunPanel(
+        state, pipeline_fn=pipeline_fn, preview_fn=lambda st, br: pipeline_fn(st, br, True)
+    )
     progress_view = ProgressView(state)
 
     status_view = StatusView(state)

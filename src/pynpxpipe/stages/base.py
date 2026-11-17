@@ -89,7 +89,15 @@ class BaseStage(ABC):
         Returns:
             True if the checkpoint exists and has status "completed".
         """
-        return self.checkpoint_manager.is_complete(self.STAGE_NAME, probe_id)
+        complete = self.checkpoint_manager.is_complete(self.STAGE_NAME, probe_id)
+        signature = getattr(self.session, "input_signature", None)
+        if complete and signature:
+            import json
+
+            suffix = f"_{probe_id}" if probe_id else ""
+            path = self.session.output_dir / "checkpoints" / f"{self.STAGE_NAME}{suffix}.json"
+            return json.loads(path.read_text(encoding="utf-8")).get("input_signature") == signature
+        return complete
 
     def _write_checkpoint(self, data: dict, probe_id: str | None = None) -> None:
         """Write a completed checkpoint for this stage.
@@ -98,6 +106,9 @@ class BaseStage(ABC):
             data: Stage-specific payload to include in the checkpoint JSON.
             probe_id: Probe identifier for per-probe checkpoints, or None.
         """
+        signature = getattr(self.session, "input_signature", None)
+        if signature:
+            data = {**data, "input_signature": signature}
         self.checkpoint_manager.mark_complete(self.STAGE_NAME, data, probe_id)
 
     def _write_failed_checkpoint(self, error: Exception, probe_id: str | None = None) -> None:

@@ -116,3 +116,12 @@ sync:
   imec_sync_bit: 6
   trial_count_tolerance: 2
   stim_count_tolerance: 0
+task_windows:
+  enabled: false  # Legacy/full-recording default; new GUI runs enable selection.
+  max_idle_s: 180.0
+  padding_before_s: 30.0
+  padding_after_s: 30.0
+  join_guard_s: 0.1
+  filter_margin_s: 0.1
+  recording_timezone: null  # Set for naive acquisition timestamps, e.g. Asia/Shanghai.
+  trial_start_code: null  # Raw BHV code; auto-derived from sync.event_bits when omitted.

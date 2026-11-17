@@ -198,6 +198,7 @@ class SortStage(BaseStage):
             self.logger.warning("Zero units after sorting", probe_id=probe_id)
 
         save_path = self.session.output_dir / "02_sorted" / probe_id
+        sorting = self._apply_segments(sorting, probe_id)
         sorting.save(folder=save_path, overwrite=True)
 
         self._write_checkpoint(
@@ -213,6 +214,35 @@ class SortStage(BaseStage):
 
         del sorting, recording
         gc.collect()
+
+    def _apply_segments(self, sorting, probe_id: str, import_path: Path | None = None):
+        """Validate mapping provenance and split a concatenated sorter result."""
+        if not self.session.segmented:
+            return sorting
+        import json
+
+        from pynpxpipe.core.segments import load_manifest
+        from pynpxpipe.io.segment_recordings import split_analysis_sorting
+
+        manifest = load_manifest(self.session)
+        if import_path is not None:
+            sidecar = import_path / "segment_signature.json"
+            if (
+                not sidecar.exists()
+                or json.loads(sidecar.read_text(encoding="utf-8")).get("signature")
+                != manifest.signature
+            ):
+                raise SortError(
+                    "External sorting must provide segment_signature.json matching the selected recording"
+                )
+        recording = si.load(self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr")
+        result = split_analysis_sorting(sorting, manifest, probe_id, recording)
+        folder = self.session.output_dir / "02_sorter_output_KS4" / probe_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "segment_signature.json").write_text(
+            json.dumps({"signature": manifest.signature}), encoding="utf-8"
+        )
+        return result
 
     def _import_sorting(self, probe_id: str, import_path: Path) -> None:
         """Import an externally computed sorting result for one probe.
@@ -249,6 +279,7 @@ class SortStage(BaseStage):
             self.logger.warning("Zero units after import", probe_id=probe_id)
 
         save_path = self.session.output_dir / "02_sorted" / probe_id
+        sorting = self._apply_segments(sorting, probe_id, import_path)
         sorting.save(folder=save_path, overwrite=True)
 
         self._write_checkpoint(

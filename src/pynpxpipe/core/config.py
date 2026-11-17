@@ -398,6 +398,51 @@ class ExportConfig:
 
 
 @dataclass
+class TaskWindowConfig:
+    """Task selection in seconds; legacy configurations retain full recordings."""
+
+    enabled: bool = False
+    max_idle_s: float = 180.0
+    padding_before_s: float = 30.0
+    padding_after_s: float = 30.0
+    join_guard_s: float = 0.1
+    filter_margin_s: float = 0.1
+    recording_timezone: str | None = None
+    trial_start_code: int | None = None
+
+    def __post_init__(self) -> None:
+        import math
+        from zoneinfo import ZoneInfo
+
+        for name in (
+            "max_idle_s",
+            "padding_before_s",
+            "padding_after_s",
+            "join_guard_s",
+            "filter_margin_s",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ConfigError(f"task_windows.{name} must be finite and >= 0")
+        if not isinstance(self.enabled, bool):
+            raise ConfigError("task_windows.enabled must be boolean")
+        if self.recording_timezone:
+            try:
+                ZoneInfo(self.recording_timezone)
+            except (KeyError, ValueError) as exc:
+                raise ConfigError(f"Unknown recording_timezone: {self.recording_timezone}") from exc
+        if self.trial_start_code is not None and (
+            not isinstance(self.trial_start_code, int) or not 0 <= self.trial_start_code <= 255
+        ):
+            raise ConfigError("task_windows.trial_start_code must be an event code in 0..255")
+
+
+@dataclass
 class PipelineConfig:
     """Full pipeline configuration loaded from config/pipeline.yaml.
 
@@ -420,6 +465,7 @@ class PipelineConfig:
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
     merge: MergeConfig = field(default_factory=MergeConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
+    task_windows: TaskWindowConfig = field(default_factory=TaskWindowConfig)
 
 
 @dataclass
@@ -1221,6 +1267,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         "postprocess",
         "merge",
         "export",
+        "task_windows",
     }
     for key in raw:
         if key not in known_top_keys:
@@ -1235,6 +1282,7 @@ def load_pipeline_config(config_path: Path | None = None) -> PipelineConfig:
         postprocess=_build_postprocess(raw.get("postprocess") or {}),
         merge=_build_merge(raw.get("merge") or {}),
         export=_build_export(raw.get("export") or {}),
+        task_windows=TaskWindowConfig(**(raw.get("task_windows") or {})),
     )
 
     _validate_pipeline_config(config)
@@ -1456,6 +1504,8 @@ def merge_with_overrides(
             sync=_build_sync(merged.get("sync") or {}),
             postprocess=_build_postprocess(merged.get("postprocess") or {}),
             export=_build_export(merged.get("export") or {}),
+            merge=_build_merge(merged.get("merge") or {}),
+            task_windows=TaskWindowConfig(**(merged.get("task_windows") or {})),
         )
         _validate_pipeline_config(new_config)
     elif isinstance(config, SortingConfig):

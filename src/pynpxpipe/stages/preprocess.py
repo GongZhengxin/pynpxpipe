@@ -113,6 +113,10 @@ class PreprocessStage(BaseStage):
             self._report_progress(f"Skipping already preprocessed probe {probe_id}", 0.0)
             return
 
+        if self.session.segmented:
+            self._preprocess_segments(probe_id)
+            return
+
         probe = next(p for p in self.session.probes if p.probe_id == probe_id)
         cfg = self.pipeline_config
 
@@ -227,4 +231,72 @@ class PreprocessStage(BaseStage):
 
         # Step 10: release memory
         del recording
+        gc.collect()
+
+    def _preprocess_segments(self, probe_id: str) -> None:
+        """Filter blocks with source context, union bad channels, then concatenate.
+
+        Processing reads only retained data and the configured filter margin.
+        """
+        import numpy as np
+        import spikeinterface.core as si
+
+        from pynpxpipe.core.segments import load_manifest
+        from pynpxpipe.io.segment_recordings import check_channel_compatibility, load_source_stream
+
+        manifest = load_manifest(self.session)
+        cfg = self.pipeline_config
+        blocks, bad = [], set()
+        first = None
+        for segment in manifest.for_probe(probe_id):
+            raw = load_source_stream(self.session, segment.source_id, probe_id, "ap")
+            if first is None:
+                first = raw
+            else:
+                check_channel_compatibility(first, raw)
+            margin = int(np.ceil(cfg.task_windows.filter_margin_s * segment.sample_rate))
+            lo = max(0, segment.start_frame - margin)
+            hi = min(raw.get_num_samples(), segment.stop_frame + margin)
+            block = spp.phase_shift(raw.frame_slice(lo, hi))
+            block = spp.bandpass_filter(
+                block,
+                freq_min=cfg.preprocess.bandpass.freq_min,
+                freq_max=cfg.preprocess.bandpass.freq_max,
+            )
+            block = block.frame_slice(segment.start_frame - lo, segment.stop_frame - lo)
+            ids, _ = spp.detect_bad_channels(
+                block, method=cfg.preprocess.bad_channel_detection.method
+            )
+            bad.update(ids)
+            blocks.append(block)
+        if not blocks or len(bad) >= blocks[0].get_num_channels():
+            raise PreprocessError("No usable channels/blocks remain for joint preprocessing")
+        blocks = [
+            spp.common_reference(
+                b.remove_channels(list(bad)) if bad else b,
+                reference=cfg.preprocess.common_reference.reference,
+                operator=cfg.preprocess.common_reference.operator,
+            )
+            for b in blocks
+        ]
+        recording = si.concatenate_recordings(blocks)
+        motion = cfg.preprocess.motion_correction
+        if motion.method is not None:
+            recording = spp.correct_motion(
+                recording, preset=motion.preset, estimate_motion_kwargs={"bin_s": motion.bin_s}
+            )
+        path = self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
+        recording.astype(cfg.preprocess.save_dtype).save(folder=path, format="zarr")
+        self._write_checkpoint(
+            {
+                "probe_id": probe_id,
+                "n_bad_channels": len(bad),
+                "n_segments": len(blocks),
+                "segment_signature": manifest.signature,
+                "motion_correction_method": motion.method,
+                "zarr_path": str(path),
+            },
+            probe_id,
+        )
+        del recording, blocks
         gc.collect()

@@ -1,7 +1,7 @@
 # pynpxpipe 架构设计文档
 
 > 版本：0.2.0  
-> 日期：2026-04-15  
+> 日期：2026-11-17
 > 依据：CLAUDE.md + docs/legacy_analysis.md
 
 ---
@@ -17,13 +17,19 @@ Session.create(session_dir, bhv_file, subject, output_dir)
   [discover]          checkpoint: {n_probes, probe_ids, nidq_found}
         │
         ▼
+  [synchronize]       每个 source 独立对齐，生成完整 trial 区间
+        │
+        ▼
+  [select_segments]   segments.json + summary.json；持久化时钟和源帧映射
+        │
+        ▼
   [preprocess]        checkpoint per probe: {preprocessed_recording_path}
         │
         ▼
   [sort]              checkpoint per probe: {sorting_result_path, n_units}
         │
         ▼
-  [synchronize]       checkpoint: {sync_tables_path, behavior_events_path, n_trials}
+  [merge]             可选；保留跨片段共用的 unit IDs
         │
         ▼
   [curate]            checkpoint per probe: {curated_path, n_units_before, n_units_after}
@@ -41,6 +47,17 @@ Session.create(session_dir, bhv_file, subject, output_dir)
 **checkpoint 存储位置**：`{output_dir}/checkpoints/{stage_name}[_{probe_id}].json`
 
 Pipeline 启动时逐条检查 checkpoint 文件，已完成的 stage 自动跳过，实现断点续跑。
+
+任务裁剪和多段联合处理的完整契约见 [task_segments.md](specs/task_segments.md)。
+`Session.recordings` 按采集顺序保存神经目录/BHV2 配对；旧单段 session 归一化为一个 source。
+新 GUI 默认开启任务裁剪，旧 YAML/API 默认关闭。多 source 即使关闭裁剪也使用显式分段映射。
+输入配对、原始元数据或处理参数变化时，将旧派生结果移入 `.invalidated/`，重新计算 checkpoint。
+
+预处理仅加载选中片段及滤波上下文；sorter 接收压缩后的连续采样坐标。
+随后使用 SpikeInterface 拆回独立分析片段，排除拼接保护区，避免跨间隙计算 ISI 等指标。
+最终 NWB 把 spike、行为和各 raw block 映射到 imec0 参考时钟，`Units.obs_intervals` 标明实际观察区间，
+`full_trials` 包含失败和无刺激试次，`task_blocks` 及 scratch manifest 保存可逆映射。
+只含选中 raw 的 NWB 不视为完整原始文件备份，`verify-safe-to-delete` 返回退出码 7。
 
 ---
 

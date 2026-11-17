@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
 from pynwb import NWBHDF5IO
 
 from pynpxpipe.core.errors import NWBInputError
+
+if TYPE_CHECKING:
+    from pynpxpipe.core.segments import SegmentManifest
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class NWBRecordingBundle:
     series_path: str
     stream_type: str
     sampling_frequency: float
+    manifest: SegmentManifest | None = None
 
 
 class NWBLoader:
@@ -95,7 +99,7 @@ class NWBLoader:
                     has_pipeline_config="pipeline_config" in scratch,
                     raw_ap_streams=raw_ap,
                     raw_lf_streams=raw_lf,
-                    has_nidq_raw="NIDQ_raw" in nwbfile.acquisition,
+                    has_nidq_raw=any(n.startswith("NIDQ_raw") for n in nwbfile.acquisition),
                 )
         except NWBInputError:
             raise
@@ -157,6 +161,7 @@ class NWBLoader:
         import spikeinterface.core as si
 
         units = self.load_units()
+        manifest = self.load_manifest()
         ap_rates = self._ap_sampling_frequencies()
         bundles: dict[str, NWBSortingBundle] = {}
         for probe_id, probe_units in units.groupby("probe_id", sort=True):
@@ -165,6 +170,8 @@ class NWBLoader:
                 if sampling_frequency is not None
                 else ap_rates.get(probe_id)
             )
+            if manifest is not None:
+                fs = manifest.for_probe(str(probe_id))[0].sample_rate
             if fs is None:
                 raise NWBInputError(
                     "Cannot build sorting for "
@@ -176,7 +183,25 @@ class NWBLoader:
                 spike_times = np.asarray(row.spike_times, dtype=float)
                 unit_dict[int(row.unit_id)] = np.rint(spike_times * fs).astype(np.int64)
 
-            sorting = si.NumpySorting.from_unit_dict([unit_dict], sampling_frequency=fs)
+            if manifest is not None:
+                unit_dicts = []
+                for segment in manifest.for_probe(str(probe_id)):
+                    part = {}
+                    for row in probe_units.itertuples(index=False):
+                        times = np.asarray(row.spike_times, dtype=float)
+                        keep = (times >= segment.time(segment.start_frame)) & (
+                            times < segment.time(segment.stop_frame)
+                        )
+                        part[int(row.unit_id)] = (
+                            np.rint(
+                                (times[keep] - segment.time_offset) / segment.time_scale * fs
+                            ).astype(np.int64)
+                            - segment.start_frame
+                        )
+                    unit_dicts.append(part)
+            else:
+                unit_dicts = [unit_dict]
+            sorting = si.NumpySorting.from_unit_dict(unit_dicts, sampling_frequency=fs)
             self._attach_sorting_properties(sorting, probe_units)
             bundles[str(probe_id)] = NWBSortingBundle(
                 probe_id=str(probe_id),
@@ -206,6 +231,10 @@ class NWBLoader:
             NWBInputError: If no matching ElectricalSeries can be loaded.
         """
         import spikeinterface.extractors as se
+
+        manifest = self.load_manifest()
+        if manifest is not None:
+            return self._load_segmented_recordings(manifest, stream_type, load_channel_properties)
 
         summary = self.inspect()
         streams = summary.raw_ap_streams if stream_type == "ap" else summary.raw_lf_streams
@@ -238,6 +267,60 @@ class NWBLoader:
                 stream_type=stream_type.upper(),
                 sampling_frequency=float(recording.get_sampling_frequency()),
             )
+        return bundles
+
+    def load_manifest(self) -> SegmentManifest | None:
+        """Read and validate source/sample mapping, or return None for legacy NWB."""
+        import json
+
+        from pynpxpipe.core.segments import SegmentManifest
+
+        with NWBHDF5IO(self.nwb_path, "r") as io:
+            nf = io.read()
+            if "segment_manifest" not in nf.scratch:
+                return None
+            return SegmentManifest.from_dict(json.loads(nf.scratch["segment_manifest"].data))
+
+    def _load_segmented_recordings(
+        self, manifest: SegmentManifest, stream_type: str, load_channel_properties: bool
+    ) -> dict[str, NWBRecordingBundle]:
+        import spikeinterface.core as si
+        import spikeinterface.extractors as se
+
+        from pynpxpipe.io.segment_recordings import AcquisitionRateRecording
+        from pynpxpipe.io.segmented_nwb import series_name
+
+        bundles = {}
+        for pid in sorted({s.probe_id for s in manifest.segments if s.stream == stream_type}):
+            segments = [
+                (i, s)
+                for i, s in enumerate(manifest.segments)
+                if s.probe_id == pid and s.stream == stream_type
+            ]
+            names = [series_name(s, i) for i, s in segments]
+            locations = self._channel_locations_by_series(names) if load_channel_properties else {}
+            records = []
+            for (_, segment), name in zip(segments, names, strict=True):
+                rec = se.read_nwb_recording(
+                    self.nwb_path,
+                    electrical_series_path=f"acquisition/{name}",
+                    load_channel_properties=load_channel_properties,
+                )
+                rec = AcquisitionRateRecording(rec, segment.sample_rate)
+                if name in locations:
+                    rec.set_channel_locations(locations[name])
+                records.append(rec)
+            recording = si.append_recordings(records)
+            bundles[pid] = NWBRecordingBundle(
+                pid,
+                recording,
+                ";".join(f"acquisition/{n}" for n in names),
+                stream_type.upper(),
+                float(recording.get_sampling_frequency()),
+                manifest,
+            )
+        if not bundles:
+            raise NWBInputError(f"NWB has no selected {stream_type} blocks")
         return bundles
 
     def require_capabilities(self, mode: Literal["rewrite-units", "postprocess", "raw"]) -> None:
@@ -334,9 +417,9 @@ class NWBLoader:
         probe_ids: set[str] = set()
         for name in nwbfile.acquisition:
             if name.startswith("ElectricalSeriesAP_"):
-                probe_ids.add(name.removeprefix("ElectricalSeriesAP_"))
+                probe_ids.add(name.removeprefix("ElectricalSeriesAP_").split("__")[0])
             elif name.startswith("ElectricalSeriesLF_"):
-                probe_ids.add(name.removeprefix("ElectricalSeriesLF_"))
+                probe_ids.add(name.removeprefix("ElectricalSeriesLF_").split("__")[0])
         return tuple(sorted(probe_ids))
 
     @staticmethod
@@ -345,9 +428,9 @@ class NWBLoader:
         raw_lf: dict[str, str] = {}
         for name in nwbfile.acquisition:
             if name.startswith("ElectricalSeriesAP_"):
-                raw_ap[name.removeprefix("ElectricalSeriesAP_")] = name
+                raw_ap.setdefault(name.removeprefix("ElectricalSeriesAP_").split("__")[0], name)
             elif name.startswith("ElectricalSeriesLF_"):
-                raw_lf[name.removeprefix("ElectricalSeriesLF_")] = name
+                raw_lf.setdefault(name.removeprefix("ElectricalSeriesLF_").split("__")[0], name)
         return raw_ap, raw_lf
 
 

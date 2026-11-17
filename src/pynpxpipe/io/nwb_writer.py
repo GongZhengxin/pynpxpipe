@@ -488,9 +488,15 @@ class NWBWriter:
         probe = self.session.probes[0]
         discovery = SpikeGLXDiscovery(self.session.session_dir)
         meta = discovery.parse_meta(probe.ap_meta)
-        session_start_time = datetime.strptime(meta["fileCreateTime"], "%Y-%m-%dT%H:%M:%S").replace(
-            tzinfo=UTC
-        )
+        from pynpxpipe.core.segments import load_manifest
+
+        manifest = load_manifest(self.session)
+        if manifest is not None:
+            session_start_time = datetime.fromisoformat(manifest.session_start_time)
+        else:
+            session_start_time = datetime.strptime(
+                meta["fileCreateTime"], "%Y-%m-%dT%H:%M:%S"
+            ).replace(tzinfo=UTC)
 
         nwb_subject = _build_subject(subject)
 
@@ -570,18 +576,21 @@ class NWBWriter:
             if self._nwbfile.electrodes is None:
                 self._nwbfile.add_electrode_column("probe_id", "Probe identifier")
                 self._nwbfile.add_electrode_column("channel_id", "Channel index within probe")
-                if write_shift:
-                    self._nwbfile.add_electrode_column(
-                        "inter_sample_shift",
-                        "Per-channel ADC sample shift (fraction of sample period) for phase_shift",
-                    )
+            if write_shift and "inter_sample_shift" not in self._nwbfile.electrodes.colnames:
+                self._nwbfile.add_electrode_column(
+                    "inter_sample_shift",
+                    "Per-channel ADC sample shift (fraction of sample period) for phase_shift",
+                    data=[np.nan] * len(self._nwbfile.electrodes),
+                )
 
             for ch_idx, (x, y) in enumerate(channel_positions):
                 # inter_sample_shift aligns with channel_positions order (both
                 # come from the same raw recording's channel order).
-                extra = (
-                    {"inter_sample_shift": float(inter_sample_shift[ch_idx])} if write_shift else {}
-                )
+                extra = {}
+                if "inter_sample_shift" in self._nwbfile.electrodes.colnames:
+                    extra["inter_sample_shift"] = (
+                        float(inter_sample_shift[ch_idx]) if write_shift else np.nan
+                    )
                 self._nwbfile.add_electrode(
                     x=float(x),
                     y=float(y),
@@ -675,10 +684,17 @@ class NWBWriter:
         # Get unittype_string property if available
         sorting_props = analyzer.sorting.get_property("unittype_string")
 
+        from pynpxpipe.core.segments import load_manifest
+
+        manifest = load_manifest(self.session)
         for unit_idx, unit_id in enumerate(unit_ids):
-            spike_times = np.asarray(
-                analyzer.sorting.get_unit_spike_train(unit_id, return_times=True),
-                dtype=np.float64,
+            spike_times = (
+                manifest.unit_times(analyzer.sorting, probe.probe_id, unit_id)
+                if manifest is not None
+                else np.asarray(
+                    analyzer.sorting.get_unit_spike_train(unit_id, return_times=True),
+                    dtype=np.float64,
+                )
             )
             waveform_mean = all_templates[unit_idx]  # (n_samples, n_channels)
             waveform_std = all_templates_std[unit_idx]  # (n_samples, n_channels)
@@ -730,6 +746,11 @@ class NWBWriter:
 
             self._nwbfile.add_unit(
                 spike_times=spike_times,
+                **(
+                    {"obs_intervals": manifest.observation_intervals(probe.probe_id)}
+                    if manifest is not None
+                    else {}
+                ),
                 probe_id=probe.probe_id,
                 electrode_group=electrode_group,
                 ks_id=_safe_int(unit_id, unit_idx),
@@ -908,14 +929,24 @@ class NWBWriter:
                 raise ValueError("Target-event identity contains missing values")
             if not behavior_events["attempt_id"].is_unique:
                 raise ValueError("Duplicate presentation attempt identity")
-            if "attempt_failure_reason" not in behavior_events or behavior_events["trial_valid"].isna().any():
+            if (
+                "attempt_failure_reason" not in behavior_events
+                or behavior_events["trial_valid"].isna().any()
+            ):
                 raise ValueError("Target-event fixation/completeness validation has not run")
-            target_columns["attempt_failure_reason"] = "Per-attempt completion/fixation verdict from persisted BHV"
-            batch_columns = {"batch_id": "Training batch; retries finish before the next batch",
-                             "sequence_plan_sha256": "SHA-256 of the target-event batch plan"}
+            target_columns["attempt_failure_reason"] = (
+                "Per-attempt completion/fixation verdict from persisted BHV"
+            )
+            batch_columns = {
+                "batch_id": "Training batch; retries finish before the next batch",
+                "sequence_plan_sha256": "SHA-256 of the target-event batch plan",
+            }
             present_batch = set(batch_columns) & set(behavior_events.columns)
             if present_batch:
-                if present_batch != set(batch_columns) or behavior_events[list(batch_columns)].isna().any().any():
+                if (
+                    present_batch != set(batch_columns)
+                    or behavior_events[list(batch_columns)].isna().any().any()
+                ):
                     raise ValueError("Incomplete target-event batch identity")
                 target_columns.update(batch_columns)
 
@@ -923,6 +954,7 @@ class NWBWriter:
         # stim_index column are available. Out-of-range positive indices raise
         # immediately so downstream consumers never see silently-dropped labels.
         declare_stim_name = bool(stim_map) and has_stim_index
+        declare_stim_name = declare_stim_name or "stim_name" in behavior_events
         if declare_stim_name and stim_map is not None:
             max_key = max(stim_map) if stim_map else 0
             stim_index_series = behavior_events["stim_index"]
@@ -954,6 +986,9 @@ class NWBWriter:
 
         # Initialize trial columns once (before any add_trial call)
         if self._nwbfile.trials is None:
+            for name in ("source_id", "trial_key", "stimulus_key", "source_attempt_id"):
+                if name in behavior_events:
+                    self._nwbfile.add_trial_column(name, f"Source-qualified provenance: {name}")
             self._nwbfile.add_trial_column(
                 "stim_onset_time",
                 f"Stimulus onset time in IMEC seconds (reference probe {_REFERENCE_PROBE})",
@@ -1018,7 +1053,10 @@ class NWBWriter:
                         len(smap),
                     )
                     stim_name = ""
-                kwargs["stim_name"] = stim_name
+                kwargs["stim_name"] = str(row["stim_name"]) if "stim_name" in row else stim_name
+            for name in ("source_id", "trial_key", "stimulus_key", "source_attempt_id"):
+                if name in row:
+                    kwargs[name] = str(row[name])
             for pid in probe_ids_in_json:
                 # NaN is safer than KeyError if a later trial unexpectedly
                 # omits one probe — but we declared the columns off the first
@@ -1037,7 +1075,11 @@ class NWBWriter:
                 kwargs["offset_time_ms"] = float(row["offset_time_ms"])
             if present_targets:
                 for name in target_columns:
-                    kwargs[name] = int(row[name]) if name in ("planned_event_id", "batch_id") else str(row[name])
+                    kwargs[name] = (
+                        int(row[name])
+                        if name in ("planned_event_id", "batch_id")
+                        else str(row[name])
+                    )
             self._nwbfile.add_trial(**kwargs)
 
     def add_sync_tables(
@@ -1558,6 +1600,28 @@ class NWBWriter:
         """
         if not nwb_path.exists():
             raise FileNotFoundError(f"NWB file not found: {nwb_path}")
+
+        if getattr(session, "segmented", False):
+            from dataclasses import replace
+
+            from pynpxpipe.core.segments import load_manifest
+            from pynpxpipe.io.segmented_nwb import append_segmented_raw
+
+            if time_range is not None:
+                raise ValueError(
+                    "Segmented raw export uses the selected manifest; use task_windows to change retained ranges"
+                )
+            config = replace(
+                session.config,
+                export=replace(
+                    session.config.export,
+                    repair_incomplete_streams=repair,
+                    repair_verify=repair_verify,
+                ),
+            )
+            return append_segmented_raw(
+                replace(session, config=config), nwb_path, load_manifest(session), progress_callback
+            )
 
         reporter = _Phase3Reporter(progress_callback)
         comp = _get_compression_filter()

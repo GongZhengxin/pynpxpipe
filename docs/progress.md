@@ -1,5 +1,38 @@
 # pynpxpipe 开发进度
 
+## 2026-11-17 — 任务时段截取与多记录联合处理 ✅
+
+用户批准的方案见 [task_segments.md](specs/task_segments.md)，使用方式见
+[getting_started.md](../getting_started.md#task-cropping-and-multiple-recording-pairs)。
+
+| 功能 | 状态 | 实现及验证 |
+|------|------|------------|
+| 先对齐、后截取 | ✅ | 完整 trial 边界含失败/无刺激试次；180 s 空闲阈值、前后 30 s padding、重叠合并；同步通道流式读取 |
+| 多配对联合处理 | ✅ | 顺序明确的 neural/BHV2 来源；采集时间及显式偏移；探针/通道/增益兼容检查；每探针一次排序、跨段共享 unit IDs |
+| 分段质量分析 | ✅ | 滤波上下文、坏道并集、拼接保护区；独立分析片段；真实 SI 合并/Bombcell/后处理验证；补算 Bombcell 所需 exp_decay |
+| NWB 与回炉 | ✅ | 一个 NWB 保存选中 AP/LF/NIDQ、真实间隙、完整试次、映射及 obs_intervals；原始值逐样本校验；恢复、损坏修复及 raw 回炉测试 |
+| GUI / CLI / Python | ✅ | GUI 配对表、时区/截取配置、对齐预览；run-recordings YAML 入口；旧会话恢复默认不启用裁剪 |
+| 断点与溯源 | ✅ | 输入/配置签名、外部排序签名；旧结果归档；嵌套输出不影响原始输入签名；选中片段 NWB 不认证原始文件可删除 |
+| 社区方案引用 | ✅ | Spec 记录 SpikeInterface、neuropixel-utils、CatGT/TPrime、AIND、PyNWB 的复用或参考边界 |
+
+验证：新增 27 项分段专项测试；实际使用 SpikeInterface 0.104.0 / PyNWB 3.1.3。
+按项目锁定依赖建立的 CPU 环境中，回归 **1671 passed / 48 skipped / 2 deselected**；
+旧会话恢复最后修改后专项复验 **20 passed**。`ruff check src/ tests/`、改动 Python
+文件的 `ruff format --check` 与 `git diff --check` 均通过。提交前补跑覆盖率回归，
+仍为 **1671 passed / 48 skipped / 2 deselected**，总覆盖率 **85.00%**（要求 80%）。
+全库格式检查另有 5 个未改动文件未通过，属于既有格式问题。
+
+运行命令：
+
+```powershell
+uv run --no-sync pytest --deselect tests/test_install_smoke.py::test_torch_is_importable --deselect tests/test_install_smoke.py::test_kilosort_is_importable -q --tb=short
+```
+
+48 项跳过源于真实 BHV2/MATLAB 环境不可用。两项安装检查在临时测试环境中实际报缺少
+torch / Kilosort，锁定环境的 CPU 回归显式排除这两项；未安装或替换 GPU 栈。
+端到端测试运行真实滤波、分析器、NWB 写读及验证，但使用确定性的替代 sorter；
+真实采集数据、GPU Kilosort 和 DREDge 运行验收仍待生产环境完成。
+
 ## M1 进度总览 ✅ 已完成
 
 完成：22/22 模块 | 测试：779 passed | 覆盖率：~80%

@@ -127,8 +127,16 @@ def calibrate_photodiode(
     # ------------------------------------------------------------------ #
     # Step 1: int16 → voltage + global quality check
     # ------------------------------------------------------------------ #
-    voltage = photodiode_signal.astype(float) * (voltage_range / 32768.0)
-    var_global = float(np.var(voltage))
+    if len(stim_onset_times_s) == 0:
+        return CalibratedOnsets(
+            np.array([], dtype=float), np.array([], dtype=float), np.array([], dtype=int), 0
+        )
+    if hasattr(photodiode_signal, "voltage"):
+        voltage = photodiode_signal.voltage(voltage_range / 32768.0)
+        var_global = voltage.variance()
+    else:
+        voltage = photodiode_signal.astype(float) * (voltage_range / 32768.0)
+        var_global = float(np.var(voltage))
     if var_global < min_signal_variance:
         raise SyncError(
             f"Photodiode signal variance {var_global:.2e} too low. Check photodiode connection."

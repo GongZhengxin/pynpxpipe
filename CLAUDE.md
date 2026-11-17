@@ -35,12 +35,14 @@ pynpxpipe：神经电生理数据预处理工具包。
 ## Pipeline Stages（按顺序执行）
 
 1. **discover** — 扫描 SpikeGLX 文件夹，发现 probes，验证数据完整性
-2. **preprocess** — phase shift → bandpass → 坏道检测 → CMR → 运动校正(可选) → Zarr
-3. **sort** — Kilosort4 via SpikeInterface，或导入外部 sorting 结果
-4. **synchronize** — IMEC↔NIDQ 时钟对齐 → BHV2↔NIDQ 事件匹配 → Photodiode 校准
-5. **curate** — SpikeInterface quality_metrics + Bombcell 分类
-6. **postprocess** — SortingAnalyzer 扩展计算 + SLAy 自动合并 + 眼动验证
-7. **export** — 整合写入 NWB 文件
+2. **synchronize** — 每个神经–行为配对独立对齐，包含完整 trial 边界
+3. **select_segments** — 按任务间隙及 padding 选择时段，保存原始帧/拼接帧/真实时间映射；旧配置未开启时跳过
+4. **preprocess** — 分块 phase shift → bandpass → 坏道并集 → CMR → 联合运动校正(可选) → Zarr
+5. **sort** — 每探针一次 Kilosort4，或导入带相同映射签名的结果
+6. **merge** — 可选自动合并
+7. **curate** — 在独立观察片段上计算 quality_metrics + Bombcell 分类
+8. **postprocess** — SortingAnalyzer 扩展计算 + SLAy 分析 + 眼动验证
+9. **export** — 一个 NWB，分段 raw 和 spikes 保留真实采集时间及间隙
 
 每个 stage 的摘要见 `docs/architecture.md`（~500 行架构总纲），模块级详细设计见下方 Spec 索引。
 
@@ -80,6 +82,7 @@ pynpxpipe：神经电生理数据预处理工具包。
 | preprocess | `docs/specs/preprocess.md` | phase_shift→bandpass→坏道→CMR→运动校正→Zarr |
 | sort | `docs/specs/sort.md` | KS4 本地运行或导入外部 sorting 结果 |
 | synchronize | `docs/specs/synchronize.md` | 三级时间对齐编排（调用 io/sync/* 子模块） |
+| task_segments | `docs/specs/task_segments.md` | 先对齐后裁剪、多配对联合处理、分段 NWB、开源方案依据 |
 | curate | `docs/specs/curate.md` | quality_metrics 计算 + Bombcell 分类 + 阈值过滤 |
 | postprocess | `docs/specs/postprocess.md` | SortingAnalyzer 扩展 + SLAy 自动合并 + 眼动验证 |
 | export | `docs/specs/export.md` | 整合写入 NWB 文件（调用 io/nwb_writer） |

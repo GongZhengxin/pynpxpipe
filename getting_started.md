@@ -282,14 +282,43 @@ Adjust processing parameters (defaults are usually fine):
 Choose which stages to run. The full pipeline order is:
 
 1. **discover** — scan SpikeGLX folder, detect probes
-2. **preprocess** — filter, bad channel removal, CMR, motion correction, save Zarr
-3. **sort** — Kilosort4 spike sorting (or import external results)
-4. **synchronize** — time alignment across IMEC, NIDQ, and BHV2
-5. **curate** — quality metrics and unit classification
-6. **postprocess** — waveform analysis, auto-merge
-7. **export** — assemble final NWB file
+2. **synchronize** — time alignment across IMEC, NIDQ, and BHV2 for each source
+3. **select_segments** — choose task blocks and persist the source/time mapping
+4. **preprocess** — filter each block, remove common bad channels, CMR, optional motion correction, save Zarr
+5. **sort** — one Kilosort4 run per probe (or import compatible external results)
+6. **merge** — optional unit merging
+7. **curate** — quality metrics and unit classification on independent observation segments
+8. **postprocess** — waveform analysis and SLAy scores
+9. **export** — assemble one NWB with real acquisition gaps
 
-For preprocessing only, select **discover** + **preprocess**.
+For preprocessing only, select **discover** + **preprocess**. When task selection
+or multiple sources are enabled, alignment and selection run automatically first.
+
+### Task cropping and multiple recording pairs
+
+In **Pipeline Parameters → 任务时段截取**, new GUI runs enable **只处理任务时段**.
+The defaults merge trials separated by at most 180 seconds of idle time, then
+retain 30 seconds before and after each task block. Idle time is measured from
+the preceding trial's end, so failed trials, trials without stimuli and sparse
+task activity remain included. Blocks are clamped to available samples.
+
+For multiple recordings, expand **多段记录配对**, choose the neural directory and
+its BHV2 file, give the pair a unique name, then click **添加当前神经–行为配对**.
+Add pairs in acquisition order. They must belong to the same animal, day and
+experiment, with unchanged probe placement and configuration. Probe serials,
+sampling rates, channel maps and gains are checked before joint processing.
+
+Set **采集时区 (IANA)** to the acquisition site's timezone, for example
+`Asia/Shanghai`, if SpikeGLX timestamps have no UTC offset. Restarted acquisitions
+use their acquisition timestamps; optional **起始偏移秒** values correct the time
+relative to the first source's imec0 zero. The first offset must be zero.
+Wall-clock offsets do not imply hardware synchronization precision across restarts.
+
+Click **对齐并预览任务时段** in Execute to inspect the selected blocks, original and
+retained durations, reduction and alignment residual before running sorting.
+Source files are read-only. Each probe is jointly sorted with shared unit IDs;
+the exported NWB preserves real time gaps. The 0.1-second join guard is a configurable
+engineering default, requiring validation with your data.
 
 ## 5. Run the Pipeline
 
@@ -311,6 +340,7 @@ uv run pynpxpipe run \
   D:/data/my_session.bhv2 \
   --subject monkeys/MaoDan.yaml \
   --output-dir D:/output/my_session \
+  --experiment visual_task --date 261117 --probe imec0=V4 \
   --pipeline-config config/pipeline.yaml \
   --sorting-config config/sorting.yaml
 ```
@@ -324,8 +354,42 @@ uv run pynpxpipe run \
   D:/data/my_session.bhv2 \
   --subject monkeys/MaoDan.yaml \
   --output-dir D:/output/my_session \
+  --experiment visual_task --date 261117 --probe imec0=V4 \
   --stages discover --stages preprocess
 ```
+
+For paired recordings, copy `config/recordings.example.yaml` and edit the ordered
+source paths and session metadata. Relative paths resolve against that YAML file.
+Enable cropping explicitly in your pipeline YAML (legacy configurations keep it off):
+
+```yaml
+task_windows:
+  enabled: true
+  max_idle_s: 180
+  padding_before_s: 30
+  padding_after_s: 30
+  join_guard_s: 0.1
+  filter_margin_s: 0.1
+  recording_timezone: Asia/Shanghai
+  trial_start_code: null  # infer from BHV markers; set explicitly if required
+```
+
+```powershell
+uv run pynpxpipe run-recordings config/recordings.example.yaml --subject monkeys/MaoDan.yaml --output-dir D:/output/joint --pipeline-config config/pipeline.yaml --preview
+# Repeat without --preview to process the selected data.
+```
+
+Python entry: `SessionManager.from_recordings_yaml(path, subject, output_dir)` or
+`SessionManager.create_from_recordings([...], subject, output_dir, experiment=..., probe_plan=..., date=...)`,
+followed by `PipelineRunner(session, pipeline_config, sorting_config).run()`.
+
+Inspect `03_segments/summary.json` and `03_segments/segments.json` for selection
+and mapping details. Input/configuration changes archive old results under
+`.invalidated/`. External sorting imports require a `segment_signature.json`
+containing `{"signature": "<signature from segments.json>"}` beside each probe's
+sorter output. A selected-block NWB cannot replace the complete original recordings;
+`verify-safe-to-delete` refuses to certify their deletion. The implemented open-source
+building blocks and design references are listed in [the specification](docs/specs/task_segments.md).
 
 Check pipeline status:
 

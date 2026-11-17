@@ -122,6 +122,14 @@ def cli() -> None:
     type=click.Choice(STAGE_ORDER),
     help="Run only specific stages (can be repeated). Default: all stages.",
 )
+@click.option("--experiment", default="", help="Experiment tag for the NWB session identifier.")
+@click.option("--date", "recording_date", default="", help="Recording date in YYMMDD format.")
+@click.option(
+    "--probe",
+    "probe_entries",
+    multiple=True,
+    help="Probe target area, e.g. --probe imec0=V4 (repeatable).",
+)
 def run(
     session_dir: Path,
     bhv_file: Path,
@@ -130,6 +138,9 @@ def run(
     pipeline_config: Path,
     sorting_config: Path,
     stages: tuple[str, ...],
+    experiment: str,
+    recording_date: str,
+    probe_entries: tuple[str, ...],
 ) -> None:
     """Run the pipeline for SESSION_DIR with behavioral file BHV_FILE.
 
@@ -138,11 +149,15 @@ def run(
     """
     try:
         subject_config = load_subject_config(subject)
+        probe_plan = dict(entry.split("=", 1) for entry in probe_entries)
         session = SessionManager.create(
             session_dir=session_dir,
             bhv_file=bhv_file,
             subject=subject_config,
             output_dir=output_dir,
+            experiment=experiment,
+            date=recording_date,
+            probe_plan=probe_plan,
         )
         pipeline_cfg = load_pipeline_config(pipeline_config)
         sorting_cfg = load_sorting_config(sorting_config)
@@ -160,6 +175,43 @@ def run(
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         sys.exit(2)
+
+
+@cli.command("run-recordings")
+@click.argument("recordings_yaml", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--subject", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--output-dir", required=True, type=click.Path(path_type=Path))
+@click.option(
+    "--pipeline-config",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("config/pipeline.yaml"),
+)
+@click.option(
+    "--sorting-config",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("config/sorting.yaml"),
+)
+@click.option("--preview", is_flag=True, help="Only discover, align and select task blocks.")
+def run_recordings(
+    recordings_yaml: Path,
+    subject: Path,
+    output_dir: Path,
+    pipeline_config: Path,
+    sorting_config: Path,
+    preview: bool,
+) -> None:
+    """Jointly process ordered neural/BHV2 pairs declared in RECORDINGS_YAML."""
+    try:
+        session = SessionManager.from_recordings_yaml(
+            recordings_yaml, load_subject_config(subject), output_dir
+        )
+        runner = PipelineRunner(
+            session, load_pipeline_config(pipeline_config), load_sorting_config(sorting_config)
+        )
+        runner.run(stages=["discover", "synchronize", "select_segments"] if preview else None)
+        click.echo(f"{'Selection preview' if preview else 'Pipeline'} complete: {output_dir}")
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command()

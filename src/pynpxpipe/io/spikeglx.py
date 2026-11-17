@@ -163,7 +163,8 @@ class SpikeGLXDiscovery:
 
         return nidq_bin, nidq_meta
 
-    def parse_meta(self, meta_path: Path) -> dict[str, str]:
+    @staticmethod
+    def parse_meta(meta_path: Path) -> dict[str, str]:
         """Parse a SpikeGLX .meta file into a key-value dict.
 
         Meta files are INI-like: ``key=value`` pairs, one per line.
@@ -323,6 +324,12 @@ class SpikeGLXLoader:
         Returns:
             List of sync pulse rising-edge times in seconds.
         """
+        from pynpxpipe.io.streaming import digital_transitions
+
+        if isinstance(recording, si.BaseRecording):
+            return digital_transitions(recording, [sync_bit], sample_rate, rising_only=True)[
+                0
+            ].tolist()
         raw = recording.get_traces()
         # Sync/digital channel is always the last saved channel:
         # - AP with load_sync_channel=True: sync appended as last channel

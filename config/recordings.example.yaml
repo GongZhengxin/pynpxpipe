@@ -1,0 +1,15 @@
+# Same subject/day/experiment, unchanged probe position and configuration.
+# Relative paths resolve against this YAML file.
+experiment: visual_task
+date: "261117"
+probe_plan:
+  imec0: V4
+recordings:
+  - source_id: morning
+    session_dir: ../data/morning_g0
+    bhv_file: ../data/morning.bhv2
+  - source_id: afternoon
+    session_dir: ../data/afternoon_g0
+    bhv_file: ../data/afternoon.bhv2
+    # Optional correction for acquisition restarts, relative to first imec0 zero:
+    # start_offset_s: 7200.0
