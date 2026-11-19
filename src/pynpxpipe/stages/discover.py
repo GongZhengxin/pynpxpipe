@@ -61,6 +61,34 @@ class DiscoverStage(BaseStage):
             DiscoverError: If NIDQ files or BHV2 file are not found, or if
                 no probes are discovered.
         """
+        if self.session.recordings:
+            from pynpxpipe.core.session import SessionManager
+
+            for source in self.session.recordings:
+                child = self.session.source_session(source)
+                DiscoverStage(child, self.progress_callback).run()
+                source.probes = child.probes
+            self.session.probes = self.session.recordings[0].probes
+            from pynpxpipe.io.segment_recordings import validate_sources
+
+            validate_sources(self.session)
+            SessionManager.save(self.session)
+            (self.session.output_dir / "session_info.json").write_text(
+                json.dumps(
+                    {
+                        "probe_ids": [p.probe_id for p in self.session.probes],
+                        "source_ids": [s.source_id for s in self.session.recordings],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self._write_checkpoint(
+                {
+                    "source_ids": [s.source_id for s in self.session.recordings],
+                    "probe_ids": [p.probe_id for p in self.session.probes],
+                }
+            )
+            return
         if self._is_complete():
             self._restore_probes_from_disk()
             self._report_progress("Discover already complete", 1.0)
@@ -107,7 +135,8 @@ class DiscoverStage(BaseStage):
             bhv_path = self.session.bhv_file
             if not bhv_path.exists():
                 raise DiscoverError(f"BHV2 file not found: {bhv_path}")
-            header = bhv_path.read_bytes()[: len(BHV2_MAGIC)]
+            with bhv_path.open("rb") as stream:
+                header = stream.read(len(BHV2_MAGIC))
             if header != BHV2_MAGIC:
                 raise DiscoverError(
                     f"BHV2 file {bhv_path} is not a valid BHV2 file (magic bytes do not match)"

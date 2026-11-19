@@ -1594,6 +1594,14 @@ PIPELINE_FORM_FIELD_TO_WIDGET = {
     # Raw-stream self-heal — operational, tuned in pipeline.yaml not the UI.
     "export.repair_incomplete_streams": None,
     "export.repair_verify": None,
+    "task_windows.enabled": "crop_enabled",
+    "task_windows.max_idle_s": "task_max_idle",
+    "task_windows.padding_before_s": "task_pre",
+    "task_windows.padding_after_s": "task_post",
+    "task_windows.join_guard_s": "task_join_guard",
+    "task_windows.filter_margin_s": "task_filter_margin",
+    "task_windows.recording_timezone": "task_timezone",
+    "task_windows.trial_start_code": "task_start_code",
     "export.derivatives.enabled": "derivatives_enabled_checkbox",
     "export.derivatives.pre_onset_ms": "derivatives_pre_onset_ms_input",
     "export.derivatives.post_onset_ms": "derivatives_post_onset_ms_input",
@@ -1743,6 +1751,7 @@ def test_pipeline_form_default_roundtrip():
     assert state.pipeline_config is not None
     actual = dataclasses.asdict(state.pipeline_config)
     expected = dataclasses.asdict(PipelineConfig())
+    expected["task_windows"]["enabled"] = True  # New GUI jobs enable task selection.
     assert actual == expected, (
         f"PipelineForm default state drift: diff fields: "
         f"{[k for k in expected if expected[k] != actual.get(k)]}"

@@ -125,6 +125,8 @@ class SessionLoader:
         if isinstance(probe_plan, dict):
             self._state.probe_plan = dict(probe_plan)
 
+        self._state.recordings = session_data.get("recordings", [])
+
         # Restore effective pipeline / sorting configs if previously dumped by
         # PipelineRunner. Failure to read is non-fatal — older output dirs
         # may predate the snapshotting feature.
@@ -149,13 +151,27 @@ class SessionLoader:
         of the resume flow.
         """
         import contextlib
+        from dataclasses import replace
 
-        from pynpxpipe.core.config import load_pipeline_config, load_sorting_config
+        from pynpxpipe.core.config import (
+            PipelineConfig,
+            TaskWindowConfig,
+            load_pipeline_config,
+            load_sorting_config,
+        )
 
         pipeline_path = output_dir / "used_pipeline.yaml"
+        pipeline_restored = False
         if pipeline_path.exists():
             with contextlib.suppress(Exception):
                 self._state.pipeline_config = load_pipeline_config(pipeline_path)
+                pipeline_restored = True
+        if not pipeline_restored and isinstance(self._state.pipeline_config, PipelineConfig):
+            # Legacy sessions without a readable snapshot must not inherit the
+            # crop-on default intended only for newly configured GUI runs.
+            self._state.pipeline_config = replace(
+                self._state.pipeline_config, task_windows=TaskWindowConfig()
+            )
 
         sorting_path = output_dir / "used_sorting.yaml"
         if sorting_path.exists():

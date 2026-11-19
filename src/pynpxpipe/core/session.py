@@ -145,6 +145,48 @@ class SessionID:
 
 
 @dataclass
+class RecordingSource:
+    """One explicitly paired acquisition/BHV2 source in chronological order.
+
+    start_offset_s is the source imec0 zero relative to the first source zero.
+    Omit it to derive from acquisition counters/timestamps.
+    """
+
+    source_id: str
+    session_dir: Path
+    bhv_file: Path
+    start_offset_s: float | None = None
+    probes: list[ProbeInfo] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        import math
+
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", self.source_id):
+            raise ValueError("source_id must contain only letters, digits, '_' and '-'")
+        self.session_dir = Path(self.session_dir)
+        self.bhv_file = Path(self.bhv_file)
+        if self.start_offset_s is not None and (
+            not math.isfinite(self.start_offset_s) or self.start_offset_s < 0
+        ):
+            raise ValueError("start_offset_s must be finite and nonnegative")
+
+    def to_dict(self) -> dict:
+        """Serialize paths and discovered probes for session/YAML persistence."""
+        return {
+            "source_id": self.source_id,
+            "session_dir": str(self.session_dir),
+            "bhv_file": str(self.bhv_file),
+            "start_offset_s": self.start_offset_s,
+            "probes": [_probe_to_dict(p) for p in self.probes],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> RecordingSource:
+        """Read an explicitly paired source."""
+        return cls(**{**data, "probes": [_probe_from_dict(p) for p in data.get("probes", [])]})
+
+
+@dataclass
 class Session:
     """Central state object passed through all pipeline stages.
 
@@ -175,6 +217,7 @@ class Session:
     )  # PipelineConfig instance, injected by SessionManager
     probes: list[ProbeInfo] = field(default_factory=list)
     checkpoint: dict = field(default_factory=dict)
+    recordings: list[RecordingSource] = field(default_factory=list)
     log_path: Path = field(init=False)
 
     def __post_init__(self) -> None:
@@ -185,6 +228,36 @@ class Session:
         """Shortcut for session_id.experiment."""
         return self.session_id.experiment
 
+    @property
+    def recording_sources(self) -> list[RecordingSource]:
+        """Normalize legacy single-source sessions without mutating them."""
+        return self.recordings or [
+            RecordingSource("source0", self.session_dir, self.bhv_file, probes=self.probes)
+        ]
+
+    @property
+    def segmented(self) -> bool:
+        """Whether this run requires explicit source/frame time mapping."""
+        return len(self.recordings) > 1 or bool(
+            getattr(getattr(self.config, "task_windows", None), "enabled", False)
+        )
+
+    def source_session(self, source: RecordingSource) -> Session:
+        """Create an isolated discovery/sync context for one paired source."""
+        from dataclasses import replace
+
+        output = self.output_dir / "sources" / source.source_id
+        output.mkdir(parents=True, exist_ok=True)
+        return replace(
+            self,
+            session_dir=source.session_dir,
+            bhv_file=source.bhv_file,
+            output_dir=output,
+            probes=source.probes,
+            recordings=[],
+            checkpoint={},
+        )
+
 
 class SessionManager:
     """Creates, persists, and loads Session objects from disk.
@@ -193,6 +266,71 @@ class SessionManager:
     ``{output_dir}/session.json`` so that a pipeline run can be resumed after
     interruption.
     """
+
+    @staticmethod
+    def from_recordings_yaml(path: Path, subject: SubjectConfig, output_dir: Path) -> Session:
+        """Load ordered pairs and session metadata from a portable YAML manifest.
+
+        Relative input paths are resolved against the YAML directory.
+        Required keys: recordings, experiment, date, probe_plan.
+        """
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        sources = []
+        for raw in data["recordings"]:
+            entry = dict(raw)
+            for key in ("session_dir", "bhv_file"):
+                value = Path(entry[key])
+                entry[key] = value if value.is_absolute() else (path.parent / value).resolve()
+            sources.append(RecordingSource.from_dict(entry))
+        return SessionManager.create_from_recordings(
+            sources,
+            subject,
+            output_dir,
+            experiment=data["experiment"],
+            date=str(data["date"]),
+            probe_plan=data["probe_plan"],
+        )
+
+    @staticmethod
+    def create_from_recordings(
+        recordings: list[RecordingSource],
+        subject: SubjectConfig,
+        output_dir: Path,
+        *,
+        experiment: str,
+        probe_plan: dict[str, str],
+        date: str,
+    ) -> Session:
+        """Create a joint session from ordered, explicitly paired sources.
+
+        Raises:
+            ValueError: For empty, duplicate or mismatched sources.
+            FileNotFoundError: For missing source files/directories.
+        """
+        if not recordings or len({s.source_id for s in recordings}) != len(recordings):
+            raise ValueError("Recordings must be nonempty with unique source_id values")
+        if len({s.session_dir.resolve() for s in recordings}) != len(recordings):
+            raise ValueError("Duplicate neural recording folders are not allowed")
+        if len({s.bhv_file.resolve() for s in recordings}) != len(recordings):
+            raise ValueError("Each neural recording requires its own paired BHV2 file")
+        for source in recordings:
+            if not source.session_dir.is_dir() or not source.bhv_file.is_file():
+                raise FileNotFoundError(f"Missing neural/BHV2 source: {source.source_id}")
+        first = recordings[0]
+        session = SessionManager.create(
+            first.session_dir,
+            first.bhv_file,
+            subject,
+            output_dir,
+            experiment=experiment,
+            probe_plan=probe_plan,
+            date=date,
+        )
+        session.recordings = recordings
+        SessionManager.save(session)
+        return session
 
     @staticmethod
     def from_data_dir(
@@ -370,6 +508,7 @@ class SessionManager:
             probe_plan=dict(data["probe_plan"]),
             probes=probes,
             checkpoint=data["checkpoint"],
+            recordings=[RecordingSource.from_dict(s) for s in data.get("recordings", [])],
         )
 
     @staticmethod
@@ -400,6 +539,7 @@ class SessionManager:
             "probe_plan": dict(session.probe_plan),
             "probes": [_probe_to_dict(p) for p in session.probes],
             "checkpoint": session.checkpoint,
+            "recordings": [s.to_dict() for s in session.recordings],
         }
         (session.output_dir / "session.json").write_text(
             json.dumps(data, indent=2), encoding="utf-8"

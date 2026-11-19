@@ -39,6 +39,7 @@ def compute_probe_rasters(
     behavior_events: pd.DataFrame,
     probe_id: str,
     pre_onset_ms: int = 50,
+    manifest=None,
 ) -> dict:
     """Compute per-unit rasters (spike counts in 1ms bins) for one probe.
 
@@ -102,9 +103,12 @@ def compute_probe_rasters(
     rasters: dict = {}
 
     for unit_id in unit_ids:
-        spike_times = np.asarray(
-            analyzer.sorting.get_unit_spike_train(unit_id, return_times=True),
-            dtype=np.float64,
+        spike_times = (
+            manifest.unit_times(analyzer.sorting, probe_id, unit_id)
+            if manifest is not None
+            else np.asarray(
+                analyzer.sorting.get_unit_spike_train(unit_id, return_times=True), dtype=np.float64
+            )
         )
         raster = np.zeros((n_valid, n_bins), dtype=np.uint8)
 
@@ -202,6 +206,10 @@ class ExportStage(BaseStage):
             ExportError: On Phase 1 write failure or file verification failure.
         """
         if self._is_complete():
+            return
+
+        if self.session.segmented:
+            self._export_segmented()
             return
 
         # Pre-flight: target_area must be populated on every probe (discover's job).
@@ -306,12 +314,18 @@ class ExportStage(BaseStage):
 
             if "planned_event_id" in behavior_events:
                 import hashlib
+
                 if resolved_tsv_path is None or stim_map is None or source_tag.endswith("(multi)"):
                     raise ValueError("Target-event task needs one unambiguous stimulus TSV")
-                for column, path in (("stimulus_table_sha256", resolved_tsv_path),
-                                     ("stimulus_manifest_sha256", resolved_tsv_path.parent / "manifest.tsv")):
+                for column, path in (
+                    ("stimulus_table_sha256", resolved_tsv_path),
+                    ("stimulus_manifest_sha256", resolved_tsv_path.parent / "manifest.tsv"),
+                ):
                     expected = behavior_events[column].dropna().unique()
-                    if len(expected) != 1 or hashlib.sha256(path.read_bytes()).hexdigest() != expected[0]:
+                    if (
+                        len(expected) != 1
+                        or hashlib.sha256(path.read_bytes()).hexdigest() != expected[0]
+                    ):
                         raise ValueError(f"Target-event package hash mismatch: {column}")
                 if not behavior_events["stim_index"].isin(stim_map).all():
                     raise ValueError("Global stimulus identity absent from resolved TSV")
@@ -396,6 +410,72 @@ class ExportStage(BaseStage):
         # ── Phase 3 + completed checkpoint (see _finalize_phase3) ───────────
         self._finalize_phase3(nwb_path_written)
         self._report_progress("Export complete", 1.0)
+
+    def _export_segmented(self) -> None:
+        """Write a combined NWB with segmented acquisition and real time gaps."""
+        from pynpxpipe.core.segments import load_manifest
+        from pynpxpipe.io.segmented_nwb import (
+            add_segment_metadata,
+            add_segmented_eye,
+            append_segmented_raw,
+            ensure_raw_electrodes,
+            resolve_source_stimuli,
+            verify_manifest,
+        )
+
+        path = self._get_output_path()
+        manifest = load_manifest(self.session)
+        try:
+            if self._nwb_phase1_done(path):
+                verify_manifest(path, manifest)
+            else:
+                writer = NWBWriter(self.session, path)
+                writer.create_file()
+                events = pd.read_parquet(
+                    self.session.output_dir / "04_sync" / "behavior_events.parquet"
+                )
+                events = resolve_source_stimuli(self.session, events)
+                for probe in self.session.probes:
+                    analyzer_dir = self.session.output_dir / "06_postprocessed" / probe.probe_id
+                    if (analyzer_dir / "recording_info").exists():
+                        analyzer = si.load(analyzer_dir)
+                        positions, shift = self._raw_geometry_and_shift(probe)
+                        writer.add_probe_data(
+                            probe,
+                            analyzer,
+                            rasters=compute_probe_rasters(
+                                analyzer, events, probe.probe_id, manifest=manifest
+                            ),
+                            raw_channel_positions=positions,
+                            inter_sample_shift=shift,
+                        )
+                        del analyzer
+                    ensure_raw_electrodes(writer, probe)
+                if len(events):
+                    writer.add_trials(events)
+                writer.add_pipeline_metadata(self.session.config)
+                add_segment_metadata(writer, manifest)
+                add_segmented_eye(writer, manifest)
+                writer.write()
+            # Derivatives are independently recoverable after a partial export.
+            self._export_phase2(path, pd.DataFrame())
+            summary = append_segmented_raw(self.session, path, manifest, self.progress_callback)
+            n_units, n_trials = self._nwb_counts(path)
+            self._write_checkpoint(
+                {
+                    "nwb_path": str(path),
+                    "segment_signature": manifest.signature,
+                    "n_units_total": n_units,
+                    "n_trials": n_trials,
+                    "raw_data_scope": "selected_segments",
+                    **summary,
+                }
+            )
+            self._merge_verified_checkpoint("full")
+            self._report_progress("Export complete", 1.0)
+        except Exception as exc:
+            self._write_failed_checkpoint(exc)
+            raise ExportError(str(exc)) from exc
 
     def _nwb_phase1_done(self, nwb_path: Path) -> bool:
         """Return True if a complete NWB skeleton (Phase 1 output) already exists.
@@ -576,7 +656,10 @@ class ExportStage(BaseStage):
 
         if post_onset_raw == "auto":
             try:
-                post_onset_ms = resolve_post_onset_ms(BHV2Parser(self.session.bhv_file))
+                post_onset_ms = max(
+                    resolve_post_onset_ms(BHV2Parser(s.bhv_file))
+                    for s in self.session.recording_sources
+                )
             except Exception as exc:
                 self.logger.warning("resolve_post_onset_ms failed, using 800.0: %s", exc)
                 post_onset_ms = 800.0

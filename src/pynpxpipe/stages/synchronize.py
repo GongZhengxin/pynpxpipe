@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
+import spikeinterface.core as si
 
 from pynpxpipe.core.errors import SyncError
 from pynpxpipe.io.bhv import BHV2Parser
@@ -93,6 +94,19 @@ class SynchronizeStage(BaseStage):
         Raises:
             SyncError: On any alignment or calibration failure.
         """
+        if len(self.session.recordings) > 1:
+            from dataclasses import replace
+
+            for source in self.session.recordings:
+                child = self.session.source_session(source)
+                child.config = replace(
+                    self.session.config,
+                    task_windows=replace(self.session.config.task_windows, enabled=True),
+                )
+                SynchronizeStage(child, self.progress_callback).run()
+            self._write_checkpoint({"source_ids": [s.source_id for s in self.session.recordings]})
+            return
+
         # Step 1: skip if already done
         if self._is_complete():
             return
@@ -137,11 +151,17 @@ class SynchronizeStage(BaseStage):
 
             # Step 7: Level 3 — Photodiode calibration
             pd_idx = sync.photodiode_channel_index
-            raw_traces = nidq_recording.get_traces()
-            if raw_traces.ndim > 1:
-                pd_signal = raw_traces[:, pd_idx].astype(np.int16)
+            from pynpxpipe.io.streaming import ChannelSignal
+
+            if isinstance(nidq_recording, si.BaseRecording):
+                pd_signal = ChannelSignal(nidq_recording, pd_idx)
             else:
-                pd_signal = raw_traces.astype(np.int16)
+                raw_traces = nidq_recording.get_traces()
+                pd_signal = (
+                    raw_traces[:, pd_idx].astype(np.int16)
+                    if raw_traces.ndim > 1
+                    else raw_traces.astype(np.int16)
+                )
 
             stim_onsets_digital = trial_alignment.trial_events_df["stim_onset_nidq_s"].to_numpy()
             calibrated: CalibratedOnsets = calibrate_photodiode(
@@ -178,6 +198,24 @@ class SynchronizeStage(BaseStage):
             # Step 10: Write sync_tables.json
             sync_dir = self.session.output_dir / "04_sync"
             sync_dir.mkdir(parents=True, exist_ok=True)
+
+            if self.session.segmented:
+                from pynpxpipe.io.sync.trial_intervals import align_trial_intervals
+
+                raw_start_code = self.session.config.task_windows.trial_start_code
+                if raw_start_code is None:
+                    raw_start_code = 1 << sync.event_bits[trial_alignment.detected_trial_start_bit]
+                intervals = align_trial_intervals(
+                    BHV2Parser(self.session.bhv_file).parse(),
+                    nidq_event_times,
+                    nidq_event_codes,
+                    trial_alignment.detected_trial_start_bit,
+                    raw_start_code,
+                )
+                intervals.to_parquet(sync_dir / "trial_intervals.parquet", index=False)
+                np.savez_compressed(
+                    sync_dir / "sync_edges.npz", nidq=nidq_sync_times, **ap_sync_times_map
+                )
 
             sync_tables = {
                 "probes": {
@@ -391,6 +429,10 @@ class SynchronizeStage(BaseStage):
         Returns:
             (event_times_s, event_codes) as float64 and int32 numpy arrays.
         """
+        from pynpxpipe.io.streaming import digital_transitions
+
+        if isinstance(nidq_recording, si.BaseRecording):
+            return digital_transitions(nidq_recording, event_bits, sample_rate)
         raw = nidq_recording.get_traces()
         # Digital word is the last saved channel (after analog channels)
         digital = raw[:, -1].astype(np.uint16) if raw.ndim > 1 else raw.astype(np.uint16)

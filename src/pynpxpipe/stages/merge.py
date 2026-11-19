@@ -101,6 +101,10 @@ class MergeStage(BaseStage):
         if self._is_complete(probe_id=probe_id):
             return
 
+        if self.session.segmented:
+            self._merge_segments(probe_id)
+            return
+
         sorted_path = self.session.output_dir / "02_sorted" / probe_id
 
         try:
@@ -169,3 +173,32 @@ class MergeStage(BaseStage):
 
         del analyzer, merged_analyzer
         gc.collect()
+
+    def _merge_segments(self, probe_id: str) -> None:
+        """Compute merges on independent analysis segments, preserving unit IDs."""
+        from spikeinterface.curation import compute_merge_unit_groups
+
+        from pynpxpipe.core.segments import load_manifest
+        from pynpxpipe.io.segment_recordings import analysis_recording
+
+        sorting = si.load(self.session.output_dir / "02_sorted" / probe_id)
+        recording = si.load(self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr")
+        recording = analysis_recording(recording, load_manifest(self.session), probe_id)
+        analyzer = si.create_sorting_analyzer(sorting, recording, format="memory", sparse=True)
+        groups = compute_merge_unit_groups(analyzer, force_copy=False)
+        if groups:
+            merged, new_ids = analyzer.merge_units(groups, return_new_unit_ids=True)
+        else:
+            merged, new_ids = analyzer, []
+        path = self.session.output_dir / "03_merged" / probe_id
+        merged.sorting.save(folder=path, overwrite=True)
+        log = {
+            "merges": [
+                {"merged_ids": [int(u) for u in group], "new_id": int(uid)}
+                for group, uid in zip(groups, new_ids, strict=True)
+            ],
+            "n_units_before": len(sorting.unit_ids),
+            "n_units_after": len(merged.sorting.unit_ids),
+        }
+        (path / "merge_log.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
+        self._write_checkpoint(log, probe_id)

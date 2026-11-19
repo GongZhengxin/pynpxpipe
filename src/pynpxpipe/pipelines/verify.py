@@ -33,6 +33,7 @@ EXIT_MISSING_NWB = 3
 EXIT_NWB_CORRUPT = 4
 EXIT_MISSING_CHECKPOINT = 5
 EXIT_NO_RAW_FILES_FOUND = 6
+EXIT_SELECTED_RAW_ONLY = 7
 
 
 @dataclass
@@ -83,6 +84,13 @@ def verify_safe_to_delete(output_dir: Path) -> VerifySafeResult:
             reason=f"export checkpoint unreadable ({cp_path}): {exc}",
         )
 
+    if cp_data.get("raw_data_scope") == "selected_segments" or cp_data.get("segment_signature"):
+        return VerifySafeResult(
+            safe=False,
+            exit_code=EXIT_SELECTED_RAW_ONLY,
+            reason="NWB contains selected raw blocks only; the original recordings are not redundant",
+        )
+
     verified_at = cp_data.get("raw_data_verified_at")
     if not verified_at:
         return VerifySafeResult(
@@ -124,7 +132,14 @@ def verify_safe_to_delete(output_dir: Path) -> VerifySafeResult:
         from pynwb import NWBHDF5IO
 
         with NWBHDF5IO(str(nwb_path), "r") as io:
-            io.read()
+            nf = io.read()
+            if "segment_manifest" in nf.scratch:
+                return VerifySafeResult(
+                    safe=False,
+                    exit_code=EXIT_SELECTED_RAW_ONLY,
+                    nwb_path=nwb_path,
+                    reason="Segmented NWB is not a complete backup of the original recordings",
+                )
     except Exception as exc:
         return VerifySafeResult(
             safe=False,

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 STAGE_ORDER: list[str] = [
     "discover",
+    "synchronize",
+    "select_segments",
     "preprocess",
     "sort",
     "merge",
-    "synchronize",
     "curate",
     "postprocess",
     "export",

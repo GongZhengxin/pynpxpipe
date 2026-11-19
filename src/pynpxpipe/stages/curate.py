@@ -150,11 +150,20 @@ class CurateStage(BaseStage):
             return (0, 0)
 
         sorted_path = self.session.output_dir / "02_sorted" / probe_id
+        if self.session.segmented and self.session.config.merge.enabled:
+            sorted_path = self.session.output_dir / "03_merged" / probe_id
         recording_path = self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
 
         try:
             sorting = si.load(sorted_path)
             recording = si.load(recording_path)
+            if self.session.segmented:
+                from pynpxpipe.core.segments import load_manifest
+                from pynpxpipe.io.segment_recordings import analysis_recording
+
+                recording = analysis_recording(recording, load_manifest(self.session), probe_id)
+                if hasattr(sorting, "sorting"):
+                    sorting = sorting.sorting
         except Exception as exc:
             raise CurateError(f"Failed to load data for {probe_id}: {exc}") from exc
 
@@ -177,7 +186,9 @@ class CurateStage(BaseStage):
             analyzer.compute("spike_locations")
             # template_metrics powers bombcell's non-somatic waveform-shape
             # classification; keep adjacent to quality_metrics for clarity.
-            analyzer.compute("template_metrics")
+            # Bombcell's noise thresholds include exp_decay, a multi-channel
+            # metric omitted by SI's default template_metrics configuration.
+            analyzer.compute("template_metrics", include_multi_channel_metrics=True)
             metric_names = [
                 "snr",
                 "amplitude_cutoff",
@@ -324,7 +335,7 @@ class CurateStage(BaseStage):
         import spikeinterface.curation as sc
 
         if not analyzer.has_extension("template_metrics"):
-            analyzer.compute("template_metrics")
+            analyzer.compute("template_metrics", include_multi_channel_metrics=True)
 
         bombcell_cfg = self.session.config.curation.bombcell
         try:

@@ -57,6 +57,9 @@ class TrialData:
     user_vars: dict = field(default_factory=dict)
     variable_changes: dict = field(default_factory=dict)
     task_object: dict = field(default_factory=dict)
+    start_ms: float = 0.0
+    end_ms: float | None = None
+    trial_error: int | None = None
 
 
 class BHV2Parser:
@@ -324,6 +327,17 @@ class BHV2Parser:
         if not isinstance(task_object, dict):
             task_object = {}
 
+        extent = [float(t) for t, _ in events if np.isfinite(t)]
+        analog = raw.get("AnalogData", {})
+        if isinstance(analog, dict):
+            interval = float(analog.get("SampleInterval", np.nan))
+            if np.isfinite(interval) and interval > 0:
+                extent.extend(
+                    len(a) * interval
+                    for key, a in analog.items()
+                    if key != "SampleInterval" and isinstance(a, np.ndarray) and a.ndim > 0
+                )
+
         return TrialData(
             trial_id=trial_id,
             condition_id=condition_id,
@@ -331,6 +345,9 @@ class BHV2Parser:
             user_vars=user_vars,
             variable_changes=variable_changes,
             task_object=task_object,
+            start_ms=min([0.0] + [t for t, _ in events]),
+            end_ms=max(extent) if extent else None,
+            trial_error=int(raw["TrialError"]) if "TrialError" in raw else None,
         )
 
 

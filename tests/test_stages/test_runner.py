@@ -130,6 +130,7 @@ _ALL_STAGES = [
     "pynpxpipe.stages.curate.CurateStage",
     "pynpxpipe.stages.postprocess.PostprocessStage",
     "pynpxpipe.stages.export.ExportStage",
+    "pynpxpipe.stages.select_segments.SelectSegmentsStage",
 ]
 
 
@@ -147,7 +148,7 @@ class TestBasicExecution:
         mocks = {}
         patches = []
         for name in _ALL_STAGES:
-            stage_name = name.split(".")[-1].replace("Stage", "").lower()
+            stage_name = name.split(".")[-2]
             m = MagicMock()
             m.return_value.run.side_effect = lambda sn=stage_name: call_order.append(sn)
             mocks[stage_name] = m
@@ -162,6 +163,7 @@ class TestBasicExecution:
             patches[5],
             patches[6],
             patches[7],
+            patches[8],
         ):
             runner.run()
 

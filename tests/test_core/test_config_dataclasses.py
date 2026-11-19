@@ -386,11 +386,11 @@ def test_export_config_repair_defaults():
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_config_has_exactly_8_fields():
+def test_pipeline_config_has_exactly_9_fields():
     import dataclasses
 
     fields = dataclasses.fields(PipelineConfig)
-    assert len(fields) == 8
+    assert len(fields) == 9
 
 
 def test_sync_config_has_exactly_18_fields():

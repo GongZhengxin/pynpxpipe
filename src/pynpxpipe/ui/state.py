@@ -21,6 +21,7 @@ class AppState(param.Parameterized):
     subject_yaml = param.Path(
         default=None, check_exists=False, doc="Subject YAML file (optional pre-fill)"
     )
+    recordings = param.List(default=[], doc="Ordered explicit neural/BHV2 source pairs")
 
     # ── Config objects (populated by forms) ──
     pipeline_config = param.Parameter(default=None, doc="PipelineConfig dataclass instance")

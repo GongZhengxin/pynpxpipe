@@ -120,6 +120,10 @@ class PipelineRunner:
 
         # Inject resolved config into session for stages to read
         session.config = pipeline_config
+        from pynpxpipe.core.run_signature import prepare_run
+
+        prepare_run(session, pipeline_config, sorting_config)
+        self._checkpoint = CheckpointManager(session.output_dir)
 
         _log = logging.getLogger(__name__)
         _log.info(
@@ -158,6 +162,10 @@ class PipelineRunner:
             to_run = [s for s in STAGE_ORDER if s in stages]
         else:
             to_run = list(STAGE_ORDER)
+
+        if self.session.segmented and any(s in to_run for s in STAGE_ORDER[3:]):
+            required = {"discover", "synchronize", "select_segments"}
+            to_run = [s for s in STAGE_ORDER if s in required or s in to_run]
 
         for stage_name in to_run:
             if stage_name == "preprocess":
@@ -282,6 +290,14 @@ class PipelineRunner:
 
     def _max_recording_duration_s(self) -> float | None:
         """Longest probe duration (s), from ``fileTimeSecs`` in each ap.meta."""
+        if self.session.segmented:
+            from pynpxpipe.core.segments import load_manifest
+
+            manifest = load_manifest(self.session)
+            return max(
+                sum(s.length / s.sample_rate for s in manifest.for_probe(p.probe_id))
+                for p in self.session.probes
+            )
         durations: list[float] = []
         for probe in self.session.probes or []:
             meta = getattr(probe, "ap_meta", None)
@@ -318,6 +334,7 @@ class PipelineRunner:
         from pynpxpipe.stages.merge import MergeStage
         from pynpxpipe.stages.postprocess import PostprocessStage
         from pynpxpipe.stages.preprocess import PreprocessStage
+        from pynpxpipe.stages.select_segments import SelectSegmentsStage
         from pynpxpipe.stages.sort import SortStage
         from pynpxpipe.stages.synchronize import SynchronizeStage
 
@@ -333,6 +350,8 @@ class PipelineRunner:
             return MergeStage(s, cb)
         if stage_name == "synchronize":
             return SynchronizeStage(s, cb)
+        if stage_name == "select_segments":
+            return SelectSegmentsStage(s, cb)
         if stage_name == "curate":
             return CurateStage(s, cb)
         if stage_name == "postprocess":

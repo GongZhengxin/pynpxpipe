@@ -172,6 +172,13 @@ class PostprocessStage(BaseStage):
         preprocessed_dir = self.session.output_dir / "01_preprocessed" / f"{probe_id}.zarr"
         sorting = si.load(curated_dir)
         recording = si.load(preprocessed_dir)
+        from pynpxpipe.core.segments import load_manifest
+
+        manifest = load_manifest(self.session)
+        if manifest is not None:
+            from pynpxpipe.io.segment_recordings import analysis_recording
+
+            recording = analysis_recording(recording, manifest, probe_id)
 
         # Skip if no units survived curation
         n_units = len(sorting.get_unit_ids())
@@ -287,8 +294,11 @@ class PostprocessStage(BaseStage):
             # slay_scores.json, NWB units column "slay_score", 10+ tests.
             unit_scores = {}
             for uid in unit_ids:
-                spike_samples = analyzer.sorting.get_unit_spike_train(uid, segment_index=0)
-                spike_times_s = np.asarray(spike_samples, dtype=float) / fs
+                if manifest is not None:
+                    spike_times_s = manifest.unit_times(analyzer.sorting, probe_id, uid)
+                else:
+                    spike_samples = analyzer.sorting.get_unit_spike_train(uid, segment_index=0)
+                    spike_times_s = np.asarray(spike_samples, dtype=float) / fs
                 slay_val = self._compute_slay(
                     spike_times_s, stim_onset_times, slay_pre_s, slay_post_s
                 )
@@ -466,6 +476,18 @@ class PostprocessStage(BaseStage):
         within fixation_window degrees.
         """
         eye_cfg = self.session.config.postprocess.eye_validation
+        if "source_id" in behavior_events_df and len(self.session.recordings) > 1:
+            results = []
+            for source in self.session.recordings:
+                group = behavior_events_df[
+                    behavior_events_df.source_id == source.source_id
+                ].reset_index(drop=True)
+                results.append(
+                    PostprocessStage(self.session.source_session(source))._run_eye_validation(group)
+                )
+            result = pd.concat(results, ignore_index=True)
+            result.to_parquet(self.session.output_dir / "04_sync" / "behavior_events.parquet")
+            return result
         parser = BHV2Parser(self.session.bhv_file)
         eye_data = parser.get_analog_data("Eye")
         sample_interval_ms = parser.get_sample_interval()
@@ -502,10 +524,18 @@ class PostprocessStage(BaseStage):
                 dt = intervals[tid]
                 first, last = int(np.ceil(on / dt)), int(np.ceil(off / dt))
                 data = np.asarray(eye_data[tid])
-                if data.ndim != 2 or data.shape[1] < 2 or first < 0 or last > len(data) or first >= last:
+                if (
+                    data.ndim != 2
+                    or data.shape[1] < 2
+                    or first < 0
+                    or last > len(data)
+                    or first >= last
+                ):
                     continue
                 xy = data[first:last, :2]
-                valid = np.isfinite(xy).all() and np.all(np.sum(xy ** 2, axis=1) <= float(row["fixation_window"]) ** 2)
+                valid = np.isfinite(xy).all() and np.all(
+                    np.sum(xy**2, axis=1) <= float(row["fixation_window"]) ** 2
+                )
                 trial_valid.loc[idx] = float(valid)
                 reasons.loc[idx] = "success" if valid else "fixation_failure"
                 continue
