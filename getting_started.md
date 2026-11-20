@@ -359,20 +359,39 @@ Source files are read-only. Each probe is jointly sorted with shared unit IDs;
 the exported NWB preserves real time gaps. The 0.1-second join guard is a configurable
 engineering default, requiring validation with your data.
 
+预览运行期间，**Run** 和预览按钮变灰是正常的，避免重复启动；预览只运行
+discover、synchronize、select_segments，不运行 sorting。同步扫描长记录时，
+阶段日志之间可能有一段等待时间。出现 **Level 2 complete** / **Level 3 complete**
+表示这些步骤已完成；出现 **stage_failed** 则本次任务已经失败，继续等待不会恢复。
+界面应显示 **Status: failed** 并恢复按钮。
+
+**BHV 试次起始码（留空自动推导）** 通常保持空白。程序从所有 BHV2 trial 的
+首事件确定共同起始码，再通过 `sync.event_bits` 匹配 NIDQ 中同一事件。
+独立 TTL 输出线的值不等于 BHV 事件码。例如本项目这批记录中，试次 TTL 的物理值
+是 `2`，BHV 起始事件是 `9`，按默认事件位配置解码后对应 NIDQ 值 `4`。
+修复后的日志会打印 `Full-trial anchors: BHV code=9 -> decoded NIDQ code=4`，
+`trial_intervals.parquet` 保存两端的码值和锚点时间。
+
+如果旧版本报 `missing/ambiguous full-trial timing or start marker 2`，请先按下面的
+步骤更新并重启 UI，把起始码留空，再点击 **对齐并预览任务时段**。
+旧实现仅改填 `9` 仍会错误地配到独立 TTL 上，因此必须更新代码。
+本次 synchronize 失败的输出目录可以继续使用。更新后程序会自动将旧算法的派生
+结果归档到 `.invalidated/` 并重新计算对齐，避免复用错误时间映射；原始数据不变。
+
 ### 在另一台电脑通过 GitHub 更新
 
 在执行 sorting 的电脑上，先关闭旧 Web UI，在现有 Git checkout 中运行：
 
 ```powershell
 git fetch origin
-git switch codex/task-segments-joint-recordings
-git pull --ff-only origin codex/task-segments-joint-recordings
+git switch main
+git pull --ff-only origin main
 uv run --no-sync pynpxpipe-ui
 ```
 
 上述命令假定 `origin` 指向 `GongZhengxin/pynpxpipe`。
-修复位于该分支，尚未合并到 `main`；只更新 `main` 不会取得修复。
-新建本地分支时，`git switch` 会从唯一同名远端分支建立跟踪。
+任务截取、多段联合、探针元数据兼容和 trial 起始事件配对修复统一从 `main` 更新。
+若此前使用 `codex/task-segments-joint-recordings`，按上述命令切换到 `main` 即可。
 重新启动 UI 后应能看到顶部“单段记录 / 多段联合”切换。
 路径填写这台处理电脑实际可访问的路径；盘符可能与开发电脑不同。
 
