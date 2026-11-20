@@ -9,10 +9,16 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from functools import partial
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import panel as pn
 
 from pynpxpipe.ui.state import AppState, ProgressBridge
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class RunPanel:
@@ -22,6 +28,8 @@ class RunPanel:
         state: Shared AppState instance.
         pipeline_fn: Callable(state, bridge) executed in a background thread.
             If None, defaults to a no-op (useful for layout-only testing).
+        preview_fn: Optional alignment and task selection callable.
+        bridge: Shares the active browser document with the log handlers.
     """
 
     def __init__(
@@ -29,12 +37,12 @@ class RunPanel:
         state: AppState,
         pipeline_fn: Callable[[AppState, ProgressBridge], None] | None = None,
         preview_fn: Callable[[AppState, ProgressBridge], None] | None = None,
+        bridge: ProgressBridge | None = None,
     ) -> None:
         self._state = state
         self._pipeline_fn = pipeline_fn or (lambda st, br: None)
         self._preview_fn = preview_fn
-        self._preview_mode = False
-        self._bridge = ProgressBridge(state)
+        self._bridge = bridge or ProgressBridge(state)
         self._thread: threading.Thread | None = None
         self._interrupt = threading.Event()
 
@@ -80,11 +88,13 @@ class RunPanel:
             return "All probe target areas must be non-empty."
         return None
 
-    def _on_run_click(self, event) -> None:
+    def _on_run_click(self, event, *, preview: bool = False) -> None:
         """Start pipeline in background thread (ignored if already running)."""
         if self._state.run_status == "running":
             return
 
+        self.preview_result.object = ""
+        self.preview_table.visible = False
         error = self._validate_before_run()
         if error:
             self.validation_alert.object = error
@@ -101,73 +111,83 @@ class RunPanel:
         self._state.safe_to_exit = False
         self._interrupt.clear()
 
-        self._thread = threading.Thread(target=self._run_wrapper, daemon=True)
-        self._thread.start()
+        self._bridge.bind_document(pn.state.curdoc)
+        self._thread = threading.Thread(target=self._run_wrapper, args=(preview,), daemon=True)
+        try:
+            self._thread.start()
+        except RuntimeError as exc:
+            self._finish_run(preview, None, str(exc))
 
     def _on_preview_click(self, event) -> None:
-        if self._state.run_status == "running":
-            return
-        self._preview_mode = True
-        self._on_run_click(event)
-        if self.validation_alert.visible:
-            self._preview_mode = False
+        if self._preview_fn is not None:
+            self._on_run_click(event, preview=True)
 
     def _on_stop_click(self, event) -> None:
         """Set interrupt flag to signal the pipeline to stop."""
         self._interrupt.set()
 
-    def _run_wrapper(self) -> None:
-        """Execute pipeline_fn and update state on completion or failure."""
+    def _run_wrapper(self, preview: bool) -> None:
+        """Perform work and read preview artifacts off the UI thread."""
+        result = None
+        error = None
         try:
-            if self._preview_mode and self._preview_fn:
+            if preview and self._preview_fn:
+                output_dir = Path(self._state.output_dir)
                 self._preview_fn(self._state, self._bridge)
-                self._load_preview()
+                result = self._read_preview(output_dir)
             else:
                 self._pipeline_fn(self._state, self._bridge)
-            if not self._interrupt.is_set():
-                self._state.run_status = "completed"
-                # Phase 3 (raw export + bit-exact verify) blocks inside
-                # ExportStage with wait_for_raw=True, so when we land here
-                # the NWB is fully written and verified: window-close safe.
-                self._state.safe_to_exit = not self._preview_mode
-            else:
-                self._state.run_status = "failed"
-                self._state.error_message = "Interrupted by user"
+            if self._interrupt.is_set():
+                error = "Interrupted by user"
         except Exception as exc:  # noqa: BLE001
-            self._state.error_message = str(exc)
-            self._state.run_status = "failed"
-        finally:
-            self._preview_mode = False
+            error = str(exc) or type(exc).__name__
+        self._bridge.dispatch(partial(self._finish_run, preview, result, error))
 
-    def _load_preview(self) -> None:
+    def _finish_run(
+        self, preview: bool, result: tuple[str, pd.DataFrame | None] | None, error: str | None
+    ) -> None:
+        self._bridge.release_document()
+        if error is not None:
+            self._state.error_message = error
+            stage = self._state.current_stage
+            if self._state.stage_statuses.get(stage) == "running":
+                self._state.stage_statuses = {**self._state.stage_statuses, stage: "failed"}
+            self._state.run_status = "failed"
+            return
+        if result is not None:
+            text, table = result
+            self.preview_result.object = text
+            self.preview_table.object = table
+            self.preview_table.visible = table is not None
+        self._state.safe_to_exit = not preview
+        self._state.run_status = "completed"
+
+    @staticmethod
+    def _read_preview(output_dir: Path) -> tuple[str, pd.DataFrame | None]:
         import json
-        from pathlib import Path
 
         import pandas as pd
 
         from pynpxpipe.core.segments import SegmentManifest
 
-        root = Path(self._state.output_dir) / "03_segments"
+        root = output_dir / "03_segments"
         if not (root / "summary.json").exists():
-            self.preview_result.object = "未启用截取：将处理完整记录。"
-            return
+            return "未启用截取：将处理完整记录。", None
         info = json.loads((root / "summary.json").read_text(encoding="utf-8"))
         reduction = 100 * (1 - info["retained_duration_s"] / info["original_duration_s"])
-        self.preview_result.object = (
+        text = (
             f"{info['n_sources']} 段记录，{info['n_trials']} 个试次，{info['n_blocks']} 个任务块。"
             f"原始 {info['original_duration_s']:.1f} s → 保留 {info['retained_duration_s']:.1f} s，减少 {reduction:.1f}%。"
             f"最大同步残差 {info['max_sync_residual_ms']:.3f} ms。"
         )
         if info.get("joint_sorting_compatible") is False:
-            self.preview_result.object += (
+            text += (
                 "\n\n**对齐预览已完成，联合 sorting 尚不能执行：** " + info["joint_sorting_error"]
             )
         elif info.get("n_sources", 1) > 1:
-            self.preview_result.object += (
-                "\n\n探针元数据兼容检查通过；联合预处理时还会核对实际通道配置。"
-            )
+            text += "\n\n探针元数据兼容检查通过；联合预处理时还会核对实际通道配置。"
         manifest = SegmentManifest.load(root / "segments.json")
-        self.preview_table.object = pd.DataFrame(
+        table = pd.DataFrame(
             [
                 {
                     "source": s.source_id,
@@ -178,7 +198,7 @@ class RunPanel:
                 for s in manifest.for_probe("imec0")
             ]
         )
-        self.preview_table.visible = True
+        return text, table
 
     def _on_status_change(self, event) -> None:
         """Update button states and status text when run_status changes."""

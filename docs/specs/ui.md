@@ -125,27 +125,10 @@ class AppState(param.Parameterized):
 
 ### 3.2 state.py — ProgressBridge
 
-将 `PipelineRunner.progress_callback` 桥接到 `AppState` 的 param 属性，使 Panel widget 自动响应更新。
-
-```python
-class ProgressBridge:
-    """线程安全的 progress_callback → param 属性桥接。"""
-
-    def __init__(self, state: AppState):
-        self._state = state
-
-    def callback(self, message: str, fraction: float) -> None:
-        """传递给 PipelineRunner 的 progress_callback。
-
-        在后台线程中被调用，通过 pn.state.execute 安全更新 UI。
-        """
-        import panel as pn
-        pn.state.execute(lambda: self._update(message, fraction))
-
-    def _update(self, message: str, fraction: float) -> None:
-        self._state.current_stage = message
-        self._state.stage_progress = fraction
-```
+`PipelineRunner.progress_callback` 将阶段名称、消息和完成比例传给桥接器。
+用户点击执行时，桥接器绑定浏览器的 Bokeh Document，保持会话直到最终状态更新。
+后台线程将更新交给 `Document.add_next_tick_callback`，组件在文档锁内更新
+`AppState.current_stage`、`stage_progress` 和 `stage_statuses`。
 
 ### 3.3 session_form.py — Session 配置面板
 
@@ -637,14 +620,15 @@ UI 主线程 (Panel/Tornado)
                         ├── PipelineRunner.run() (可能跑数小时)
                         │     └── stage.run() 内部调用 progress_callback
                         │           └── ProgressBridge.callback(msg, frac)
-                        │                 └── pn.state.execute(lambda: state.update(...))
+                        │                 └── doc.add_next_tick_callback(...)
                         │                       └── UI 自动刷新（param watch 机制）
                         │
                         └── 完成/异常 → 更新 state.run_status
 ```
 
 关键点：
-- `progress_callback` 在后台线程中调用，必须通过 `pn.state.execute()` 将 param 更新调度回 UI 线程
+- 点击 Run 或预览时保存当前 Document，进度、日志、预览表和结束状态通过该 Document 的 next-tick 回调更新。失败时显示原因并恢复按钮，重试时清空上次预览。
+- Web UI 在启动后台任务前选用 Matplotlib 的 Agg 后端写诊断 PNG。绘图依赖仍为可选。
 - `AppState` 上的 `param.watch()` 自动触发 widget 刷新，无需手动管理
 
 ---

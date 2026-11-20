@@ -6,9 +6,15 @@ ProgressBridge: thread-safe bridge from PipelineRunner.progress_callback to AppS
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import param
+
+if TYPE_CHECKING:
+    from bokeh.document import Document
+    from bokeh.server.session import ServerSession
 
 
 class AppState(param.Parameterized):
@@ -108,16 +114,39 @@ class ProgressBridge:
 
     def __init__(self, state: AppState) -> None:
         self._state = state
+        self._document: Document | None = None
+        self._session: ServerSession | None = None
+
+    def bind_document(self, document: Document | None) -> None:
+        """Keep the initiating document alive until the final update, even across a reload."""
+        self._document = document
+        context = document.session_context if document is not None else None
+        self._session = getattr(context, "session", None)
+        if self._session is not None:
+            self._session.block_expiration()
+
+    def release_document(self) -> None:
+        """Release the active run's document inside its completion callback."""
+        if self._session is not None:
+            self._session.unblock_expiration()
+            self._session = None
+        self._document = None
+
+    def dispatch(self, fn: Callable[[], None]) -> None:
+        """Schedule an update on the browser document bound by the button click."""
+        if self._document is not None:
+            self._document.add_next_tick_callback(fn)
+        else:
+            import panel as pn
+
+            pn.state.execute(fn)
 
     def callback(self, message: str, fraction: float) -> None:
         """Pass to PipelineRunner as progress_callback.
 
-        Called from a background thread; schedules the update on the UI thread
-        via pn.state.execute so param watches fire correctly.
+        Called from a background thread. Param watches run on the UI document.
         """
-        import panel as pn
-
-        pn.state.execute(lambda: self._update(message, fraction))
+        self.dispatch(lambda: self._update(message, fraction))
 
     def _update(self, message: str, fraction: float) -> None:
         # message format: "stage_name:Human readable text"

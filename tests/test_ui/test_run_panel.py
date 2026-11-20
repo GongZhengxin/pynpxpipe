@@ -78,6 +78,59 @@ class TestProgressBridgeStageStatuses:
 class TestRunPanel:
     """RunPanel component: Run/Stop buttons, threading, state transitions."""
 
+    @pytest.mark.parametrize("fail", [True, False])
+    def test_preview_delivers_status_on_clicking_document(self, tmp_path, monkeypatch, fail):
+        from unittest.mock import Mock, PropertyMock
+
+        from bokeh.document import Document
+        from panel.io.state import set_curdoc
+
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        callbacks = []
+        doc = Document()
+        session = Mock()
+        monkeypatch.setattr(
+            type(doc), "session_context", PropertyMock(return_value=Mock(session=session))
+        )
+        monkeypatch.setattr(doc, "add_next_tick_callback", callbacks.append)
+        ui_thread = threading.get_ident()
+
+        def preview(st, bridge):
+            assert threading.get_ident() != ui_thread
+            bridge.callback("select_segments:Checking timestamps", 0.0)
+            if fail:
+                raise ValueError("missing acquisition timezone")
+
+        rp = RunPanel(state, preview_fn=preview)
+        rp.preview_result.object = "old result"
+        rp.preview_table.visible = True
+        with set_curdoc(doc):
+            rp._on_preview_click(None)
+        rp._thread.join(timeout=5)
+        assert not rp._thread.is_alive()
+        assert state.run_status == "running"
+        session.block_expiration.assert_called_once()
+        session.unblock_expiration.assert_not_called()
+        assert state.current_stage == ""
+        assert rp.preview_result.object == ""
+        assert not rp.preview_table.visible
+        assert len(callbacks) >= 2
+        for callback in callbacks:
+            callback()
+        session.unblock_expiration.assert_called_once()
+        assert state.current_stage == "select_segments"
+        assert not rp.run_btn.disabled and not rp.preview_btn.disabled
+        assert not state.safe_to_exit
+        if fail:
+            assert state.run_status == "failed"
+            assert "missing acquisition timezone" in rp.status_text.object
+            assert state.stage_statuses["select_segments"] == "failed"
+        else:
+            assert state.run_status == "completed"
+            assert "完整记录" in rp.preview_result.object
+
     def test_run_panel_is_viewable(self):
         """RunPanel.panel() returns a Panel Viewable."""
         from pynpxpipe.ui.components.run_panel import RunPanel

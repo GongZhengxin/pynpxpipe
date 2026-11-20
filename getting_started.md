@@ -365,6 +365,18 @@ discover、synchronize、select_segments，不运行 sorting。同步扫描长�
 表示这些步骤已完成；出现 **stage_failed** 则本次任务已经失败，继续等待不会恢复。
 界面应显示 **Status: failed** 并恢复按钮。
 
+如果终端在 **Synchronize complete** 之后出现 `Acquisition timestamp has no timezone`，
+同步已经完成，预览停在时段选择。SpikeGLX 的 `fileCreateTime` 有时只记录当地日期和钟点，
+两次重启的记录需要用采集地点的时区放在同一条时间轴上。
+在 **Configure → Pipeline Parameters → 任务时段截取 → 采集时区 (IANA)** 输入实际时区。
+中国采集填 `Asia/Shanghai`，然后回到 **Execute** 再点 **对齐并预览任务时段**。
+字段里灰色的示例文字是输入提示。新版会在同步开始前检查每段记录，并显示缺少时区的文件。
+
+旧版 Windows UI 如出现 `Tcl_AsyncDelete` 且网页停止响应，按下节更新并重启服务。
+在 **Review → Resume Session** 选择上次的 **Output Directory**，点 **Load Session**，
+再填写采集时区。修改时区会触发运行签名更新，已有派生结果会归档到输出目录的
+`.invalidated/`，再次预览会重新对齐。新版使用 Agg 在后台写同步诊断 PNG。
+
 **BHV 试次起始码（留空自动推导）** 通常保持空白。程序从所有 BHV2 trial 的
 首事件确定共同起始码，再通过 `sync.event_bits` 匹配 NIDQ 中同一事件。
 独立 TTL 输出线的值不等于 BHV 事件码。例如本项目这批记录中，试次 TTL 的物理值

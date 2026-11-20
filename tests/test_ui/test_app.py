@@ -13,6 +13,43 @@ import panel as pn
 import pytest
 
 
+def test_web_ui_writes_diagnostic_png_in_worker_with_gui_backend_configured(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    pytest.importorskip("matplotlib")
+    script = textwrap.dedent("""
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        from pathlib import Path
+        import matplotlib
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        assert matplotlib.get_backend().lower() == "agg", matplotlib.get_backend()
+        from pynpxpipe.io.sync.imec_nidq_align import SyncResult
+        from pynpxpipe.plots.sync import _plot_sync_residuals
+        import numpy as np
+        directory = Path(sys.argv[1])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fit = SyncResult("imec0", 1., 0., 0., 0)
+            path = pool.submit(_plot_sync_residuals, "imec0", np.arange(4.), np.arange(4.),
+                               fit, directory, None).result()
+        assert path.read_bytes().startswith(bytes.fromhex("89504e470d0a1a0a"))
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        env={**os.environ, "MPLBACKEND": "TkAgg"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "outside of the main thread" not in result.stderr
+
+
 @pytest.mark.parametrize("mode", ["single", "joint"])
 def test_preview_routes_only_active_inputs_and_never_requests_sorting(tmp_path, monkeypatch, mode):
     from types import SimpleNamespace
