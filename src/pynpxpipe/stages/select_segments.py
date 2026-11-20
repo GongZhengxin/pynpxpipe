@@ -39,7 +39,11 @@ class SelectSegmentsStage(BaseStage):
             raise
 
     def _select(self) -> None:
-        validate_sources(self.session)
+        joint_error = None
+        try:
+            validate_sources(self.session)
+        except ValueError as exc:
+            joint_error = str(exc)
         cfg = self.session.config.task_windows
         sources = self.session.recording_sources
         segments, metadata, all_trials, all_events = [], [], [], []
@@ -212,6 +216,8 @@ class SelectSegmentsStage(BaseStage):
             sync_root / "behavior_events.parquet", index=False
         )
         summary = {
+            "joint_sorting_compatible": joint_error is None,
+            "joint_sorting_error": joint_error,
             "n_sources": len(sources),
             "n_trials": sum(s["n_trials"] for s in metadata),
             "n_blocks": len(manifest.for_probe("imec0")),

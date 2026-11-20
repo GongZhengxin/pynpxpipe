@@ -40,6 +40,10 @@
 2. 用正则 `_imec(\d+)` 提取 probe 编号 N
 3. 对每个 imec 目录，在其下查找 `*.ap.meta` 文件（取第一个匹配）
 4. 若找到 meta 文件，调用 `parse_meta()` 提取字段，构造 `ProbeInfo`
+   - 序列号读取 `imDatPrb_sn`，为空或缺失时兼容 `imProbeSN`。
+   - 探针类型读取 `imDatPrb_type`，为空或缺失时兼容 `imProbeOpt` / `imProbeType`。
+   - 都缺失时保留 `unknown`；逐段对齐可继续，联合预处理和 sorting 单独检查身份兼容性。
+   - 恢复旧 discover checkpoint 时，从原始 `.meta` 刷新已缓存的探针身份。
 5. 将所有 ProbeInfo 按 probe 编号整数升序排列
 6. 若列表为空则 raise `DiscoverError("No imec probe directories found in {session_dir}")`
 

@@ -72,6 +72,28 @@ default requiring validation, not a published community standard.
 
 ## Validation
 
+### 2026-11-20 production correction
+
+SpikeGLX discovery reads `imDatPrb_sn` / `imDatPrb_type`, falling back to
+`imProbeSN` / `imProbeOpt` / `imProbeType` for older headers. Cached probe
+identities are refreshed from the original metadata on resume. This follows
+[ProbeInterface's SpikeGLX reader](https://github.com/SpikeInterface/probeinterface/blob/main/src/probeinterface/neuropixels_tools.py).
+The raw files are never edited.
+
+Discovery and alignment operate on each pair independently. Selection writes
+joint compatibility status and any rejection reason into the preview summary;
+missing/different probe serials do not prevent viewing aligned task intervals.
+Preprocessing and sorting still enforce the complete compatibility check before
+reading or sorting selected traces, including when resuming checkpoints.
+
+The UI explicitly selects `single` or `joint` input mode. Single paths and joint
+pair drafts are separate; only the selected mode supplies pipeline inputs.
+Joint mode requires at least two saved pairs, supports editing and reordering,
+and displays the required directory level and preview/run steps inline.
+Restoring a saved joint session restores joint mode. Hidden draft edits never
+change the saved pairs. No local production sorting is part of this correction;
+deploy the tested branch through GitHub to the acquisition/processing computer.
+
 Synthetic tests cover 179/180/181 s gaps, sparse/failed/no-stimulus trials,
 overlapping padding and clipping, frame round trips and unit identity, streamed
 edge boundaries, photodiode equivalence, configuration mismatch rejection,

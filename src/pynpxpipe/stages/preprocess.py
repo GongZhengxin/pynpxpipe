@@ -74,6 +74,9 @@ class PreprocessStage(BaseStage):
         Raises:
             PreprocessError: If Zarr write fails or motion correction unsupported.
         """
+        from pynpxpipe.io.segment_recordings import validate_sources
+
+        validate_sources(self.session)
         if self._is_complete():
             self._report_progress("Preprocess already complete", 1.0)
             return

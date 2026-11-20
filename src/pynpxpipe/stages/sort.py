@@ -79,6 +79,9 @@ class SortStage(BaseStage):
             self._write_failed_checkpoint(err)
             raise err
 
+        from pynpxpipe.io.segment_recordings import validate_sources
+
+        validate_sources(self.session)
         if self._is_complete():
             self._report_progress("Sort already complete", 1.0)
             return

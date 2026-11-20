@@ -64,7 +64,9 @@ class RunPanel:
         st = self._state
         if st.subject_config is None:
             return "Please fill in Subject information."
-        if not st.session_dir:
+        if st.input_mode == "joint" and len(st.active_recordings) < 2:
+            return "多段联合模式需要至少两组已保存的神经–行为配对。"
+        if not st.active_session_dir:
             return "Data directory is invalid or missing."
         if not st.output_dir:
             return "Output directory is required."
@@ -156,6 +158,14 @@ class RunPanel:
             f"原始 {info['original_duration_s']:.1f} s → 保留 {info['retained_duration_s']:.1f} s，减少 {reduction:.1f}%。"
             f"最大同步残差 {info['max_sync_residual_ms']:.3f} ms。"
         )
+        if info.get("joint_sorting_compatible") is False:
+            self.preview_result.object += (
+                "\n\n**对齐预览已完成，联合 sorting 尚不能执行：** " + info["joint_sorting_error"]
+            )
+        elif info.get("n_sources", 1) > 1:
+            self.preview_result.object += (
+                "\n\n探针元数据兼容检查通过；联合预处理时还会核对实际通道配置。"
+            )
         manifest = SegmentManifest.load(root / "segments.json")
         self.preview_table.object = pd.DataFrame(
             [

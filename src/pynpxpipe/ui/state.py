@@ -6,6 +6,8 @@ ProgressBridge: thread-safe bridge from PipelineRunner.progress_callback to AppS
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import param
 
 
@@ -22,6 +24,19 @@ class AppState(param.Parameterized):
         default=None, check_exists=False, doc="Subject YAML file (optional pre-fill)"
     )
     recordings = param.List(default=[], doc="Ordered explicit neural/BHV2 source pairs")
+    input_mode = param.Selector(default="single", objects=["single", "joint"])
+
+    @property
+    def active_recordings(self) -> list[dict]:
+        """Return saved pairs only when joint mode is selected."""
+        return self.recordings if self.input_mode == "joint" else []
+
+    @property
+    def active_session_dir(self) -> Path | None:
+        """Return the single path or the first saved joint source directory."""
+        if self.input_mode == "single":
+            return Path(self.session_dir) if self.session_dir else None
+        return Path(self.recordings[0]["session_dir"]) if self.recordings else None
 
     # ── Config objects (populated by forms) ──
     pipeline_config = param.Parameter(default=None, doc="PipelineConfig dataclass instance")

@@ -118,8 +118,30 @@ def test_selection_keeps_failed_trials_and_namespaces_sources(joint_session):
 
 def test_changed_metadata_or_order_rejected(joint_session):
     joint_session.recordings[1].probes[0].serial_number = "different"
-    with pytest.raises(ValueError, match="serial_number"):
-        SelectSegmentsStage(joint_session).run()
+    SelectSegmentsStage(joint_session).run()
+    summary = json.loads((joint_session.output_dir / "03_segments" / "summary.json").read_text())
+    assert summary["joint_sorting_compatible"] is False
+    assert "serial_number" in summary["joint_sorting_error"]
+    from pynpxpipe.stages.preprocess import PreprocessStage
+    from pynpxpipe.stages.sort import SortStage
+
+    for stage in (PreprocessStage(joint_session), SortStage(joint_session)):
+        with pytest.raises(ValueError, match="serial_number"):
+            stage.run()
+
+
+def test_missing_identity_allows_preview_but_blocks_joint_processing(joint_session):
+    from pynpxpipe.io.segment_recordings import validate_sources
+
+    for source in joint_session.recordings:
+        source.probes[0].serial_number = "unknown"
+    SelectSegmentsStage(joint_session).run()
+    summary = json.loads((joint_session.output_dir / "03_segments" / "summary.json").read_text())
+    assert summary["n_sources"] == 2
+    assert summary["joint_sorting_compatible"] is False
+    assert "imDatPrb_sn" in summary["joint_sorting_error"]
+    with pytest.raises(ValueError, match="imDatPrb_sn"):
+        validate_sources(joint_session)
 
 
 def test_source_persistence_yaml_and_legacy_defaults(joint_session, tmp_path):

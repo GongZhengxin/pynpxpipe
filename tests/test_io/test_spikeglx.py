@@ -127,6 +127,36 @@ class TestDiscoverProbes:
         probe = SpikeGLXDiscovery(tmp_path).discover_probes()[0]
         assert probe.serial_number == "unknown"
 
+    @pytest.mark.parametrize(
+        "identity, expected",
+        [
+            ({"imDatPrb_sn": "12345678901", "imDatPrb_type": "1030"}, ("12345678901", "1030")),
+            (
+                {
+                    "imDatPrb_sn": "new",
+                    "imProbeSN": "old",
+                    "imDatPrb_type": "1030",
+                    "imProbeOpt": "3",
+                },
+                ("new", "1030"),
+            ),
+            (
+                {
+                    "imDatPrb_sn": "",
+                    "imProbeSN": "old",
+                    "imDatPrb_type": "",
+                    "imProbeType": "legacy",
+                },
+                ("old", "legacy"),
+            ),
+        ],
+    )
+    def test_modern_and_legacy_probe_identity(self, tmp_path, identity, expected):
+        fields = {"imSampRate": "29999.76063977747", "nSavedChans": "385", **identity}
+        _make_probe_dir(tmp_path, 0, meta_fields=fields)
+        probe = SpikeGLXDiscovery(tmp_path).discover_probes()[0]
+        assert (probe.serial_number, probe.probe_type) == expected
+
     def test_no_imec_dirs_raises(self, tmp_path: Path) -> None:
         with pytest.raises(DiscoverError):
             SpikeGLXDiscovery(tmp_path).discover_probes()
