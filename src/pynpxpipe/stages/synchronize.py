@@ -202,17 +202,16 @@ class SynchronizeStage(BaseStage):
             if self.session.segmented:
                 from pynpxpipe.io.sync.trial_intervals import align_trial_intervals
 
-                raw_start_code = self.session.config.task_windows.trial_start_code
-                if raw_start_code is None:
-                    raw_start_code = 1 << sync.event_bits[trial_alignment.detected_trial_start_bit]
                 intervals = align_trial_intervals(
                     BHV2Parser(self.session.bhv_file).parse(),
                     nidq_event_times,
                     nidq_event_codes,
                     trial_alignment.detected_trial_start_bit,
-                    raw_start_code,
+                    self.session.config.task_windows.trial_start_code,
+                    event_bits=sync.event_bits,
                 )
                 intervals.to_parquet(sync_dir / "trial_intervals.parquet", index=False)
+                self._report_progress("Full-trial boundaries aligned", 0.8)
                 np.savez_compressed(
                     sync_dir / "sync_edges.npz", nidq=nidq_sync_times, **ap_sync_times_map
                 )

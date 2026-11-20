@@ -26,6 +26,7 @@ import pytest
 from pynpxpipe.core.config import PipelineConfig, SyncConfig
 from pynpxpipe.core.errors import SyncError
 from pynpxpipe.core.session import ProbeInfo, Session, SessionManager, SubjectConfig
+from pynpxpipe.io.bhv import TrialData
 from pynpxpipe.io.sync.bhv_nidq_align import TrialAlignment
 from pynpxpipe.io.sync.imec_nidq_align import SyncResult
 from pynpxpipe.io.sync.photodiode_calibrate import CalibratedOnsets
@@ -570,3 +571,29 @@ class TestParquetContent:
         df = pd.read_parquet(session.output_dir / "04_sync" / "behavior_events.parquet")
         assert int(df["quality_flag"].iloc[0]) == 2
         assert int(df["quality_flag"].iloc[1]) == 0
+
+
+@pytest.mark.parametrize("raw_code", [None, 9])
+def test_segmented_sync_pairs_bhv_marker_to_its_own_nidq_event(session, raw_code):
+    session.config.task_windows.enabled = True
+    session.config.task_windows.trial_start_code = raw_code
+    session.config.sync.event_bits = [1, 2, 3, 4, 5, 6, 7]
+    stage = SynchronizeStage(session)
+    trials = [TrialData(i, 1, [(3, 9), (200, 0), (900, 18)], end_ms=1000) for i in range(1, 4)]
+    times = np.array([10.003, 10.2, 20.003, 20.2, 30.003, 30.2])
+    codes = np.array([4, 1, 4, 1, 4, 1])
+    with (
+        _patch_run(session) as ctx,
+        patch.object(stage, "_decode_nidq_events", return_value=(times, codes)),
+    ):
+        ctx["trial_aln"].detected_trial_start_bit = 0
+        ctx["mock_bhv_parser_cls"].return_value.parse.return_value = trials
+        stage.run()
+
+    result = pd.read_parquet(session.output_dir / "04_sync" / "trial_intervals.parquet")
+    np.testing.assert_allclose(result.start_time, [10, 20, 30])
+    np.testing.assert_allclose(result.stop_time, [11, 21, 31])
+    assert result.bhv_anchor_code.tolist() == [9, 9, 9]
+    assert result.nidq_anchor_code.tolist() == [4, 4, 4]
+    checkpoint = json.loads((session.output_dir / "checkpoints" / "synchronize.json").read_text())
+    assert checkpoint["status"] == "completed"

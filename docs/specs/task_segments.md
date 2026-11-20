@@ -72,6 +72,33 @@ default requiring validation, not a published community standard.
 
 ## Validation
 
+### 2026-11-20 full-trial marker correction
+
+The independent NIDQ trial TTL is not necessarily a BHV behavioral event code.
+In the reported recordings, the TTL adapter emits physical value 2, while BHV
+trials begin with behavioral code 9. Reversing the detected TTL bit into BHV code
+2 therefore fails; pairing BHV code 9 to that later TTL silently shifts trial zero.
+
+Full-trial alignment must infer the common first BHV event (unique in every
+trial), or use `task_windows.trial_start_code` when explicitly configured. It
+projects that actual BHV code through `sync.event_bits`, using the same packing
+as NIDQ decoding, and matches the corresponding NIDQ transitions independently
+of the trial TTL used for stimulus window matching. It never hardcodes code 9.
+Reject missing/repeated BHV anchors, projected-code collisions, unrecorded codes,
+non-finite/invalid extents, unequal counts, non-monotonic times, overlapping
+intervals, or a trial TTL outside its reconstructed trial. Keep failed and
+stimulus-free trials. Save both anchor codes and timestamps in trial intervals
+and log the selected mapping. With no decoder mapping, existing callers with an
+explicit BHV code retain their explicitly supplied decoded bit mapping.
+Increment the segmented run-signature version so completed results from the old
+anchor algorithm are archived and recomputed, including earlier explicit-code runs.
+
+This extends complete-trial coverage; MATLAB-style stimulus matching and
+photodiode calibration are unchanged. Tests must include a failed first trial,
+different per-trial TTL delays, a custom event-bit order, explicit overrides,
+and ambiguous/missing markers. Production checks may read BHV/NIDQ for marker
+diagnosis; no AP processing or sorting runs on the development computer.
+
 ### 2026-11-20 production correction
 
 SpikeGLX discovery reads `imDatPrb_sn` / `imDatPrb_type`, falling back to

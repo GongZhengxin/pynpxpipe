@@ -116,6 +116,33 @@ def test_selection_keeps_failed_trials_and_namespaces_sources(joint_session):
     )
 
 
+def test_old_trial_anchor_algorithm_invalidates_cached_outputs(joint_session, monkeypatch):
+    import pynpxpipe.core.run_signature as signatures
+
+    cfg, sorting = joint_session.config, SortingConfig()
+    with monkeypatch.context() as legacy:
+        legacy.setattr(signatures, "_SIGNATURE_VERSION", 1, raising=False)
+        old_signature = signatures.input_signature(joint_session, cfg, sorting)
+    marker = joint_session.output_dir / "input_signature.json"
+    marker.write_text(json.dumps({"signature": old_signature}), encoding="utf-8")
+    cached = joint_session.output_dir / "checkpoints" / "synchronize.json"
+    cached.parent.mkdir(exist_ok=True)
+    cached.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+
+    prepare_run(joint_session, cfg, sorting)
+
+    assert not cached.exists()
+    archives = list((joint_session.output_dir / ".invalidated").iterdir())
+    assert len(archives) == 1
+    assert (archives[0] / "checkpoints" / "synchronize.json").exists()
+    assert (archives[0] / "sources" / "a" / "04_sync" / "trial_intervals.parquet").exists()
+    assert json.loads(marker.read_text())["signature"] != old_signature
+    assert all(source.bhv_file.exists() for source in joint_session.recordings)
+    assert all(
+        (source.session_dir / "rec.nidq.bin").exists() for source in joint_session.recordings
+    )
+
+
 def test_changed_metadata_or_order_rejected(joint_session):
     joint_session.recordings[1].probes[0].serial_number = "different"
     SelectSegmentsStage(joint_session).run()

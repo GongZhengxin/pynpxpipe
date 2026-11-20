@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from pynpxpipe.core.config import PipelineConfig, SortingConfig
     from pynpxpipe.core.session import Session
 
+# Version 2 anchors full trials to matching BHV/NIDQ events, not an unrelated TTL.
+_SIGNATURE_VERSION = 2
+
 
 def input_signature(
     session: Session, pipeline_config: PipelineConfig, sorting_config: SortingConfig
@@ -40,7 +43,7 @@ def input_signature(
     config.pop("resources", None)
     config.pop("parallel", None)
     raw = {
-        "version": 1,
+        "version": _SIGNATURE_VERSION,
         "sources": sources,
         "config": config,
         "sorting": asdict(sorting_config),
