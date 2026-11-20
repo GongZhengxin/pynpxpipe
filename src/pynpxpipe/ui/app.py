@@ -39,17 +39,18 @@ from pynpxpipe.ui.state import AppState, ProgressBridge
 class _UILogHandler(logging.Handler):
     """Logging handler that feeds log records to a LogViewer widget.
 
-    Thread-safe: schedules UI updates via pn.state.execute().
+    Schedules UI updates on the document that started the pipeline.
     """
 
-    def __init__(self, log_viewer: LogViewer) -> None:
+    def __init__(self, log_viewer: LogViewer, bridge: ProgressBridge) -> None:
         super().__init__()
         self._log_viewer = log_viewer
+        self._bridge = bridge
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             msg = self.format(record)
-            pn.state.execute(lambda m=msg: self._push(m))
+            self._bridge.dispatch(lambda: self._push(msg))
         except Exception:  # noqa: BLE001
             self.handleError(record)
 
@@ -66,9 +67,12 @@ class _TeeStream(io.TextIOBase):
     Only captures output from threads registered via activate().
     """
 
-    def __init__(self, original: io.TextIOBase, log_viewer: LogViewer) -> None:
+    def __init__(
+        self, original: io.TextIOBase, log_viewer: LogViewer, bridge: ProgressBridge
+    ) -> None:
         self._original = original
         self._log_viewer = log_viewer
+        self._bridge = bridge
         self._active_threads: set[int] = set()
         self._lock = threading.Lock()
 
@@ -90,19 +94,14 @@ class _TeeStream(io.TextIOBase):
             stripped = s.strip()
             is_overwrite = s.startswith("\r")
             with contextlib.suppress(Exception):
-                if is_overwrite:
-                    pn.state.execute(
-                        lambda t=stripped: (
-                            self._log_viewer.replace_last(t),
-                            self._log_viewer.refresh(),
-                        )
-                    )
-                else:
-                    pn.state.execute(lambda text=stripped: self._push(text))
+                self._bridge.dispatch(lambda: self._push(stripped, is_overwrite))
         return result
 
-    def _push(self, text: str) -> None:
-        self._log_viewer.append(text)
+    def _push(self, text: str, overwrite: bool) -> None:
+        if overwrite:
+            self._log_viewer.replace_last(text)
+        else:
+            self._log_viewer.append(text)
         self._log_viewer.refresh()
 
     def flush(self) -> None:
@@ -134,7 +133,14 @@ def create_app() -> pn.viewable.Viewable:
     - ``_pynpx_error_banner``: the error alert pane
     - ``_pynpx_state``: the AppState instance
     """
+    # The web UI writes diagnostic images from worker threads.
+    with contextlib.suppress(ImportError):
+        import matplotlib
+
+        matplotlib.use("Agg")
+
     state = AppState()
+    bridge = ProgressBridge(state)
 
     # ── Components ──
     session_form = SessionForm(state)
@@ -145,12 +151,12 @@ def create_app() -> pn.viewable.Viewable:
     stage_selector = StageSelector(state)
 
     log_viewer = LogViewer()
-    ui_handler = _UILogHandler(log_viewer)
+    ui_handler = _UILogHandler(log_viewer, bridge)
     ui_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s"))
 
     # Install TeeStream wrappers for stdout/stderr capture (tqdm, print, etc.)
-    tee_stdout = _TeeStream(sys.stdout, log_viewer)
-    tee_stderr = _TeeStream(sys.stderr, log_viewer)
+    tee_stdout = _TeeStream(sys.stdout, log_viewer, bridge)
+    tee_stderr = _TeeStream(sys.stderr, log_viewer, bridge)
     sys.stdout = tee_stdout
     sys.stderr = tee_stderr
 
@@ -229,7 +235,10 @@ def create_app() -> pn.viewable.Viewable:
             root_logger.removeHandler(ui_handler)
 
     run_panel = RunPanel(
-        state, pipeline_fn=pipeline_fn, preview_fn=lambda st, br: pipeline_fn(st, br, True)
+        state,
+        pipeline_fn=pipeline_fn,
+        preview_fn=lambda st, br: pipeline_fn(st, br, True),
+        bridge=bridge,
     )
     progress_view = ProgressView(state)
 

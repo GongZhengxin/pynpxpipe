@@ -103,7 +103,9 @@ def acquisition_start(meta: dict, timezone: str | None) -> datetime:
     if dt.tzinfo is None:
         if not timezone:
             raise ValueError(
-                "Acquisition timestamp has no timezone; set task_windows.recording_timezone (IANA name)"
+                "Acquisition timestamp has no timezone. 请在 Configure → Pipeline Parameters → "
+                "任务时段截取 → 采集时区 (IANA) 填写采集地点的时区，中国采集填 Asia/Shanghai。"
+                "配置文件对应 task_windows.recording_timezone。"
             )
         zone = ZoneInfo(timezone)
         if (

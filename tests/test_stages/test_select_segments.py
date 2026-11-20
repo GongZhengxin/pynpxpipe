@@ -116,6 +116,52 @@ def test_selection_keeps_failed_trials_and_namespaces_sources(joint_session):
     )
 
 
+@pytest.mark.parametrize("crop_enabled", [True, False])
+def test_preview_checks_later_source_clock_before_sync(joint_session, monkeypatch, crop_enabled):
+    from pynpxpipe.pipelines.runner import PipelineRunner
+    from pynpxpipe.stages.discover import BHV2_MAGIC
+
+    cfg = joint_session.config
+    cfg.task_windows.enabled = crop_enabled
+    for source in joint_session.recordings:
+        source.bhv_file.write_bytes(BHV2_MAGIC)
+    second_meta = joint_session.recordings[1].probes[0].ap_meta
+    second_meta.write_text(second_meta.read_text().replace("+00:00", ""))
+    stages = ["discover", "synchronize", "select_segments"]
+    called = []
+    run_stage = PipelineRunner.run_stage
+
+    def track_stage(runner, name):
+        called.append(name)
+        if name == "discover":
+            run_stage(runner, name)
+
+    monkeypatch.setattr(PipelineRunner, "run_stage", track_stage)
+    runner = PipelineRunner(joint_session, cfg, SortingConfig())
+    with pytest.raises(ValueError) as caught:
+        runner.run(stages=stages)
+    assert called == ["discover"]
+    assert f"Source b ({second_meta})" in str(caught.value)
+    assert "采集时区 (IANA)" in str(caught.value)
+    assert "Asia/Shanghai" in str(caught.value)
+    failed = joint_session.output_dir / "checkpoints" / "select_segments.json"
+    assert json.loads(failed.read_text())["status"] == "failed"
+
+    called.clear()
+    cfg.task_windows.recording_timezone = "Asia/Shanghai"
+    PipelineRunner(joint_session, cfg, SortingConfig()).run(stages=stages)
+    assert called == stages
+
+    called.clear()
+    cfg.task_windows.recording_timezone = None
+    runner.run(stages=["synchronize"])
+    assert called == ["synchronize"]
+    second_meta.write_text(second_meta.read_text().replace("10:02:00", "10:02:00+08:00"))
+    called.clear()
+    PipelineRunner(joint_session, cfg, SortingConfig()).run(stages=stages)
+    assert called == stages
+
+
 def test_old_trial_anchor_algorithm_invalidates_cached_outputs(joint_session, monkeypatch):
     import pynpxpipe.core.run_signature as signatures
 

@@ -30,7 +30,10 @@ gaps; units carry `obs_intervals`. Trial/stimulus identity is namespaced by sour
 
 ## Processing
 
-1. Discover and validate every pair and probe configuration.
+1. Discover and validate every pair and probe configuration. When the run includes
+   synchronization and segment selection, check every source's imec0 AP
+   `fileCreateTime` before synchronizing the first source. Embedded UTC offsets
+   are sufficient. A missing timezone identifies the source and the setting to fill.
 2. Independently synchronize each source using bounded channel reads. Preserve
    the existing linear IMEC/NIDQ fit and photodiode threshold semantics.
 3. Anchor BHV trial zero to matched behavioral markers (including their BHV

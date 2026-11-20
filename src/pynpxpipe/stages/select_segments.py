@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -12,11 +14,41 @@ from pynpxpipe.io.segment_recordings import acquisition_start, validate_sources
 from pynpxpipe.io.spikeglx import SpikeGLXDiscovery
 from pynpxpipe.stages.base import BaseStage
 
+if TYPE_CHECKING:
+    from pynpxpipe.core.session import ProbeInfo, RecordingSource
+
 
 class SelectSegmentsStage(BaseStage):
     """Convert aligned trials into retained source/sample intervals."""
 
     STAGE_NAME = "select_segments"
+
+    def _reference_clock(
+        self, source: RecordingSource
+    ) -> tuple[ProbeInfo, dict[str, str], datetime]:
+        probe = next((p for p in source.probes if p.probe_id == "imec0"), None)
+        if probe is None:
+            raise ValueError(f"Source {source.source_id} requires a discovered imec0 reference")
+        meta = SpikeGLXDiscovery.parse_meta(probe.ap_meta)
+        try:
+            start = acquisition_start(meta, self.session.config.task_windows.recording_timezone)
+        except ValueError as exc:
+            raise ValueError(f"Source {source.source_id} ({probe.ap_meta}): {exc}") from exc
+        return probe, meta, start
+
+    def check_acquisition_times(self) -> None:
+        """Validate the discovered reference clocks before loading any sync signals.
+
+        Raises:
+            ValueError: If a source has no usable reference timestamp.
+        """
+        try:
+            for source in self.session.recording_sources:
+                self._reference_clock(source)
+        except (OSError, ValueError) as exc:
+            self._report_progress("Acquisition timestamp check failed", 0.0)
+            self._write_failed_checkpoint(exc)
+            raise
 
     def run(self) -> None:
         """Build selection, behavioral tables and source-clock provenance.
@@ -31,8 +63,10 @@ class SelectSegmentsStage(BaseStage):
             self._is_complete()
             and (self.session.output_dir / "03_segments" / "segments.json").exists()
         ):
+            self._report_progress("Task selection already complete", 1.0)
             return
         try:
+            self._report_progress("Selecting task segments", 0.0)
             self._select()
         except Exception as exc:
             self._write_failed_checkpoint(exc)
@@ -61,9 +95,7 @@ class SelectSegmentsStage(BaseStage):
             if "imec0" not in sync:
                 raise ValueError("Segmented export requires imec0 as the experiment reference")
             ref = sync["imec0"]
-            ref_probe = next(p for p in source.probes if p.probe_id == "imec0")
-            ref_meta = SpikeGLXDiscovery.parse_meta(ref_probe.ap_meta)
-            timestamp = acquisition_start(ref_meta, cfg.recording_timezone)
+            ref_probe, ref_meta, timestamp = self._reference_clock(source)
             method = "explicit_offset"
             if first_time is None:
                 first_time, first_meta = timestamp, ref_meta

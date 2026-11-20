@@ -168,6 +168,14 @@ class PipelineRunner:
             to_run = [s for s in STAGE_ORDER if s in required or s in to_run]
 
         for stage_name in to_run:
+            if (
+                stage_name == "synchronize"
+                and self.session.segmented
+                and "select_segments" in to_run
+            ):
+                from pynpxpipe.stages.select_segments import SelectSegmentsStage
+
+                SelectSegmentsStage(self.session, self.progress_callback).check_acquisition_times()
             if stage_name == "preprocess":
                 self._resolve_motion_strategy()
             self.run_stage(stage_name)
