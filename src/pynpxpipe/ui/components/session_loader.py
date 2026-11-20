@@ -126,6 +126,7 @@ class SessionLoader:
             self._state.probe_plan = dict(probe_plan)
 
         self._state.recordings = session_data.get("recordings", [])
+        self._state.input_mode = "joint" if len(self._state.recordings) > 1 else "single"
 
         # Restore effective pipeline / sorting configs if previously dumped by
         # PipelineRunner. Failure to read is non-fatal — older output dirs

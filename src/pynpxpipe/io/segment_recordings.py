@@ -46,6 +46,18 @@ class _AcquisitionSegment(si.BaseRecordingSegment):
 
 def validate_sources(session: Session) -> None:
     """Reject joint sorting across incompatible probe identities/configurations."""
+    if len(session.recording_sources) < 2:
+        return
+    for source in session.recording_sources:
+        if not source.probes:
+            raise ValueError(f"{source.source_id}: no discovered probes; run discovery first")
+        for probe in source.probes:
+            if not probe.serial_number or probe.serial_number.lower() in ("unknown", "none"):
+                raise ValueError(
+                    f"{source.source_id}/{probe.probe_id}: joint sorting requires a probe serial "
+                    f"number in {probe.ap_meta} (imDatPrb_sn or legacy imProbeSN). "
+                    "Alignment preview is available; verify the acquisition metadata before joint sorting."
+                )
     reference = session.recording_sources[0]
     for source in session.recording_sources[1:]:
         if {p.probe_id for p in source.probes} != {p.probe_id for p in reference.probes}:
@@ -61,8 +73,6 @@ def validate_sources(session: Session) -> None:
             ):
                 if getattr(first, key) != getattr(current, key):
                     raise ValueError(f"{source.source_id}/{first.probe_id}: incompatible {key}")
-            if not first.serial_number or first.serial_number.lower() in ("unknown", "none"):
-                raise ValueError("Joint sorting requires recorded probe serial numbers")
             a = SpikeGLXDiscovery.parse_meta(first.ap_meta)
             b = SpikeGLXDiscovery.parse_meta(current.ap_meta)
             for key in (

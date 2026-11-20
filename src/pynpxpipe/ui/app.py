@@ -160,7 +160,9 @@ def create_app() -> pn.viewable.Viewable:
         from pynpxpipe.core.session import RecordingSource, SessionManager
         from pynpxpipe.pipelines.runner import PipelineRunner
 
-        if not st.session_dir:
+        if st.input_mode == "joint" and len(st.active_recordings) < 2:
+            raise ValueError("多段联合模式需要至少两组已保存的神经–行为配对")
+        if not st.active_session_dir:
             raise ValueError("Session directory is required")
         if not st.output_dir:
             raise ValueError("Output directory is required")
@@ -174,9 +176,9 @@ def create_app() -> pn.viewable.Viewable:
         output_path = Path(str(st.output_dir))
         session_json = output_path / "session.json"
 
-        if st.recordings:
+        if st.input_mode == "joint":
             session = SessionManager.create_from_recordings(
-                [RecordingSource.from_dict(s) for s in st.recordings],
+                [RecordingSource.from_dict(s) for s in st.active_recordings],
                 st.subject_config,
                 output_path,
                 experiment=st.experiment,

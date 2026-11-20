@@ -302,11 +302,50 @@ retain 30 seconds before and after each task block. Idle time is measured from
 the preceding trial's end, so failed trials, trials without stimuli and sparse
 task activity remain included. Blocks are clamped to available samples.
 
-For multiple recordings, expand **多段记录配对**, choose the neural directory and
-its BHV2 file, give the pair a unique name, then click **添加当前神经–行为配对**.
-Add pairs in acquisition order. They must belong to the same animal, day and
-experiment, with unchanged probe placement and configuration. Probe serials,
-sampling rates, channel maps and gains are checked before joint processing.
+在 **Configure → Session Paths** 顶部选择 **单段记录 / 多段联合**。
+单段模式只使用单段路径；多段模式只使用配对表中已经保存的记录。
+切换模式保留已填写内容，但隐藏模式的输入不参与执行。
+
+**两段记录合并 sorting 的具体操作：**
+
+1. 选择 **多段联合**。
+2. 在“神经记录目录”中选一段 SpikeGLX gate 目录：里面应直接包含
+   `*.nidq.bin`、`*.nidq.meta` 和 `*_imec0/` 子目录。
+   不要选日期总目录，也不要进入 `_imec0` 或选择 `.ap.bin` 文件。
+3. 单独选择这段对应的 `.bhv2`，点击 **添加配对**。
+4. 选择第二段的神经目录和 BHV2，再点 **添加配对**。表中必须有至少两行，
+   按实际采集顺序排列。选中一行后可 **编辑所选配对 → 保存修改**，或 **上移 / 下移**。
+   输入框只是草稿，只有添加或保存后才会更新执行使用的配对。
+5. 填写统一的 **Output Directory**、**Experiment**、日期、动物信息和探针脑区。
+   **Detect Date** 从配对表第一段的元数据读取日期。输出目录选择独立的处理结果目录。
+6. 在 **Pipeline Parameters → 任务时段截取** 设置采集时区；中国采集一般填
+   `Asia/Shanghai`。启用 **只处理任务时段** 可先对齐，再按任务时段裁剪。
+7. 进入 **Execute**，点击 **对齐并预览任务时段**，核对保留时段、时长和同步残差。
+   此按钮只执行发现、对齐和时段选择，不执行预处理或 sorting。
+8. 预览无误且兼容检查通过后，在执行 sorting 的电脑点击 **Run**。
+   每支探针将两段选中数据联合 sorting 一次，结果中的 unit IDs 跨段共享。
+
+例如以下布局应配对 `recording_g0 ↔ task.bhv2`、`recording_g1 ↔ task_2.bhv2`
+（配对仍须根据实际实验记录核实，不能只凭文件名）：
+
+```text
+data/261109/
+  recording_g0/                 ← 第一行神经目录选择这里
+    recording_g0_t0.nidq.bin
+    recording_g0_t0.nidq.meta
+    recording_g0_imec0/         ← 不要选到这一层
+      recording_g0_t0.imec0.ap.bin
+      recording_g0_t0.imec0.ap.meta
+  recording_g1/                 ← 第二行神经目录选择这里
+    ...
+  task.bhv2                    ← 第一行行为文件
+  task_2.bhv2                   ← 第二行行为文件
+```
+
+两段应来自同一动物、同一天、同一实验，且探针插入位置及配置未改变。
+程序自动读取 `imDatPrb_sn`（兼容旧字段 `imProbeSN`），无需手填序列号。
+预览会报告联合处理的元数据兼容状态；不兼容时仍可查看对齐时段，
+但正式联合预处理/sorting 会拒绝执行。实际通道顺序、坐标和增益也会在联合预处理时核对。
 
 Set **采集时区 (IANA)** to the acquisition site's timezone, for example
 `Asia/Shanghai`, if SpikeGLX timestamps have no UTC offset. Restarted acquisitions
@@ -319,6 +358,27 @@ retained durations, reduction and alignment residual before running sorting.
 Source files are read-only. Each probe is jointly sorted with shared unit IDs;
 the exported NWB preserves real time gaps. The 0.1-second join guard is a configurable
 engineering default, requiring validation with your data.
+
+### 在另一台电脑通过 GitHub 更新
+
+在执行 sorting 的电脑上，先关闭旧 Web UI，在现有 Git checkout 中运行：
+
+```powershell
+git fetch origin
+git switch codex/task-segments-joint-recordings
+git pull --ff-only origin codex/task-segments-joint-recordings
+uv run --no-sync pynpxpipe-ui
+```
+
+上述命令假定 `origin` 指向 `GongZhengxin/pynpxpipe`。
+修复位于该分支，尚未合并到 `main`；只更新 `main` 不会取得修复。
+新建本地分支时，`git switch` 会从唯一同名远端分支建立跟踪。
+重新启动 UI 后应能看到顶部“单段记录 / 多段联合”切换。
+路径填写这台处理电脑实际可访问的路径；盘符可能与开发电脑不同。
+
+本次修复不新增依赖。已配置好的环境可以使用 `--no-sync` 启动；如确实需要
+同步依赖，使用 `uv sync --inexact --extra ui --extra gpu --extra plots`，保留另行
+安装的 CUDA torch / Kilosort。代码更新不会自动启动 sorting。
 
 ## 5. Run the Pipeline
 

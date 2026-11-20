@@ -100,6 +100,20 @@ def _patch_discovery(mock_cls, probes, warnings=None, nidq=None):
     return mock
 
 
+def test_joint_discovery_does_not_require_identity_for_alignment(session, two_probes):
+    from pynpxpipe.core.session import RecordingSource
+
+    for probe in two_probes:
+        probe.serial_number = "unknown"
+    session.recordings = [
+        RecordingSource(name, session.session_dir, session.bhv_file) for name in ("a", "b")
+    ]
+    with patch("pynpxpipe.stages.discover.SpikeGLXDiscovery") as mock_cls:
+        _patch_discovery(mock_cls, two_probes, nidq=_fake_nidq(session))
+        DiscoverStage(session).run()
+    assert all(len(s.probes) == 2 for s in session.recordings)
+
+
 # ---------------------------------------------------------------------------
 # Group A — Normal flow
 # ---------------------------------------------------------------------------
@@ -209,6 +223,15 @@ class TestCheckpointSkip:
         session.probes = two_probes
         result = DiscoverStage(session).run()
         assert result is None
+
+    def test_resume_refreshes_identity_saved_by_old_parser(self, session, two_probes):
+        self._write_completed_checkpoint(session)
+        session.probes = two_probes
+        probe = two_probes[0]
+        probe.serial_number = probe.probe_type = "unknown"
+        probe.ap_meta.write_text("imDatPrb_sn=12345678901\nimDatPrb_type=1030\n", encoding="utf-8")
+        DiscoverStage(session).run()
+        assert (probe.serial_number, probe.probe_type) == ("12345678901", "1030")
 
 
 # ---------------------------------------------------------------------------

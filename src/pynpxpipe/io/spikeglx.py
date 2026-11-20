@@ -82,6 +82,7 @@ class SpikeGLXDiscovery:
                 lf_bin = lf_bin_candidate if lf_bin_candidate.exists() else None
 
             probe_id = f"imec{probe_idx}"
+            serial_number, probe_type = self.probe_identity(meta)
             probe = ProbeInfo(
                 probe_id=probe_id,
                 ap_bin=ap_bin,
@@ -90,8 +91,8 @@ class SpikeGLXDiscovery:
                 lf_meta=lf_meta,
                 sample_rate=float(meta.get("imSampRate", 0)),
                 n_channels=int(meta.get("nSavedChans", 0)),
-                serial_number=meta.get("imProbeSN", "unknown"),
-                probe_type=meta.get("imProbeOpt", meta.get("imProbeType", "unknown")),
+                serial_number=serial_number,
+                probe_type=probe_type,
                 target_area="",  # placeholder; DiscoverStage fills from session.probe_plan
             )
             probes.append((probe_idx, probe))
@@ -101,6 +102,25 @@ class SpikeGLXDiscovery:
 
         probes.sort(key=lambda t: t[0])
         return [p for _, p in probes]
+
+    @staticmethod
+    def probe_identity(meta: dict[str, str]) -> tuple[str, str]:
+        """Read probe identity across SpikeGLX metadata generations.
+
+        Args:
+            meta: Parsed AP metadata; modern fields take precedence over legacy ones.
+
+        Returns:
+            Serial number and probe type, using ``unknown`` for missing values.
+        """
+        serial = meta.get("imDatPrb_sn") or meta.get("imProbeSN") or "unknown"
+        probe_type = (
+            meta.get("imDatPrb_type")
+            or meta.get("imProbeOpt")
+            or meta.get("imProbeType")
+            or "unknown"
+        )
+        return serial, probe_type
 
     def validate_probe(self, probe: ProbeInfo) -> list[str]:
         """Validate data integrity for a single probe.

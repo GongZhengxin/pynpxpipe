@@ -1,5 +1,21 @@
 # pynpxpipe 开发进度
 
+## 2026-11-20 — 真实元数据兼容与多段 UI 修复 ✅
+
+- 修复现代 SpikeGLX `imDatPrb_sn` / `imDatPrb_type` 解析，兼容旧字段，恢复旧会话时刷新缓存身份。
+- discovery 和逐段对齐不再因联合身份检查提前失败；预览报告兼容性，正式预处理和 sorting 仍强制检查。
+- UI 明确区分单段/多段模式，多段使用独立路径草稿及已保存配对；支持编辑、调整顺序、目录层级提示。
+- 界面内加入操作步骤，`getting_started.md` 补充两段联合 sorting 和另一台电脑通过 GitHub 更新的方法。
+- 对用户提供的两套真实 AP 元数据只读复验：正确读取相同序列号/类型，兼容检查通过；未启动真实数据预处理或 sorting。
+
+验证：CPU 全量回归 **1683 passed / 48 skipped / 2 deselected**，覆盖率 **85.44%**。
+最后的模式状态整理、类型标注和 discovery 回归新增后，相关专项 **125 passed**。
+`ruff check src/ tests/`、全部改动 Python 文件格式检查和 `git diff --check` 通过。
+全库格式检查仍有此前记录的 5 个未改动文件问题；本次未混入无关格式调整。
+浏览器确认模式切换和教程显示，配对保存/编辑/排序/恢复由自动化组件测试覆盖。
+本机测试使用替代 sorter；真实 Kilosort/GPU 验收由另一台处理电脑执行。
+两项排除是本机未安装的 torch/Kilosort 安装检查，未安装或改变 GPU 栈。
+
 ## 2026-11-17 — 任务时段截取与多记录联合处理 ✅
 
 用户批准的方案见 [task_segments.md](specs/task_segments.md)，使用方式见

@@ -69,9 +69,6 @@ class DiscoverStage(BaseStage):
                 DiscoverStage(child, self.progress_callback).run()
                 source.probes = child.probes
             self.session.probes = self.session.recordings[0].probes
-            from pynpxpipe.io.segment_recordings import validate_sources
-
-            validate_sources(self.session)
             SessionManager.save(self.session)
             (self.session.output_dir / "session_info.json").write_text(
                 json.dumps(
@@ -191,14 +188,18 @@ class DiscoverStage(BaseStage):
         """Restore session.probes from session_info.json when discover is skipped.
 
         If session.probes is already populated (e.g. loaded from session.json),
-        this is a no-op. Otherwise reads probe_ids from session_info.json and
-        re-discovers them from the raw SpikeGLX folder.
+        refreshes its probe identity from metadata. Otherwise reads probe_ids
+        from session_info.json and re-discovers them from the raw SpikeGLX folder.
 
         Raises:
             DiscoverError: If session_info.json is missing/corrupt, or re-discovery
                 finds no matching probes.
         """
         if self.session.probes:
+            for probe in self.session.probes:
+                if probe.ap_meta.is_file():
+                    meta = SpikeGLXDiscovery.parse_meta(probe.ap_meta)
+                    probe.serial_number, probe.probe_type = SpikeGLXDiscovery.probe_identity(meta)
             return
 
         info_path = self.session.output_dir / "session_info.json"

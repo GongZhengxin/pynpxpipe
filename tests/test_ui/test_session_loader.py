@@ -76,6 +76,29 @@ class TestSessionLoaderConstruction:
 
 
 class TestLoadSession:
+    def test_restore_joint_then_single_switches_active_mode(
+        self, state, tmp_path, session_json_data
+    ):
+        from pynpxpipe.ui.components.session_form import SessionForm
+        from pynpxpipe.ui.components.session_loader import SessionLoader
+
+        form = SessionForm(state)
+        payload = dict(session_json_data)
+        payload["recordings"] = [
+            {"source_id": f"s{i}", "session_dir": f"C:/data/g{i}", "bhv_file": f"C:/data/{i}.bhv2"}
+            for i in range(2)
+        ]
+        loader = SessionLoader(state, load_session_fn=lambda output: payload)
+        loader.dir_input.value = str(tmp_path)
+        loader._on_load_click(None)
+        assert state.input_mode == "joint"
+        assert form.joint_paths.visible and not form.single_paths.visible
+        assert len(state.active_recordings) == 2
+        payload["recordings"] = []
+        loader._on_load_click(None)
+        assert state.input_mode == "single"
+        assert form.single_paths.visible and not form.joint_paths.visible
+
     def test_load_fills_state_fields(self, state, output_dir_with_session, session_json_data):
         """Loading a session should fill AppState with session data."""
         from pynpxpipe.ui.components.session_loader import SessionLoader

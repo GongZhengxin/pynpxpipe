@@ -12,6 +12,57 @@ from __future__ import annotations
 import panel as pn
 import pytest
 
+
+@pytest.mark.parametrize("mode", ["single", "joint"])
+def test_preview_routes_only_active_inputs_and_never_requests_sorting(tmp_path, monkeypatch, mode):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    import pynpxpipe.ui.app as app_module
+    from pynpxpipe.core.config import PipelineConfig, SortingConfig
+    from pynpxpipe.core.session import SessionManager, SubjectConfig
+    from pynpxpipe.pipelines.runner import PipelineRunner
+
+    captured = {}
+    original = app_module.RunPanel
+
+    def capture_panel(state, **kwargs):
+        captured.update(kwargs)
+        return original(state, **kwargs)
+
+    monkeypatch.setattr(app_module, "RunPanel", capture_panel)
+    session = SimpleNamespace(log_path=tmp_path / "run.log")
+    single = Mock(return_value=session)
+    joint = Mock(return_value=session)
+    monkeypatch.setattr(SessionManager, "create", single)
+    monkeypatch.setattr(SessionManager, "create_from_recordings", joint)
+    monkeypatch.setattr(PipelineRunner, "__init__", lambda self, *args, **kwargs: None)
+    run = Mock()
+    monkeypatch.setattr(PipelineRunner, "run", run)
+    monkeypatch.setattr("pynpxpipe.core.logging.setup_logging", lambda path: None)
+    app = app_module.create_app()
+    state = app._pynpx_state
+    state.input_mode = mode
+    state.session_dir = tmp_path / "single_g0" if mode == "single" else None
+    state.bhv_file = tmp_path / "single.bhv2"
+    state.output_dir = tmp_path / "out"
+    state.subject_config = SubjectConfig("test", "test", "Macaca mulatta", "M", "P5Y", "10kg")
+    state.pipeline_config = PipelineConfig()
+    state.sorting_config = SortingConfig()
+    state.recordings = [
+        {
+            "source_id": f"s{i}",
+            "session_dir": str(tmp_path / f"g{i}"),
+            "bhv_file": str(tmp_path / f"{i}.bhv2"),
+        }
+        for i in range(2)
+    ]
+    captured["preview_fn"](state, SimpleNamespace(callback=lambda *args: None))
+    assert joint.called == (mode == "joint")
+    assert single.called == (mode == "single")
+    run.assert_called_once_with(stages=["discover", "synchronize", "select_segments"])
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
