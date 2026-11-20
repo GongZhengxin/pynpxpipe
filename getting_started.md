@@ -384,14 +384,14 @@ discover、synchronize、select_segments，不运行 sorting。同步扫描长�
 
 ```powershell
 git fetch origin
-git switch codex/task-segments-joint-recordings
-git pull --ff-only origin codex/task-segments-joint-recordings
+git switch main
+git pull --ff-only origin main
 uv run --no-sync pynpxpipe-ui
 ```
 
 上述命令假定 `origin` 指向 `GongZhengxin/pynpxpipe`。
-修复位于该分支，尚未合并到 `main`；只更新 `main` 不会取得修复。
-新建本地分支时，`git switch` 会从唯一同名远端分支建立跟踪。
+任务截取、多段联合、探针元数据兼容和 trial 起始事件配对修复统一从 `main` 更新。
+若此前使用 `codex/task-segments-joint-recordings`，按上述命令切换到 `main` 即可。
 重新启动 UI 后应能看到顶部“单段记录 / 多段联合”切换。
 路径填写这台处理电脑实际可访问的路径；盘符可能与开发电脑不同。
 

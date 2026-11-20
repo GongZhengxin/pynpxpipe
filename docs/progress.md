@@ -1,5 +1,19 @@
 # pynpxpipe 开发进度
 
+## 2026-11-20 — main 集成验证 ✅
+
+- `origin/main` 的 PR #10 / #11 已包含任务时段截取、多段模式及探针元数据修复；
+  在该基础上集成完整 trial 起始事件配对修复与旧缓存失效逻辑，无代码冲突。
+- 处理电脑的更新教程统一使用 `git switch main` / `git pull --ff-only origin main`；
+  补充 CHANGELOG 的 Unreleased 记录。
+- 集成后的完整 CPU 回归：**1703 passed / 48 skipped / 2 deselected**，
+  全库覆盖率 **85.69%**（要求 80%）。48 项跳过依赖缺失的真实数据/MATLAB 环境，
+  2 项排除为未安装的 torch/Kilosort 安装检查；没有执行真实 sorting。
+- 全库 ruff lint、改动 Python 文件格式检查与 `git diff --check` 通过。
+  全库格式检查仍有此前记录的 5 个未改动文件问题。
+- GitHub 当前无 Actions workflow 或检查任务，本次验证来自本地 CPU 测试，
+  不将它表述为 GitHub CI 通过；通过 PR 将更新合入 main。
+
 ## 2026-11-20 — 完整 trial 起始事件配对修复 ✅
 
 - 生产报错 `start marker 2` 的原因：独立 trial TTL 的物理值被误当成 BHV2 事件码。
