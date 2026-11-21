@@ -127,7 +127,8 @@ def add_segment_metadata(writer: NWBWriter, manifest: SegmentManifest) -> None:
     nf.add_time_intervals(blocks)
     trials = pd.read_parquet(writer.session.output_dir / "04_sync" / "full_trials.parquet")
     table = TimeIntervals(
-        name="full_trials", description="All BHV2 trials including failed and stimulus-free trials"
+        name="full_trials",
+        description="Full interval of each retained behavioral trial (including unsuccessful presentations).",
     )
     columns = [c for c in trials.columns if c not in ("start_time", "stop_time")]
     for col in columns:
@@ -147,6 +148,8 @@ def resolve_source_stimuli(session: Session, events: pd.DataFrame) -> pd.DataFra
     for source in session.recording_sources:
         mask = result.source_id == source.source_id
         subset = result[mask]
+        if subset.empty:
+            continue
         dataset = BHV2Parser(source.bhv_file).get_dataset_tsv_path()
         path, tag = resolve_dataset_tsv(dataset, session.subject.image_vault_paths)
         mapping = load_stim_map(path) if path else {}
@@ -181,12 +184,15 @@ def add_segmented_eye(writer: NWBWriter, manifest: SegmentManifest) -> None:
     tracking = EyeTracking(name="EyeTracking")
     count = 0
     for source in writer.session.recording_sources:
+        source_trials = trials.loc[trials.source_id == source.source_id]
+        if source_trials.empty:
+            continue
         parser = BHV2Parser(source.bhv_file)
         eyes = parser.get_analog_data("Eye")
         ref = next(s for s in manifest.sources if s["source_id"] == source.source_id)["sync"][
             "imec0"
         ]
-        for row in trials[trials.source_id == source.source_id].itertuples():
+        for row in source_trials.itertuples():
             if row.trial_id not in eyes:
                 continue
             data = np.asarray(eyes[row.trial_id])

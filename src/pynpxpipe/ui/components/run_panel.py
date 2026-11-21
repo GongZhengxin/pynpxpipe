@@ -66,12 +66,14 @@ class RunPanel:
         self.preview_btn = pn.widgets.Button(
             name="对齐并预览任务时段", visible=preview_fn is not None
         )
-        self.preview_result = pn.pane.Markdown("")
+        self.preview_result = pn.pane.Markdown("尚未加载任务时段预览。")
         self.preview_table = pn.pane.DataFrame(visible=False, max_rows=100)
         self.details = pn.Accordion(
             ("已保存的保留区间（秒）", self.preview_table), active=[], visible=False
         )
-        self.timeline = TaskTimeline(tuning_controls)
+        self.refresh_btn = pn.widgets.Button(name="刷新试算", icon="refresh")
+        self.refresh_btn.on_click(self._on_refresh_click)
+        self.timeline = TaskTimeline([*(tuning_controls or []), self.refresh_btn])
         self.status_text = pn.pane.Str("Status: idle", styles={"font-size": "14px"})
         self.validation_alert = pn.pane.Alert(
             "", alert_type="danger", visible=False, sizing_mode="stretch_width"
@@ -155,12 +157,18 @@ class RunPanel:
         if not self._state.output_dir:
             return
         root = Path(self._state.output_dir)
-        if (root / "03_segments" / "summary.json").is_file():
+        if not (root / "03_segments" / "summary.json").is_file():
+            self.preview_result.object = (
+                "此输出目录没有任务时段预览：缺少 `03_segments/summary.json`。"
+            )
+            if any((root / ".invalidated").glob("*/03_segments/summary.json")):
+                self.preview_result.object += " 在 `.invalidated` 中找到了已归档的预览。"
+            return
+        try:
+            self._show_report(self._read_preview(root))
             self._preview_key = self._alignment_key()
-            try:
-                self._show_report(self._read_preview(root))
-            except (OSError, KeyError, ValueError) as exc:
-                self.preview_result.object = f"无法读取已保存的预览：{exc}"
+        except (OSError, KeyError, ValueError) as exc:
+            self.preview_result.object = f"无法读取已保存的预览：{exc}"
 
     def _validate_before_run(self) -> str | None:
         """Null-check the NWB filename fields. Returns an error message or None."""
@@ -218,6 +226,10 @@ class RunPanel:
         if self._preview_fn is not None:
             self._on_run_click(event, preview=True)
 
+    def _on_refresh_click(self, event) -> None:
+        if self.timeline.data is not None and self._state.pipeline_config is not None:
+            self.timeline.update(self._state.pipeline_config.task_windows)
+
     def _on_stop_click(self, event) -> None:
         """Set interrupt flag to signal the pipeline to stop."""
         self._interrupt.set()
@@ -267,10 +279,16 @@ class RunPanel:
         info = json.loads((root / "summary.json").read_text(encoding="utf-8"))
         reduction = 100 * (1 - info["retained_duration_s"] / info["original_duration_s"])
         text = (
-            f"{info['n_sources']} 段记录，{info['n_trials']} 个试次，{info['n_blocks']} 个任务块。"
+            f"{info['n_sources']} 段记录，{info['n_blocks']} 个任务块。"
             f"原始 {info['original_duration_s']:.1f} s → 保留 {info['retained_duration_s']:.1f} s，减少 {reduction:.1f}%。"
             f"最大同步残差 {info['max_sync_residual_ms']:.3f} ms。"
         )
+        if "n_empty_trials" in info:
+            text += (
+                f" 有刺激的 trial：{info['n_trials']} 个；空 trial：{info['n_empty_trials']} 个。"
+            )
+        else:
+            text += f" 蓝色为旧版按全部 {info['n_trials']} 个 trial 保存的选区。"
         if info.get("joint_sorting_compatible") is False:
             text += (
                 "\n\n**对齐预览已完成，联合 sorting 尚不能执行：** " + info["joint_sorting_error"]
@@ -313,12 +331,14 @@ class RunPanel:
         }
         self.status_text.object = labels.get(status, f"Status: {status}")
 
-    def panel(self) -> pn.viewable.Viewable:
+    def panel(self, restore_form: pn.viewable.Viewable | None = None) -> pn.viewable.Viewable:
         """Return the Panel layout for this component."""
         return pn.Column(
             pn.Row(self.run_btn, self.stop_btn, self.preview_btn),
             self.status_text,
             self.validation_alert,
+            pn.pane.Markdown("### 任务时段时间轴"),
+            *([restore_form] if restore_form is not None else []),
             self.preview_result,
             self.timeline.layout,
             self.details,

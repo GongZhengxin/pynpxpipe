@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from pynpxpipe.core.segments import Segment, SegmentManifest, select_task_windows, window_frames
+from pynpxpipe.core.segments import (
+    Segment,
+    SegmentManifest,
+    presented_events,
+    select_task_windows,
+    window_frames,
+)
 from pynpxpipe.io.segment_recordings import acquisition_start, validate_sources
 from pynpxpipe.io.spikeglx import SpikeGLXDiscovery
 from pynpxpipe.stages.base import BaseStage
@@ -132,6 +138,21 @@ class SelectSegmentsStage(BaseStage):
             previous_end = offset + ref_duration
             trials = pd.read_parquet(sync_dir / "trial_intervals.parquet")
             events = pd.read_parquet(sync_dir / "behavior_events.parquet")
+            events = presented_events(events).copy()
+            if (
+                not events.trial_id.isin(trials.trial_id).all()
+                or trials.trial_id.duplicated().any()
+            ):
+                raise ValueError(
+                    f"{source.source_id}: stimulus events and trial identifiers disagree"
+                )
+            trials["n_presentations"] = (
+                trials.trial_id.map(events.trial_id.value_counts()).fillna(0).astype(int)
+            )
+            empty = trials.loc[trials.n_presentations == 0]
+            empty_intervals = list(zip(empty.start_time, empty.stop_time, strict=True))
+            empty_stops = sorted(empty.stop_time) if cfg.enabled else []
+            trials = trials.loc[trials.n_presentations > 0].copy()
             nidq_bin, nidq_meta_path = SpikeGLXDiscovery(source.session_dir).discover_nidq()
             nidq_meta = SpikeGLXDiscovery.parse_meta(nidq_meta_path)
             ni_rate = float(nidq_meta["niSampRate"])
@@ -141,6 +162,7 @@ class SelectSegmentsStage(BaseStage):
                 list(zip(trials.start_time, trials.stop_time, strict=True)),
                 nidq_durations[source.source_id],
                 cfg,
+                empty_trials=empty_intervals,
             )
             stream_specs = [("nidq", "nidq", ni_rate, ni_frames, 1.0, 0.0)]
             for probe in source.probes:
@@ -169,7 +191,9 @@ class SelectSegmentsStage(BaseStage):
                             f"{source.source_id}/{pid}: task trials extend beyond neural recording"
                         )
                 for start, stop in windows:
-                    lo, hi = window_frames(start, stop, rate, n_frames, a, b)
+                    lo, hi = window_frames(
+                        start, stop, rate, n_frames, a, b, empty_stops=empty_stops
+                    )
                     if hi <= lo:
                         raise ValueError(
                             f"{source.source_id}/{pid}/{stream}: task block has no samples"
@@ -216,6 +240,7 @@ class SelectSegmentsStage(BaseStage):
                     "windows_nidq_s": windows,
                     "original_duration_s": ref_duration,
                     "n_trials": len(trials),
+                    "empty_trials_nidq_s": empty_intervals,
                     "nidq_metadata": nidq_meta,
                     "probe_metadata": {
                         p.probe_id: {
@@ -226,7 +251,10 @@ class SelectSegmentsStage(BaseStage):
                     },
                 }
             )
-        if len({"planned_event_id" in events.columns for events in all_events}) > 1:
+        if not segments:
+            raise ValueError("所有记录都没有呈现刺激的 trial，没有可保留的神经数据。")
+        event_tables = [events for events in all_events if not events.empty]
+        if len({"planned_event_id" in events.columns for events in event_tables}) > 1:
             raise ValueError(
                 "Joint sources must use the same behavioral event protocol; target and legacy events cannot be mixed"
             )
@@ -245,7 +273,7 @@ class SelectSegmentsStage(BaseStage):
         pd.concat(all_trials, ignore_index=True).to_parquet(
             sync_root / "full_trials.parquet", index=False
         )
-        pd.concat(all_events, ignore_index=True).to_parquet(
+        pd.concat(event_tables or all_events, ignore_index=True).to_parquet(
             sync_root / "behavior_events.parquet", index=False
         )
         summary = {
@@ -253,6 +281,7 @@ class SelectSegmentsStage(BaseStage):
             "joint_sorting_error": joint_error,
             "n_sources": len(sources),
             "n_trials": sum(s["n_trials"] for s in metadata),
+            "n_empty_trials": sum(len(s["empty_trials_nidq_s"]) for s in metadata),
             "n_blocks": len(manifest.for_probe("imec0")),
             "signature": manifest.signature,
             "nidq_durations_s": nidq_durations,

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,15 +18,28 @@ import numpy as np
 from pynpxpipe.core.config import TaskWindowConfig
 
 if TYPE_CHECKING:
+    import pandas as pd
     from spikeinterface.core import BaseSorting
 
     from pynpxpipe.core.session import Session
 
 
+def presented_events(events: pd.DataFrame) -> pd.DataFrame:
+    """An emitted BHV image-on event counts even when its NIDQ match or fixation failed."""
+    for column in ("stim_onset_bhv_ms", "stim_onset_nidq_s"):
+        if column in events:
+            return events.loc[np.isfinite(events[column].to_numpy(dtype=float, na_value=np.nan))]
+    raise ValueError("行为事件表缺少刺激呈现时间，无法判断空 trial。")
+
+
 def select_task_windows(
-    trials: list[tuple[float, float]], duration_s: float, config: TaskWindowConfig
+    trials: list[tuple[float, float]],
+    duration_s: float,
+    config: TaskWindowConfig,
+    *,
+    empty_trials: Sequence[tuple[float, float]] = (),
 ) -> list[tuple[float, float]]:
-    """Group complete trials by idle gap, then pad, clamp and merge overlaps.
+    """Group and pad presented trials without crossing a stimulus-free trial.
 
     Raises:
         ValueError: If boundaries are missing, nonfinite or outside the recording.
@@ -33,9 +48,18 @@ def select_task_windows(
         raise ValueError("Recording duration must be positive")
     if not config.enabled:
         return [(0.0, float(duration_s))]
+    excluded = sorted(empty_trials)
+    ends = [stop for _, stop in excluded]
+    if any(
+        not np.isfinite([start, stop]).all() or stop <= start or (i and start < ends[i - 1])
+        for i, (start, stop) in enumerate(excluded)
+    ):
+        raise ValueError("Invalid or overlapping empty trial intervals")
     if not trials:
+        if excluded:
+            return []
         raise ValueError("No reliable trial intervals; refusing to discard neural data")
-    blocks: list[list[float]] = []
+    blocks: list[tuple[float, float, int]] = []
     for start, stop in sorted(trials):
         if (
             not np.isfinite([start, stop]).all()
@@ -44,14 +68,21 @@ def select_task_windows(
             or start >= duration_s
         ):
             raise ValueError(f"Invalid or out-of-recording trial interval: {(start, stop)}")
-        if blocks and start - blocks[-1][1] <= config.max_idle_s:
-            blocks[-1][1] = max(stop, blocks[-1][1])
+        gap = bisect_right(ends, start)
+        if gap < len(excluded) and excluded[gap][0] < stop:
+            raise ValueError("Presented and empty trial intervals overlap")
+        if blocks and gap == blocks[-1][2] and start - blocks[-1][1] <= config.max_idle_s:
+            blocks[-1] = (blocks[-1][0], max(stop, blocks[-1][1]), gap)
         else:
-            blocks.append([start, stop])
+            blocks.append((start, stop, gap))
     windows: list[tuple[float, float]] = []
-    for start, stop in blocks:
-        start = max(0.0, start - config.padding_before_s)
-        stop = min(duration_s, stop + config.padding_after_s)
+    for start, stop, gap in blocks:
+        start = max(0.0, start - config.padding_before_s, ends[gap - 1] if gap else 0.0)
+        stop = min(
+            duration_s,
+            stop + config.padding_after_s,
+            excluded[gap][0] if gap < len(excluded) else duration_s,
+        )
         if windows and start <= windows[-1][1]:
             windows[-1] = (windows[-1][0], max(windows[-1][1], stop))
         else:
@@ -60,12 +91,21 @@ def select_task_windows(
 
 
 def window_frames(
-    start: float, stop: float, rate: float, n_frames: int, a: float, b: float
+    start: float,
+    stop: float,
+    rate: float,
+    n_frames: int,
+    a: float,
+    b: float,
+    *,
+    empty_stops: Sequence[float] = (),
 ) -> tuple[int, int]:
-    """Map a NIDQ interval to outward-rounded, clipped source frames (NIDQ = a*t + b)."""
-    return max(0, int(np.floor((start - b) / a * rate))), min(
-        n_frames, int(np.ceil((stop - b) / a * rate))
-    )
+    """Round outward unless that would include a sample inside an excluded trial."""
+    lo = max(0, int(np.floor((start - b) / a * rate)))
+    preceding = bisect_right(empty_stops, start)
+    if preceding:
+        lo = max(lo, int(np.ceil((empty_stops[preceding - 1] - b) / a * rate)))
+    return lo, min(n_frames, int(np.ceil((stop - b) / a * rate)))
 
 
 @dataclass(frozen=True)

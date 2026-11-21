@@ -93,6 +93,7 @@ class BrowsableInput:
             only.  If ``False`` (default), directories can also be selected.
         root_directory: Starting directory for the FileSelector.  Defaults to
             the pynpxpipe project root.
+        wrap: Allow the controls to wrap without widening a neighboring plot.
     """
 
     def __init__(
@@ -102,6 +103,8 @@ class BrowsableInput:
         file_pattern: str = "*",
         only_files: bool = False,
         root_directory: str | Path | None = None,
+        *,
+        wrap: bool = False,
     ) -> None:
         root = str(root_directory) if root_directory is not None else str(_DEFAULT_ROOT)
         initial_drive = str(Path(root).anchor)
@@ -133,10 +136,16 @@ class BrowsableInput:
         header_widgets = [self.text_input, self.browse_btn]
         if self.drive_select is not None:
             header_widgets.insert(0, self.drive_select)
-        self._panel = pn.Column(
-            pn.Row(*header_widgets),
-            self.file_selector,
-        )
+        if wrap:
+            self._panel = pn.FlexBox(
+                pn.FlexBox(*header_widgets),
+                self.file_selector,
+                flex_direction="column",
+                sizing_mode="stretch_width",
+                styles={"overflow-x": "auto"},
+            )
+        else:
+            self._panel = pn.Column(pn.Row(*header_widgets), self.file_selector)
 
         self.browse_btn.on_click(self._on_browse_click)
         self.file_selector.param.watch(self._on_file_selected, "value")

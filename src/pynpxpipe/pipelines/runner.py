@@ -6,7 +6,6 @@ No UI dependencies.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from collections.abc import Callable
@@ -22,7 +21,8 @@ from pynpxpipe.core.resources import (
     ResourceTuning,
     recommend_motion_strategy,
 )
-from pynpxpipe.pipelines.constants import PER_PROBE_STAGES, STAGE_ORDER
+from pynpxpipe.pipelines.constants import STAGE_ORDER
+from pynpxpipe.pipelines.status import read_pipeline_status
 
 if TYPE_CHECKING:
     from pynpxpipe.core.config import PipelineConfig, SortingConfig
@@ -44,10 +44,6 @@ def _read_meta_value(meta_path: Path, key: str) -> str | None:
         if line.startswith(f"{key}="):
             return line.split("=", 1)[1].strip()
     return None
-
-
-# Internal alias
-_PER_PROBE_STAGES = PER_PROBE_STAGES
 
 
 class PipelineRunner:
@@ -210,10 +206,9 @@ class PipelineRunner:
         Returns:
             Dict mapping stage name to status string.
         """
-        status: dict[str, str] = {}
-        for stage_name in STAGE_ORDER:
-            status[stage_name] = self._stage_status(stage_name)
-        return status
+        return read_pipeline_status(
+            self.session.output_dir, [p.probe_id for p in self.session.probes or []]
+        )
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -366,40 +361,3 @@ class PipelineRunner:
             return PostprocessStage(s, cb)
         # export
         return ExportStage(s, cb)
-
-    def _stage_status(self, stage_name: str) -> str:
-        """Determine status string for one stage."""
-        cp_dir = self.session.output_dir / "checkpoints"
-
-        # Check stage-level checkpoint first
-        stage_cp = cp_dir / f"{stage_name}.json"
-        if stage_cp.exists():
-            try:
-                data = json.loads(stage_cp.read_text(encoding="utf-8"))
-                return data.get("status", "pending")
-            except Exception:  # noqa: BLE001
-                pass
-
-        if stage_name not in _PER_PROBE_STAGES or not self.session.probes:
-            return "pending"
-
-        # Count per-probe checkpoints
-        n_probes = len(self.session.probes)
-        completed = 0
-        for probe in self.session.probes:
-            probe_cp = cp_dir / f"{stage_name}_{probe.probe_id}.json"
-            if probe_cp.exists():
-                try:
-                    data = json.loads(probe_cp.read_text(encoding="utf-8"))
-                    if data.get("status") == "completed":
-                        completed += 1
-                    elif data.get("status") == "failed":
-                        return "failed"
-                except Exception:  # noqa: BLE001
-                    pass
-
-        if completed == 0:
-            return "pending"
-        if completed == n_probes:
-            return "completed"
-        return f"partial ({completed}/{n_probes} probes)"

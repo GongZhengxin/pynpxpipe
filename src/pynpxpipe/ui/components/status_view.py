@@ -5,8 +5,7 @@ Each stage row includes a Reset button that clears the checkpoint so the
 stage will re-run on the next pipeline invocation.
 
 Dependencies are injected (get_status_fn, clear_stage_fn) for testability.
-In production, these call PipelineRunner.get_status() and
-CheckpointManager.clear() respectively.
+Reading the status only inspects checkpoints; Reset calls CheckpointManager.clear().
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ class StatusView:
     Args:
         state: Shared AppState instance.
         get_status_fn: Callable(output_dir) -> dict[str, str]. Defaults to
-            using PipelineRunner.get_status() via SessionManager.load().
+            reading saved checkpoint files in the selected directory.
         clear_stage_fn: Callable(output_dir, stage_name) -> None. Defaults to
             CheckpointManager.clear() for both stage-level and probe-level checkpoints.
     """
@@ -157,16 +156,13 @@ class StatusView:
 
     @staticmethod
     def _default_get_status(output_dir: str) -> dict[str, str]:
-        """Load session and return PipelineRunner.get_status()."""
-        from pynpxpipe.core.config import load_pipeline_config, load_sorting_config
+        """Inspect the selected output root, even if it has moved since recording."""
         from pynpxpipe.core.session import SessionManager
-        from pynpxpipe.pipelines.runner import PipelineRunner
+        from pynpxpipe.pipelines.status import read_pipeline_status
 
-        session = SessionManager.load(Path(output_dir))
-        pipeline_config = load_pipeline_config()
-        sorting_config = load_sorting_config()
-        runner = PipelineRunner(session, pipeline_config, sorting_config)
-        return runner.get_status()
+        root = Path(output_dir)
+        session = SessionManager.load(root)
+        return read_pipeline_status(root, [p.probe_id for p in session.probes])
 
     @staticmethod
     def _default_clear_stage(output_dir: str, stage_name: str) -> None:

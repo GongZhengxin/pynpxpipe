@@ -720,6 +720,23 @@ class PipelineForm:
     # ── Internal ──
 
     def _rebuild_config(self, event=None) -> None:
+        task = TaskWindowConfig(
+            enabled=self.crop_enabled.value,
+            max_idle_s=self.task_max_idle.value,
+            padding_before_s=self.task_pre.value,
+            padding_after_s=self.task_post.value,
+            join_guard_s=self.task_join_guard.value,
+            filter_margin_s=self.task_filter_margin.value,
+            recording_timezone=self.task_timezone.value.strip() or None,
+            trial_start_code=int(self.task_start_code.value)
+            if self.task_start_code.value.strip()
+            else None,
+        )
+        if event is not None and event.obj in self._task_widgets and self._state.pipeline_config:
+            self._state.pipeline_config = dataclasses.replace(
+                self._state.pipeline_config, task_windows=task
+            )
+            return
         n_jobs_raw = self.n_jobs_input.value
         try:
             n_jobs = int(n_jobs_raw)
@@ -741,18 +758,7 @@ class PipelineForm:
 
         self._state.pipeline_config = dataclasses.replace(
             _DEFAULTS,
-            task_windows=TaskWindowConfig(
-                enabled=self.crop_enabled.value,
-                max_idle_s=self.task_max_idle.value,
-                padding_before_s=self.task_pre.value,
-                padding_after_s=self.task_post.value,
-                join_guard_s=self.task_join_guard.value,
-                filter_margin_s=self.task_filter_margin.value,
-                recording_timezone=self.task_timezone.value.strip() or None,
-                trial_start_code=int(self.task_start_code.value)
-                if self.task_start_code.value.strip()
-                else None,
-            ),
+            task_windows=task,
             resources=ResourcesConfig(
                 n_jobs=n_jobs,
                 chunk_duration=self.chunk_duration_input.value or "auto",
@@ -883,9 +889,8 @@ class PipelineForm:
         """Populate every widget from a PipelineConfig dataclass.
 
         Used by SessionLoader after restoring ``state.pipeline_config`` from
-        ``used_pipeline.yaml``. Only the fields the form actually exposes get
-        propagated; any other dataclass fields rely on the form's _DEFAULTS
-        baseline (mirrors the existing _rebuild_config behaviour).
+        ``used_pipeline.yaml``. Keep unexposed settings from the snapshot when
+        a user restores a preview and tunes only its task windows.
         """
         task = cfg.task_windows
         self.crop_enabled.value = task.enabled
@@ -1007,6 +1012,7 @@ class PipelineForm:
         self.derivatives_post_onset_ms_input.value = str(deriv.post_onset_ms)
         self.derivatives_bin_size_ms_input.value = float(deriv.bin_size_ms)
         self.derivatives_n_jobs_input.value = int(deriv.n_jobs)
+        self._state.pipeline_config = cfg
 
     # ── Layout ──
 

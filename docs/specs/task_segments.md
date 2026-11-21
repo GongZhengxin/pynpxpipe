@@ -4,8 +4,8 @@ User-approved implementation specification (2026-11-17).
 
 ## Goal
 
-Synchronize before sorting, retain all task activity (including failed and
-stimulus-free trials), and sort ordered neural/BHV2 pairs from the same animal,
+Synchronize before sorting, retain each whole trial with at least one image onset
+(even if it later failed), and sort ordered neural/BHV2 pairs from the same animal,
 experiment/day and unchanged probe placement together. Original files are read-only.
 
 ## Inputs and configuration
@@ -39,8 +39,11 @@ gaps; units carry `obs_intervals`. Trial/stimulus identity is namespaced by sour
 3. Anchor BHV trial zero to matched behavioral markers (including their BHV
    offsets). Trial end is the maximum recorded event/analog extent, never the
    next trial's start. Ambiguous or missing boundaries fail selection.
-4. Merge consecutive trials when next start minus previous end is <=180 s.
-   Pad blocks, clamp to stream extent and merge overlaps; do not discard sparse activity.
+4. Use a finite recorded BHV stimulus onset (or a finite NIDQ onset in older tables without the BHV column).
+   Image IDs, planned images, fixation success and placeholder rows do not establish presentation.
+   Merge presented trials when next start minus previous end is <=180 s. Empty trials are hard
+   boundaries for gap merging, padding and frame selection. Per-source alignment still includes
+   all trial anchors; selected behavior tables and the timeline only include trials with a presentation.
 5. Filter within source/block context. Union bad channels per probe, reference,
    concatenate for optional DREDge and one sorter invocation per probe.
 6. Split sorting back to analysis segments with shared unit IDs. Exclude the
@@ -89,8 +92,8 @@ as NIDQ decoding, and matches the corresponding NIDQ transitions independently
 of the trial TTL used for stimulus window matching. It never hardcodes code 9.
 Reject missing/repeated BHV anchors, projected-code collisions, unrecorded codes,
 non-finite/invalid extents, unequal counts, non-monotonic times, overlapping
-intervals, or a trial TTL outside its reconstructed trial. Keep failed and
-stimulus-free trials. Save both anchor codes and timestamps in trial intervals
+intervals, or a trial TTL outside its reconstructed trial. Align even failed and
+stimulus-free trials before selecting task windows. Save both anchor codes and timestamps in trial intervals
 and log the selected mapping. With no decoder mapping, existing callers with an
 explicit BHV code retain their explicitly supplied decoded bit mapping.
 Increment the segmented run-signature version so completed results from the old

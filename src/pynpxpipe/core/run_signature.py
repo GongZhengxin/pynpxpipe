@@ -12,8 +12,9 @@ if TYPE_CHECKING:
     from pynpxpipe.core.config import PipelineConfig, SortingConfig
     from pynpxpipe.core.session import Session
 
-# Version 2 anchors full trials to matching BHV/NIDQ events, not an unrelated TTL.
-_SIGNATURE_VERSION = 2
+# Version 2 anchors full trials to matching BHV/NIDQ events. Version 3 excludes
+# stimulus-free trials from segmented selections and their downstream outputs.
+_SIGNATURE_VERSION = 3
 
 
 def input_signature(
