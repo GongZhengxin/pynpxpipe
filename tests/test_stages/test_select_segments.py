@@ -116,6 +116,105 @@ def test_selection_keeps_failed_trials_and_namespaces_sources(joint_session):
     )
 
 
+def test_timeline_what_if_matches_formal_selection_on_each_clock(joint_session):
+    from dataclasses import replace
+
+    from pynpxpipe.ui.components.run_panel import RunPanel
+
+    out = joint_session.output_dir
+    sync = out / "sources" / "b" / "04_sync" / "sync_tables.json"
+    sync.write_text(json.dumps({"probes": {"imec0": {"a": 1.02, "b": 0.15, "residual_ms": 0.1}}}))
+    stage = SelectSegmentsStage(joint_session)
+    stage.run()
+    timeline = RunPanel._read_preview(out).timeline
+    assert timeline.trials.trial_key.tolist() == ["a:1", "a:2", "b:1", "b:2"]
+    # Each source's NIDQ clock starts afresh; AP and BHV are on experiment time.
+    assert timeline.trials.start_time.iloc[2] == pytest.approx(120 + (10 - 0.15) / 1.02)
+    assert [(s.start, s.duration) for s in timeline.sources] == [(0, 100), (120, 100)]
+    original = (out / "03_segments" / "segments.json").read_bytes()
+    cfg = replace(
+        joint_session.config.task_windows, max_idle_s=49, padding_before_s=25, padding_after_s=80
+    )
+    candidate = timeline.select(cfg)
+    assert len(candidate) == 2
+    assert (out / "03_segments" / "segments.json").read_bytes() == original
+    assert not (out / ".invalidated").exists()
+    joint_session.config.task_windows = cfg
+    stage._select()
+    actual = SegmentManifest.load(out / "03_segments" / "segments.json").for_probe("imec0")
+    assert candidate == actual
+
+
+def test_saved_timeline_reacts_to_both_editors_and_drops_stale_alignment(joint_session):
+    from unittest.mock import Mock
+
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+    from pynpxpipe.ui.components.run_panel import RunPanel
+    from pynpxpipe.ui.state import AppState
+
+    SelectSegmentsStage(joint_session).run()
+    state = AppState(
+        input_mode="joint",
+        recordings=[s.to_dict() for s in joint_session.recordings],
+        output_dir=joint_session.output_dir,
+    )
+    form = PipelineForm(state)
+    form.apply_pipeline(joint_session.config)
+    controls = form.task_preview_controls()
+    run = Mock(side_effect=AssertionError("tuning must never launch a pipeline"))
+    panel = RunPanel(state, pipeline_fn=run, preview_fn=run, tuning_controls=controls)
+    panel.load_saved_preview()
+    view = panel.timeline
+    assert view.layout.visible
+    fig = view.plot.object
+    raw, saved, trials = (
+        fig.select_one({"name": name}).data_source.data
+        for name in ("原始记录", "已保存", "完整 trial")
+    )
+    assert raw["start"] == [0, 120] and raw["stop"] == [100, 220]
+    assert list(trials["trial"]) == ["a:1", "a:2", "b:1", "b:2"]
+    assert view.candidate.data["start"] == saved["start"] == [8, 58, 128, 178]
+    fig.x_range.start, fig.x_range.end = 6, 67
+    controls[0].value = 49
+    assert form.task_max_idle.value == state.pipeline_config.task_windows.max_idle_s == 49
+    assert view.candidate.data["start"] == [8, 128]
+    assert view.candidate.data["stop"] == [63, 183]
+    assert "110.0 s" in view.stats.object and "2.0%" in view.stats.object
+    form.task_pre.value = 0
+    assert controls[1].value == 0 and view.candidate.data["start"] == [10, 130]
+    assert (fig.x_range.start, fig.x_range.end) == (6, 67)
+    assert saved["start"] == [8, 58, 128, 178]
+    assert panel.preview_table.object.start_s.tolist() == saved["start"]
+    state.recordings = list(reversed(state.recordings))
+    assert not view.layout.visible and not panel.preview_table.visible and view.data is None
+    assert "重新" in panel.preview_result.object
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("saved_header", [True, False])
+def test_old_preview_uses_embedded_header_or_shows_saved_only(joint_session, saved_header):
+    from pynpxpipe.ui.components.run_panel import RunPanel
+    from pynpxpipe.ui.components.task_timeline import TaskTimeline
+
+    for source in joint_session.recordings:
+        if saved_header:
+            meta = source.session_dir / "rec.nidq.meta"
+            with meta.open("a") as f:
+                f.write("\nfileSizeBytes=40000\n")
+    SelectSegmentsStage(joint_session).run()
+    out = joint_session.output_dir
+    summary = out / "03_segments" / "summary.json"
+    info = json.loads(summary.read_text())
+    del info["nidq_durations_s"]
+    summary.write_text(json.dumps(info))
+    chart = TaskTimeline()
+    chart.show(RunPanel._read_preview(out).timeline, joint_session.config.task_windows)
+    assert chart.layout.visible
+    assert bool(chart.candidate.data["start"]) == saved_header
+    assert ("缺少原始 NIDQ 时长" in chart.stats.object) != saved_header
+    assert len(chart.plot.object.select_one({"name": "已保存"}).data_source.data["start"]) == 4
+
+
 @pytest.mark.parametrize("crop_enabled", [True, False])
 def test_preview_checks_later_source_clock_before_sync(joint_session, monkeypatch, crop_enabled):
     from pynpxpipe.pipelines.runner import PipelineRunner

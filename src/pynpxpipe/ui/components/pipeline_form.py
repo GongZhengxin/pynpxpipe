@@ -1010,6 +1010,15 @@ class PipelineForm:
 
     # ── Layout ──
 
+    def task_preview_controls(self) -> list[pn.widgets.Widget]:
+        """Return compact Execute controls linked to Configure's authoritative inputs."""
+        controls = []
+        for field in (self.task_max_idle, self.task_pre, self.task_post):
+            editor = field.clone(width=165)
+            field.link(editor, value="value", bidirectional=True)
+            controls.append(editor)
+        return controls
+
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
             pn.pane.Markdown("### Pipeline Parameters"),

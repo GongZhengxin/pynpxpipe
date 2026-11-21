@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Compare saved and proposed task windows against full neural recordings and aligned BHV
+  trials on an interactive timeline. Tune gap and padding without rereading raw signals or
+  changing outputs, including when reopening a completed preview.
+
 ### Fixed
 
 - The web UI now writes diagnostic PNGs with Agg and sends progress, errors and

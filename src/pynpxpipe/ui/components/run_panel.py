@@ -7,18 +7,30 @@ calls SessionManager + PipelineRunner; tests inject a mock callable.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import panel as pn
 
+from pynpxpipe.ui.components.task_timeline import TaskTimeline, TimelineData
 from pynpxpipe.ui.state import AppState, ProgressBridge
 
 if TYPE_CHECKING:
     import pandas as pd
+
+
+@dataclass
+class PreviewReport:
+    """Formal selection summary and optional artifacts for on-screen comparison."""
+
+    text: str
+    table: pd.DataFrame | None = None
+    timeline: TimelineData | None = None
 
 
 class RunPanel:
@@ -38,6 +50,7 @@ class RunPanel:
         pipeline_fn: Callable[[AppState, ProgressBridge], None] | None = None,
         preview_fn: Callable[[AppState, ProgressBridge], None] | None = None,
         bridge: ProgressBridge | None = None,
+        tuning_controls: list[pn.widgets.Widget] | None = None,
     ) -> None:
         self._state = state
         self._pipeline_fn = pipeline_fn or (lambda st, br: None)
@@ -45,6 +58,7 @@ class RunPanel:
         self._bridge = bridge or ProgressBridge(state)
         self._thread: threading.Thread | None = None
         self._interrupt = threading.Event()
+        self._preview_key: tuple | None = None
 
         # ── Widgets ──
         self.run_btn = pn.widgets.Button(name="Run", button_type="primary")
@@ -54,6 +68,10 @@ class RunPanel:
         )
         self.preview_result = pn.pane.Markdown("")
         self.preview_table = pn.pane.DataFrame(visible=False, max_rows=100)
+        self.details = pn.Accordion(
+            ("已保存的保留区间（秒）", self.preview_table), active=[], visible=False
+        )
+        self.timeline = TaskTimeline(tuning_controls)
         self.status_text = pn.pane.Str("Status: idle", styles={"font-size": "14px"})
         self.validation_alert = pn.pane.Alert(
             "", alert_type="danger", visible=False, sizing_mode="stretch_width"
@@ -66,6 +84,83 @@ class RunPanel:
 
         # Watch run_status for button enable/disable and status text
         state.param.watch(self._on_status_change, ["run_status"])
+        state.param.watch(
+            self._on_preview_inputs,
+            [
+                "pipeline_config",
+                "input_mode",
+                "session_dir",
+                "bhv_file",
+                "recordings",
+                "output_dir",
+            ],
+        )
+
+    def _alignment_key(self) -> tuple:
+        st = self._state
+        cfg = st.pipeline_config
+        pairs = (
+            tuple(
+                (
+                    row["source_id"],
+                    str(row["session_dir"]),
+                    str(row["bhv_file"]),
+                    row.get("start_offset_s"),
+                )
+                for row in st.active_recordings
+            )
+            if st.input_mode == "joint"
+            else (str(st.session_dir), str(st.bhv_file))
+        )
+        return (
+            st.input_mode,
+            str(st.output_dir),
+            pairs,
+            cfg.sync if cfg else None,
+            cfg.task_windows.recording_timezone if cfg else None,
+            cfg.task_windows.trial_start_code if cfg else None,
+        )
+
+    def _on_preview_inputs(self, event) -> None:
+        if self._preview_key is None:
+            return
+        if self._preview_key != self._alignment_key():
+            self._clear_preview()
+            self.preview_result.object = "输入或同步设置已改变，请重新执行对齐预览。"
+        elif self.timeline.data is not None:
+            self.timeline.update(self._state.pipeline_config.task_windows)
+
+    def _clear_preview(self) -> None:
+        self._preview_key = None
+        self.preview_result.object = ""
+        self.preview_table.visible = self.details.visible = False
+        self.preview_table.object = None
+        self.timeline.clear()
+
+    def _show_report(self, report: PreviewReport) -> None:
+        self.preview_result.object = report.text
+        self.preview_table.object = report.table
+        self.preview_table.visible = self.details.visible = report.table is not None
+        if report.timeline is not None and self._state.pipeline_config is not None:
+            try:
+                self.timeline.show(report.timeline, self._state.pipeline_config.task_windows)
+            except Exception as exc:
+                logging.getLogger(__name__).exception("Cannot render task timeline")
+                self.timeline.clear()
+                self.preview_result.object += f"\n\n**时间轴不可用**：{exc}"
+
+    def load_saved_preview(self) -> None:
+        """Restore an existing selection on session load, without invoking the runner."""
+        self._clear_preview()
+        if not self._state.output_dir:
+            return
+        root = Path(self._state.output_dir)
+        if (root / "03_segments" / "summary.json").is_file():
+            self._preview_key = self._alignment_key()
+            try:
+                self._show_report(self._read_preview(root))
+            except (OSError, KeyError, ValueError) as exc:
+                self.preview_result.object = f"无法读取已保存的预览：{exc}"
 
     def _validate_before_run(self) -> str | None:
         """Null-check the NWB filename fields. Returns an error message or None."""
@@ -93,8 +188,7 @@ class RunPanel:
         if self._state.run_status == "running":
             return
 
-        self.preview_result.object = ""
-        self.preview_table.visible = False
+        self._clear_preview()
         error = self._validate_before_run()
         if error:
             self.validation_alert.object = error
@@ -102,6 +196,8 @@ class RunPanel:
             self.validation_alert.visible = True
             return
         self.validation_alert.visible = False
+        if preview:
+            self._preview_key = self._alignment_key()
 
         self._state.run_status = "running"
         self._state.stage_progress = 0.0
@@ -143,9 +239,7 @@ class RunPanel:
             error = str(exc) or type(exc).__name__
         self._bridge.dispatch(partial(self._finish_run, preview, result, error))
 
-    def _finish_run(
-        self, preview: bool, result: tuple[str, pd.DataFrame | None] | None, error: str | None
-    ) -> None:
+    def _finish_run(self, preview: bool, result: PreviewReport | None, error: str | None) -> None:
         self._bridge.release_document()
         if error is not None:
             self._state.error_message = error
@@ -154,16 +248,13 @@ class RunPanel:
                 self._state.stage_statuses = {**self._state.stage_statuses, stage: "failed"}
             self._state.run_status = "failed"
             return
-        if result is not None:
-            text, table = result
-            self.preview_result.object = text
-            self.preview_table.object = table
-            self.preview_table.visible = table is not None
+        if result is not None and self._preview_key == self._alignment_key():
+            self._show_report(result)
         self._state.safe_to_exit = not preview
         self._state.run_status = "completed"
 
     @staticmethod
-    def _read_preview(output_dir: Path) -> tuple[str, pd.DataFrame | None]:
+    def _read_preview(output_dir: Path) -> PreviewReport:
         import json
 
         import pandas as pd
@@ -172,7 +263,7 @@ class RunPanel:
 
         root = output_dir / "03_segments"
         if not (root / "summary.json").exists():
-            return "未启用截取：将处理完整记录。", None
+            return PreviewReport("未启用截取：将处理完整记录。")
         info = json.loads((root / "summary.json").read_text(encoding="utf-8"))
         reduction = 100 * (1 - info["retained_duration_s"] / info["original_duration_s"])
         text = (
@@ -187,6 +278,8 @@ class RunPanel:
         elif info.get("n_sources", 1) > 1:
             text += "\n\n探针元数据兼容检查通过；联合预处理时还会核对实际通道配置。"
         manifest = SegmentManifest.load(root / "segments.json")
+        if info["signature"] != manifest.signature:
+            raise ValueError("时段摘要与选区不匹配，请重新执行对齐预览。")
         table = pd.DataFrame(
             [
                 {
@@ -198,7 +291,12 @@ class RunPanel:
                 for s in manifest.for_probe("imec0")
             ]
         )
-        return text, table
+        report = PreviewReport("**已保存的正式预览**：" + text, table)
+        try:
+            report.timeline = TimelineData.load(output_dir, manifest, info)
+        except (OSError, ValueError, KeyError) as exc:
+            report.text += f"\n\n**时间轴不可用**：{exc}"
+        return report
 
     def _on_status_change(self, event) -> None:
         """Update button states and status text when run_status changes."""
@@ -222,5 +320,7 @@ class RunPanel:
             self.status_text,
             self.validation_alert,
             self.preview_result,
-            self.preview_table,
+            self.timeline.layout,
+            self.details,
+            sizing_mode="stretch_width",
         )
