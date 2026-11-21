@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from pynpxpipe.core.segments import Segment, SegmentManifest, select_task_windows
+from pynpxpipe.core.segments import Segment, SegmentManifest, select_task_windows, window_frames
 from pynpxpipe.io.segment_recordings import acquisition_start, validate_sources
 from pynpxpipe.io.spikeglx import SpikeGLXDiscovery
 from pynpxpipe.stages.base import BaseStage
@@ -81,6 +81,7 @@ class SelectSegmentsStage(BaseStage):
         cfg = self.session.config.task_windows
         sources = self.session.recording_sources
         segments, metadata, all_trials, all_events = [], [], [], []
+        nidq_durations = {}
         offsets: dict[tuple[str, str], int] = {}
         first_time = None
         first_meta = None
@@ -135,9 +136,10 @@ class SelectSegmentsStage(BaseStage):
             nidq_meta = SpikeGLXDiscovery.parse_meta(nidq_meta_path)
             ni_rate = float(nidq_meta["niSampRate"])
             ni_frames = nidq_bin.stat().st_size // (2 * int(nidq_meta["nSavedChans"]))
+            nidq_durations[source.source_id] = ni_frames / ni_rate
             windows = select_task_windows(
                 list(zip(trials.start_time, trials.stop_time, strict=True)),
-                ni_frames / ni_rate,
+                nidq_durations[source.source_id],
                 cfg,
             )
             stream_specs = [("nidq", "nidq", ni_rate, ni_frames, 1.0, 0.0)]
@@ -167,8 +169,7 @@ class SelectSegmentsStage(BaseStage):
                             f"{source.source_id}/{pid}: task trials extend beyond neural recording"
                         )
                 for start, stop in windows:
-                    lo = max(0, int(np.floor((start - b) / a * rate)))
-                    hi = min(n_frames, int(np.ceil((stop - b) / a * rate)))
+                    lo, hi = window_frames(start, stop, rate, n_frames, a, b)
                     if hi <= lo:
                         raise ValueError(
                             f"{source.source_id}/{pid}/{stream}: task block has no samples"
@@ -254,6 +255,7 @@ class SelectSegmentsStage(BaseStage):
             "n_trials": sum(s["n_trials"] for s in metadata),
             "n_blocks": len(manifest.for_probe("imec0")),
             "signature": manifest.signature,
+            "nidq_durations_s": nidq_durations,
             "original_duration_s": sum(s["original_duration_s"] for s in metadata),
             "retained_duration_s": sum(
                 s.length / s.sample_rate for s in manifest.for_probe("imec0")

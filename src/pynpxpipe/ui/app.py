@@ -239,6 +239,7 @@ def create_app() -> pn.viewable.Viewable:
         pipeline_fn=pipeline_fn,
         preview_fn=lambda st, br: pipeline_fn(st, br, True),
         bridge=bridge,
+        tuning_controls=pipeline_form.task_preview_controls(),
     )
     progress_view = ProgressView(state)
 
@@ -263,6 +264,7 @@ def create_app() -> pn.viewable.Viewable:
         )
         status_view.load_status()
         figs_viewer.load_figures()
+        run_panel.load_saved_preview()
 
     session_loader = SessionLoader(state, on_session_loaded=_on_session_loaded)
     rerun_derivatives = RerunDerivatives(state)
@@ -286,18 +288,9 @@ def create_app() -> pn.viewable.Viewable:
         sizing_mode="stretch_width",
     )
 
-    execute_section = pn.Row(
-        pn.Column(
-            run_panel.panel(),
-            progress_view.panel(),
-            sizing_mode="stretch_width",
-            min_width=400,
-        ),
-        pn.Column(
-            log_viewer.panel(),
-            sizing_mode="stretch_both",
-            min_width=400,
-        ),
+    execute_section = pn.Column(
+        run_panel.panel(),
+        pn.Row(progress_view.panel(), log_viewer.panel(), sizing_mode="stretch_width"),
         sizing_mode="stretch_width",
         visible=False,
     )

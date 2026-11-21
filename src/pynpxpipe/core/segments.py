@@ -59,6 +59,15 @@ def select_task_windows(
     return windows
 
 
+def window_frames(
+    start: float, stop: float, rate: float, n_frames: int, a: float, b: float
+) -> tuple[int, int]:
+    """Map a NIDQ interval to outward-rounded, clipped source frames (NIDQ = a*t + b)."""
+    return max(0, int(np.floor((start - b) / a * rate))), min(
+        n_frames, int(np.ceil((stop - b) / a * rate))
+    )
+
+
 @dataclass(frozen=True)
 class Segment:
     """One retained source interval and its affine experiment-time mapping."""

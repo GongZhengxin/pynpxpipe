@@ -168,14 +168,15 @@ class TestSectionStructure:
         right_count = len(configure.objects[1].objects)
         assert left_count + right_count >= 5
 
-    def test_execute_has_two_columns(self):
-        """Execute section should be a Row with left (RunPanel+ProgressView) and right (LogViewer)."""
+    def test_execute_has_full_width_preview_above_progress_and_logs(self):
+        """The timeline gets the full width, above the progress and log columns."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
         execute = app._pynpx_sections["execute"]
-        # Row with 2 Column children
-        assert len(execute.objects) == 2
+        assert isinstance(execute, pn.Column)
+        assert execute[0].sizing_mode == "stretch_width"
+        assert isinstance(execute[1], pn.Row) and len(execute[1]) == 2
 
     def test_review_has_two_components(self):
         """Review section should contain SessionLoader + StatusView."""
