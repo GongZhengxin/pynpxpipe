@@ -267,6 +267,9 @@ def create_app() -> pn.viewable.Viewable:
         run_panel.load_saved_preview()
 
     session_loader = SessionLoader(state, on_session_loaded=_on_session_loaded)
+    preview_loader = SessionLoader(
+        state, on_session_loaded=_on_session_loaded, button_label="打开已保存的预览"
+    )
     rerun_derivatives = RerunDerivatives(state)
 
     # ── Sections ──
@@ -289,7 +292,7 @@ def create_app() -> pn.viewable.Viewable:
     )
 
     execute_section = pn.Column(
-        run_panel.panel(),
+        run_panel.panel(preview_loader.panel(show_heading=False)),
         pn.Row(progress_view.panel(), log_viewer.panel(), sizing_mode="stretch_width"),
         sizing_mode="stretch_width",
         visible=False,

@@ -1,10 +1,11 @@
 """Time selection contracts; all times are half-open intervals."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from pynpxpipe.core.config import TaskWindowConfig
-from pynpxpipe.core.segments import Segment, SegmentManifest, select_task_windows
+from pynpxpipe.core.segments import Segment, SegmentManifest, presented_events, select_task_windows
 
 
 @pytest.mark.parametrize("gap,count", [(179, 1), (180, 1), (181, 2)])
@@ -29,6 +30,20 @@ def test_invalid_or_missing_trials_cannot_silently_crop():
     for intervals in ([], [(10, 9)], [(0, np.nan)], [(100, 110)]):
         with pytest.raises(ValueError):
             select_task_windows(intervals, 50, TaskWindowConfig(enabled=True))
+
+
+def test_presentation_evidence_in_new_and_legacy_event_tables():
+    events = pd.DataFrame(
+        {
+            "stim_onset_bhv_ms": [0, np.nan, np.inf],
+            "stim_onset_nidq_s": [np.nan, 1, np.inf],
+            "planned_event_id": [1, 2, 3],
+        }
+    )
+    assert presented_events(events).index.tolist() == [0]
+    assert presented_events(events.drop(columns="stim_onset_bhv_ms")).index.tolist() == [1]
+    with pytest.raises(ValueError, match="刺激呈现时间"):
+        presented_events(events[["planned_event_id"]])
 
 
 def test_frame_time_round_trip_and_signature(tmp_path):

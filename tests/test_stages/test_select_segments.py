@@ -68,25 +68,26 @@ def joint_session(tmp_path):
         )
         pd.DataFrame(
             {
-                "trial_id": [1, 2],
-                "condition_id": [1, 1],
-                "start_time": [10.0, 60.0],
-                "stop_time": [11.0, 61.0],
-                "bhv_zero_nidq_s": [10.0, 60.0],
-                "trial_error": [0, 4],
+                "trial_id": [1, 2, 3],
+                "condition_id": [1, 1, 1],
+                "start_time": [10.0, 60.0, 90.0],
+                "stop_time": [11.0, 61.0, 91.0],
+                "bhv_zero_nidq_s": [10.0, 60.0, 90.0],
+                "trial_error": [0, 4, 4],
             }
         ).to_parquet(directory / "trial_intervals.parquet")
         pd.DataFrame(
             {
-                "trial_id": [1],
-                "condition_id": [1],
-                "stim_index": [1],
-                "trial_valid": [1.0],
-                "onset_nidq_s": [10.0],
-                "stim_onset_nidq_s": [10.5],
-                "stim_onset_imec_s": ['{"imec0": 10.5}'],
-                "onset_time_ms": [150.0],
-                "offset_time_ms": [150.0],
+                "trial_id": [1, 2, 3],
+                "condition_id": [1, 1, 1],
+                "stim_index": [1, 0, 0],
+                "trial_valid": [1.0, 0.0, np.nan],
+                "onset_nidq_s": [10.0, 60.0, 90.0],
+                "stim_onset_bhv_ms": [500.0, 500.0, np.nan],
+                "stim_onset_nidq_s": [10.5, 60.5, np.nan],
+                "stim_onset_imec_s": ['{"imec0": 10.5}', '{"imec0": 60.5}', '{"imec0": NaN}'],
+                "onset_time_ms": [150.0] * 3,
+                "offset_time_ms": [150.0] * 3,
             }
         ).to_parquet(directory / "behavior_events.parquet")
     return session
@@ -105,8 +106,10 @@ def test_selection_keeps_failed_trials_and_namespaces_sources(joint_session):
     assert [s.time(s.start_frame) for s in ap] == [8, 58, 128, 178]
     trials = pd.read_parquet(joint_session.output_dir / "04_sync" / "full_trials.parquet")
     assert trials.trial_key.tolist() == ["a:1", "a:2", "b:1", "b:2"]
+    assert trials.n_presentations.tolist() == [1, 1, 1, 1]
     events = pd.read_parquet(joint_session.output_dir / "04_sync" / "behavior_events.parquet")
-    assert json.loads(events.iloc[1].stim_onset_imec_s)["imec0"] == 130.5
+    assert events.trial_key.tolist() == trials.trial_key.tolist()
+    assert json.loads(events.iloc[2].stim_onset_imec_s)["imec0"] == 130.5
     assert manifest.sources[1]["offset_method"] == "acquisition_wall_clock"
     before = manifest.signature
     SelectSegmentsStage(joint_session).run()
@@ -145,6 +148,117 @@ def test_timeline_what_if_matches_formal_selection_on_each_clock(joint_session):
     assert candidate == actual
 
 
+def test_empty_trials_split_padded_windows_and_empty_sources_contribute_no_frames(joint_session):
+    from pynpxpipe.ui.components.run_panel import RunPanel
+
+    out = joint_session.output_dir
+    cfg = joint_session.config.task_windows
+    cfg.max_idle_s = cfg.padding_before_s = cfg.padding_after_s = 180
+    for sid in ("a", "b"):
+        path = out / "sources" / sid / "04_sync" / "behavior_events.parquet"
+        events = pd.read_parquet(path)
+        if sid == "a":
+            # No event rows at all for these trials, as for a fixation-only target task.
+            events = events.iloc[:0].assign(planned_event_id=pd.Series(dtype="Int64"))
+        else:
+            interval_path = path.with_name("trial_intervals.parquet")
+            intervals = pd.read_parquet(interval_path)
+            intervals.loc[intervals.trial_id == 2, "stop_time"] = 61.003
+            intervals.to_parquet(interval_path)
+            # Trial 2 is empty. Trial 3 shows an image at BHV time 0 even though
+            # fixation failed and the digital onset was unmatched.
+            events["stim_onset_bhv_ms"] = [500.0, np.nan, 0.0]
+            events["stim_onset_nidq_s"] = [10.5, np.nan, np.nan]
+            events = pd.concat([events, events.iloc[[0]].assign(stim_onset_bhv_ms=700.0)])
+        events.to_parquet(path, index=False)
+
+    SelectSegmentsStage(joint_session).run()
+    preview = RunPanel._read_preview(out)
+    assert "planned_event_id" not in pd.read_parquet(out / "04_sync" / "behavior_events.parquet")
+    assert preview.timeline.trials.trial_key.tolist() == ["b:1", "b:3"]
+    assert preview.timeline.trials.n_presentations.tolist() == [2, 1]
+    assert [s.id for s in preview.timeline.sources] == ["a", "b"]
+    assert preview.timeline.select(cfg) == preview.timeline.saved
+    assert [(s.source_id, s.start_frame, s.stop_frame) for s in preview.timeline.saved] == [
+        ("b", 0, 6000),
+        ("b", 6101, 10000),  # sample 6100 still falls inside the empty trial
+    ]
+    assert "空 trial：4 个" in preview.text
+    # Don't let an all-empty input silently fall back to sorting the entire file.
+    path = out / "sources" / "b" / "04_sync" / "behavior_events.parquet"
+    pd.read_parquet(path).iloc[:0].to_parquet(path, index=False)
+    with pytest.raises(ValueError, match="没有呈现刺激的 trial"):
+        SelectSegmentsStage(joint_session)._select()
+
+
+@pytest.mark.parametrize("entry", ["execute", "review"])
+def test_open_preview_from_fresh_ui_is_read_only(joint_session, monkeypatch, entry):
+    from dataclasses import replace
+    from unittest.mock import Mock
+
+    import panel as pn
+
+    from pynpxpipe.core.config import save_pipeline_config, save_sorting_config
+    from pynpxpipe.pipelines.runner import PipelineRunner
+    from pynpxpipe.ui.app import create_app
+
+    out = joint_session.output_dir
+    joint_session.config.export.repair_verify = "full"
+    sort_cfg = SortingConfig()
+    sort_cfg.import_cfg.paths = {"imec0": out / "first", "imec1": out / "second"}
+    save_sorting_config(sort_cfg, out / "used_sorting.yaml")
+    SelectSegmentsStage(joint_session).run()
+    SessionManager.save(joint_session)
+    save_pipeline_config(joint_session.config, out / "used_pipeline.yaml")
+    (out / "input_signature.json").write_text('{"signature": "historical"}')
+
+    def snapshot():
+        return {
+            p.relative_to(out): (p.stat().st_mtime_ns, p.read_bytes())
+            for p in out.rglob("*")
+            if p.is_file()
+        }
+
+    before = snapshot()
+    runner = Mock(side_effect=AssertionError("restoring a session must not prepare a run"))
+    monkeypatch.setattr(PipelineRunner, "__init__", runner)
+    app = create_app()
+    execute = app._pynpx_sections["execute"]
+    app._pynpx_switch("execute")
+    (heading,) = [p for p in execute.select(pn.pane.Markdown) if p.object == "### 任务时段时间轴"]
+    (plot,) = execute.select(pn.pane.Bokeh)
+    assert heading.visible and plot.object is None
+    section = app._pynpx_sections[entry]
+    app._pynpx_switch(entry)
+    (field,) = [w for w in section.select(pn.widgets.TextInput) if w.name == "Output Directory"]
+    field.value = str(out)
+    button_label = "打开已保存的预览" if entry == "execute" else "Load Session"
+    (load,) = [w for w in section.select(pn.widgets.Button) if w.name == button_label]
+    load.clicks += 1
+    app._pynpx_switch("execute")
+    assert plot.object.select_one({"name": "有刺激的 trial"}).data_source.data["trial"] == [
+        "a:1",
+        "a:2",
+        "b:1",
+        "b:2",
+    ]
+    assert app._pynpx_state.input_mode == "joint" and app._pynpx_state.run_status == "idle"
+    (gap,) = [w for w in execute.select(pn.widgets.FloatInput) if w.name == "最大连续空闲 (s)"]
+    gap.value = 60
+    assert app._pynpx_state.pipeline_config == replace(
+        joint_session.config, task_windows=replace(joint_session.config.task_windows, max_idle_s=60)
+    )
+    assert app._pynpx_state.sorting_config == sort_cfg
+    assert before == snapshot()
+    runner.assert_not_called()
+    (out / "03_segments" / "summary.json").unlink()
+    load.clicks += 1
+    assert plot.object is None and heading.visible
+    assert any(
+        "缺少 `03_segments/summary.json`" in p.object for p in execute.select(pn.pane.Markdown)
+    )
+
+
 def test_saved_timeline_reacts_to_both_editors_and_drops_stale_alignment(joint_session):
     from unittest.mock import Mock
 
@@ -169,7 +283,7 @@ def test_saved_timeline_reacts_to_both_editors_and_drops_stale_alignment(joint_s
     fig = view.plot.object
     raw, saved, trials = (
         fig.select_one({"name": name}).data_source.data
-        for name in ("原始记录", "已保存", "完整 trial")
+        for name in ("原始记录", "已保存", "有刺激的 trial")
     )
     assert raw["start"] == [0, 120] and raw["stop"] == [100, 220]
     assert list(trials["trial"]) == ["a:1", "a:2", "b:1", "b:2"]
@@ -185,10 +299,47 @@ def test_saved_timeline_reacts_to_both_editors_and_drops_stale_alignment(joint_s
     assert (fig.x_range.start, fig.x_range.end) == (6, 67)
     assert saved["start"] == [8, 58, 128, 178]
     assert panel.preview_table.object.start_s.tolist() == saved["start"]
+    controls[0].value = 60
+    panel.refresh_btn.clicks += 1
+    assert "**60 s**" in view.stats.object and "空 trial：2 个" in view.stats.object
     state.recordings = list(reversed(state.recordings))
     assert not view.layout.visible and not panel.preview_table.visible and view.data is None
     assert "重新" in panel.preview_result.object
     run.assert_not_called()
+
+
+def test_live_tuning_updates_only_the_latest_preview_on_its_browser_document(
+    joint_session, monkeypatch
+):
+    from dataclasses import replace
+    from unittest.mock import Mock, PropertyMock
+
+    from bokeh.document import Document
+
+    from pynpxpipe.ui.components.run_panel import RunPanel
+    from pynpxpipe.ui.components.task_timeline import TaskTimeline
+
+    SelectSegmentsStage(joint_session).run()
+    cfg = joint_session.config.task_windows
+    data = RunPanel._read_preview(joint_session.output_dir).timeline
+    view = TaskTimeline()
+    view.show(data, replace(cfg, max_idle_s=180))
+    doc = Document()
+    doc.add_root(view.plot.object)
+    monkeypatch.setattr(type(doc), "session_context", PropertyMock(return_value=Mock()))
+    callbacks = []
+    monkeypatch.setattr(doc, "add_next_tick_callback", callbacks.append)
+    view.update(replace(cfg, max_idle_s=60))
+    view.update(replace(cfg, max_idle_s=10))
+    assert len(callbacks) == 2 and "**180 s**" in view.stats.object
+    # Even if an older callback arrives late it cannot overwrite the new choice.
+    callbacks.pop()()
+    callbacks.pop()()
+    assert "**10 s**" in view.stats.object and len(view.candidate.data["start"]) == 4
+    view.update(replace(cfg, max_idle_s=60))
+    view.clear()
+    callbacks.pop()()
+    assert view.plot.object is None and view.stats.object == ""
 
 
 @pytest.mark.parametrize("saved_header", [True, False])
@@ -201,18 +352,37 @@ def test_old_preview_uses_embedded_header_or_shows_saved_only(joint_session, sav
             meta = source.session_dir / "rec.nidq.meta"
             with meta.open("a") as f:
                 f.write("\nfileSizeBytes=40000\n")
+        # Recreate an old selection whose blue bars include even the last trial.
+        path = (
+            joint_session.output_dir
+            / "sources"
+            / source.source_id
+            / "04_sync"
+            / "behavior_events.parquet"
+        )
+        events = pd.read_parquet(path)
+        events.loc[events.trial_id == 3, "stim_onset_bhv_ms"] = 500.0
+        events.to_parquet(path)
     SelectSegmentsStage(joint_session).run()
     out = joint_session.output_dir
     summary = out / "03_segments" / "summary.json"
     info = json.loads(summary.read_text())
     del info["nidq_durations_s"]
+    del info["n_empty_trials"]
     summary.write_text(json.dumps(info))
+    path = out / "04_sync" / "behavior_events.parquet"
+    events = pd.read_parquet(path)
+    events.loc[(events.source_id == "a") & (events.trial_id == 3), "stim_onset_bhv_ms"] = np.nan
+    events.to_parquet(path)
     chart = TaskTimeline()
     chart.show(RunPanel._read_preview(out).timeline, joint_session.config.task_windows)
     assert chart.layout.visible
     assert bool(chart.candidate.data["start"]) == saved_header
     assert ("缺少原始 NIDQ 时长" in chart.stats.object) != saved_header
-    assert len(chart.plot.object.select_one({"name": "已保存"}).data_source.data["start"]) == 4
+    assert len(chart.plot.object.select_one({"name": "已保存"}).data_source.data["start"]) == 6
+    assert chart.data.trials.trial_key.tolist() == ["a:1", "a:2", "b:1", "b:2", "b:3"]
+    if saved_header:
+        assert len(chart.candidate.data["start"]) == 5
 
 
 @pytest.mark.parametrize("crop_enabled", [True, False])
@@ -261,12 +431,15 @@ def test_preview_checks_later_source_clock_before_sync(joint_session, monkeypatc
     assert called == stages
 
 
-def test_old_trial_anchor_algorithm_invalidates_cached_outputs(joint_session, monkeypatch):
+@pytest.mark.parametrize("old_version", [1, 2])
+def test_old_selection_algorithm_invalidates_cached_outputs(
+    joint_session, monkeypatch, old_version
+):
     import pynpxpipe.core.run_signature as signatures
 
     cfg, sorting = joint_session.config, SortingConfig()
     with monkeypatch.context() as legacy:
-        legacy.setattr(signatures, "_SIGNATURE_VERSION", 1, raising=False)
+        legacy.setattr(signatures, "_SIGNATURE_VERSION", old_version)
         old_signature = signatures.input_signature(joint_session, cfg, sorting)
     marker = joint_session.output_dir / "input_signature.json"
     marker.write_text(json.dumps({"signature": old_signature}), encoding="utf-8")
@@ -501,7 +674,7 @@ def test_joint_processing_through_real_analyzers_and_nwb(
             assert len(nf.units) == 1
             assert len(nf.units["obs_intervals"][0]) == 4
             assert nf.units["spike_times"][0].max() > 180
-        assert nf.trials["trial_key"][:].tolist() == ["a:1", "b:1"]
+        assert nf.trials["trial_key"][:].tolist() == ["a:1", "a:2", "b:1", "b:2"]
         assert len(nf.acquisition) == 8  # four AP plus four NIDQ blocks
     from pynpxpipe.pipelines.verify import EXIT_SELECTED_RAW_ONLY, verify_safe_to_delete
 

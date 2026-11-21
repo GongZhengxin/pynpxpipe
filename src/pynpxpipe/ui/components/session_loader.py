@@ -39,6 +39,8 @@ class SessionLoader:
         state: AppState,
         load_session_fn: Callable[[str], dict] | None = None,
         on_session_loaded: Callable[[], None] | None = None,
+        *,
+        button_label: str = "Load Session",
     ) -> None:
         self._state = state
         self._load_session_fn = load_session_fn or self._default_load_session
@@ -47,12 +49,17 @@ class SessionLoader:
         # ── Widgets ──
         self.dir_input = BrowsableInput(
             name="Output Directory",
-            placeholder="Path to existing pipeline output directory",
+            placeholder="上次预览的输出根目录（含 session.json）",
             file_pattern="*",
             only_files=False,
+            wrap=True,
         )
-        self.load_btn = pn.widgets.Button(name="Load Session", button_type="success")
+        self.dir_input.value = str(state.output_dir or "")
+        self.load_btn = pn.widgets.Button(name=button_label, button_type="success")
+        self.load_btn.disabled = state.run_status == "running"
         self.load_btn.on_click(self._on_load_click)
+        state.param.watch(self._on_output_dir, "output_dir")
+        state.param.watch(self._on_run_status, "run_status")
 
         self.message_pane = pn.pane.Str("", styles={"font-size": "13px"})
 
@@ -60,21 +67,31 @@ class SessionLoader:
     # Public API
     # ------------------------------------------------------------------
 
-    def panel(self) -> pn.viewable.Viewable:
+    def panel(self, *, show_heading: bool = True) -> pn.viewable.Viewable:
         """Return the Panel layout for this component."""
         return pn.Column(
-            pn.pane.Markdown("## Resume Session"),
+            *([pn.pane.Markdown("## Resume Session")] if show_heading else []),
             self.dir_input.panel(),
             self.load_btn,
             self.message_pane,
+            sizing_mode="stretch_width",
         )
 
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
 
+    def _on_output_dir(self, event) -> None:
+        self.dir_input.value = str(event.new or "")
+        self.message_pane.object = ""
+
+    def _on_run_status(self, event) -> None:
+        self.load_btn.disabled = event.new == "running"
+
     def _on_load_click(self, event) -> None:
         """Handle Load Session button click."""
+        if self._state.run_status == "running":
+            return
         output_dir = self.dir_input.value
         if not output_dir or not output_dir.strip():
             self.message_pane.object = "Please specify an output directory."
@@ -190,7 +207,9 @@ class SessionLoader:
 
         session_json = Path(output_dir) / "session.json"
         if not session_json.exists():
-            raise FileNotFoundError(f"session.json not found in {output_dir}")
+            raise FileNotFoundError(
+                f"此目录缺少 session.json；请选择上次预览的输出根目录：{output_dir}"
+            )
         try:
             return json.loads(session_json.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:

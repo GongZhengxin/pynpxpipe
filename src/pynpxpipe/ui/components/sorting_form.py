@@ -210,9 +210,8 @@ class SortingForm:
         """Populate every widget from a SortingConfig dataclass.
 
         Used by SessionLoader after restoring ``state.sorting_config`` from
-        ``used_sorting.yaml``. Widget watchers will rebuild
-        ``state.sorting_config`` from the new values, which converges on cfg
-        once all widgets are set.
+        ``used_sorting.yaml``. Keep the original probe-specific paths, even
+        though only the first path is visible in the form.
         """
         self.sorter_select.value = cfg.sorter.name
         self.mode_select.value = cfg.mode
@@ -240,6 +239,7 @@ class SortingForm:
         self.analyzer_template_operators_input.value = list(analyzer.template_operators)
         self.analyzer_unit_locations_select.value = analyzer.unit_locations_method
         self.analyzer_template_similarity_select.value = analyzer.template_similarity_method
+        self._state.sorting_config = cfg
 
     # ── Layout ──
 

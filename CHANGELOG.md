@@ -10,6 +10,11 @@
 
 ### Fixed
 
+- Execute always shows the task timeline entry and can reopen a saved preview without
+  rerunning alignment. Reviewing status no longer prepares a run or archives existing outputs.
+- Task cropping and the timeline retain whole trials with a recorded image presentation,
+  including failed trials, and exclude empty trials even during padding. Refresh a proposed
+  selection in memory and compare it with the saved one, including previews from older versions.
 - The web UI now writes diagnostic PNGs with Agg and sends progress, errors and
   button updates to the browser session that started the run.
 - Task selection checks each recording's acquisition timestamp before reading

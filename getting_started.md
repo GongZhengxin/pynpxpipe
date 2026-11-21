@@ -299,8 +299,8 @@ or multiple sources are enabled, alignment and selection run automatically first
 In **Pipeline Parameters → 任务时段截取**, new GUI runs enable **只处理任务时段**.
 The defaults merge trials separated by at most 180 seconds of idle time, then
 retain 30 seconds before and after each task block. Idle time is measured from
-the preceding trial's end, so failed trials, trials without stimuli and sparse
-task activity remain included. Blocks are clamped to available samples.
+the preceding trial's end. Keep the whole trial if an image onset was recorded,
+even if fixation subsequently failed. Empty trials split blocks and limit padding.
 
 在 **Configure → Session Paths** 顶部选择 **单段记录 / 多段联合**。
 单段模式只使用单段路径；多段模式只使用配对表中已经保存的记录。
@@ -360,26 +360,30 @@ the exported NWB preserves real time gaps. The 0.1-second join guard is a config
 engineering default, requiring validation with your data.
 
 **如何在网页里比较两套截取参数？** 已经预览成功的记录无需为看图再做对齐。更新并重启
-网页后，进入 **Review → Resume Session**，选择之前的 **Output Directory → Load Session**，
-再到 **Execute → 任务时段时间轴**。新会话先点一次 **对齐并预览任务时段** 即可。
+网页后，进入 **Execute → 任务时段时间轴**，在 **Output Directory** 选择上次预览的输出根目录
+（直接包含 `session.json`、`03_segments` 和 `04_sync`），点 **打开已保存的预览**。这会恢复
+该会话的配对、参数和图。**Review → Resume Session → Load Session** 也能恢复同一预览。
+只有从未生成过预览的新会话才需要先点 **对齐并预览任务时段**。
 
 - 上轨灰色是原始神经记录，蓝色是上次正式预览保存的区间，橙色是当前参数的试算区间。
-  下轨绿色是对齐后的每个完整行为 trial，包括失败和无刺激的 trial。两段采集之间的空白
+  下轨绿色是**有刺激的 trial**：从开始到结束至少记录了一次图片呈现。呈现后失败仍保留；
+  只有注视、只有计划图片或没有刺激开始事件的 trial 排除。悬停可查呈现张数。两段采集之间的空白
   表示没有记录，不计入“原始时长”或“减少比例”。横向滚轮缩放、拖动平移，悬停可看来源及起止秒数。
 - 直接修改图上方的 **最大连续空闲 (s)**、**任务前保留 (s)**、**任务后保留 (s)**；
-  与 **Configure → Pipeline Parameters → 任务时段截取** 中对应输入同步。按 Enter 提交输入，
-  橙色区间、块数和时长立即更新。试算只用已对齐的 trial，不读取原始信号、不写文件。
+  与 **Configure → Pipeline Parameters → 任务时段截取** 中对应输入同步。把 180 改为 60 后，
+  按 **Enter** 或点 **刷新试算**，核对 **当前试算** 中的 `60 s`、橙色选区、块数和时长。
+  如果该阈值下选区相同，图形不会改变。无需刷新浏览器或再次对齐；试算不写文件。
 - 空闲阈值按**上一 trial 结束到下一 trial 开始**的时间计算。默认间隔 ≤180 s 就连成一块，
-  每块首尾各补 30 s；补完后重叠的块还会合并。可先将 180 改为 60，再单独把前后保留从
-  30 改为 5，看每一步实际多裁了多少。完整 trial 占比越高，保留所有 trial 时能裁掉的比例就越小。
+  每块首尾各补 30 s；补完后重叠的块还会合并。启用截取时，空 trial 始终隔开任务块，补边也不会跨进去。
+  可先将 180 改为 60，再单独把前后保留从 30 改为 5，看每一步实际多裁了多少。
   **拼接保护区**和**滤波上下文**不控制保留时长。
-- 选好后再点 **对齐并预览任务时段** 正式保存；用原输出目录即可。正式预览在参数变化时
+- 旧报告的蓝色区间和减少比例保持原样；橙色按有刺激的 trial 试算。选好后点 **对齐并预览任务时段** 正式保存；用原输出目录即可。正式预览在规则或参数变化时
   会归档旧结果并重新同步，完成后蓝色按新选区更新。确认后再在处理电脑点击 **Run**。
 
 ![两段合成记录的网页时间轴：灰色原始记录间有停采空档，蓝色已保存选区横跨等待，橙色试算仅保留绿色 trial 周围。](docs/images/task-window-timeline.png)
 
-图为合成示例：将空闲阈值从 49 s 降到 10 s，块前后仍各保留 2 s；两段记录内各自的
-49 s 等待不再连接，蓝色 2 块变成橙色 4 块，保留时长从 110 s 降至 20 s。
+图为合成示例：将空闲阈值从 180 s 降到 60 s，块前后仍各保留 2 s。两段记录内各有一次
+69 s 的等待，新阈值下不再连接；蓝色 2 块对应 150 s，橙色 4 块只保留 20 s。
 
 预览运行期间，**Run** 和预览按钮变灰是正常的，避免重复启动；预览只运行
 discover、synchronize、select_segments，不运行 sorting。同步扫描长记录时，
