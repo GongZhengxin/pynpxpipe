@@ -15,12 +15,66 @@ References:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from pathlib import Path, PureWindowsPath
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_target_stimuli(
+    dataset: str | None, roots: list[Path], events: pd.DataFrame, source_id: str
+) -> tuple[Path, dict[int, str]]:
+    """Identify the target package by both recorded digests, independent of its location."""
+
+    def digest(column: str) -> str:
+        values = events[column].unique() if column in events else []
+        if len(values) != 1 or not re.fullmatch(r"[0-9a-fA-F]{64}", str(values[0])):
+            raise ValueError(f"{source_id}: missing or inconsistent {column} in recorded events")
+        return str(values[0]).lower()
+
+    table_hash = digest("stimulus_table_sha256")
+    manifest_hash = digest("stimulus_manifest_sha256")
+    if not dataset or not dataset.strip():
+        raise ValueError(f"{source_id}: BHV2 has no DatasetName for its target events")
+    direct = Path(PureWindowsPath(dataset).as_posix())
+    roots = [Path(root) for root in roots]
+
+    def candidates():
+        yield direct
+        for root in roots:
+            yield root / direct.name
+        for root in roots:
+            if root.is_dir():
+                yield from root.rglob(direct.name)
+
+    seen, failures = set(), []
+    for path in candidates():
+        if not path.is_file() or path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        manifest = path.with_name("manifest.tsv")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != table_hash:
+            failures.append(f"{path}: table SHA-256 mismatch")
+        elif not manifest.is_file():
+            failures.append(f"{manifest}: missing")
+        elif hashlib.sha256(manifest.read_bytes()).hexdigest() != manifest_hash:
+            failures.append(f"{manifest}: manifest SHA-256 mismatch")
+        else:
+            mapping = load_stim_map(path)
+            if not mapping or not events.stim_index.isin(mapping).all():
+                raise ValueError(f"{source_id}: stimulus index absent from verified TSV {path}")
+            return path.resolve(), mapping
+    details = "; ".join(failures) or "no matching filename found"
+    raise ValueError(
+        f"{source_id}: cannot verify stimulus package for DatasetName={dataset!r}; {details}. "
+        f"Vaults: {[str(root) for root in roots]}. Expected {direct.name} SHA-256={table_hash} "
+        f"and adjacent manifest.tsv SHA-256={manifest_hash}. "
+        "Specify the original package directory with --image-vault."
+    )
 
 
 def resolve_dataset_tsv(

@@ -508,6 +508,19 @@ sorter output. A selected-block NWB cannot replace the complete original recordi
 `verify-safe-to-delete` refuses to certify their deletion. The implemented open-source
 building blocks and design references are listed in [the specification](docs/specs/task_segments.md).
 
+**多段数据已经 Postprocess complete，只有 export 因刺激表失败？** 保留原始 BHV2、SpikeGLX 和整个输出目录。无需在网页重新点 Run，也无需重建已自动清理的 `01_preprocessed`。从采集机取得任务实际使用的刺激 TSV 和同目录的 `manifest.tsv`，原样放在处理机可读的同一目录。表中的行号代表图片身份，重新生成或用 Excel 另存都会改变哈希。
+
+在处理电脑的仓库目录中运行，将两个变量替换为本次实际路径：
+
+```powershell
+$out = 'E:\output\joint'
+$vault = 'D:\img_vault\stim19k'
+uv run pynpxpipe resume-export $out --image-vault $vault --check-only
+if ($LASTEXITCODE -eq 0) { uv run pynpxpipe resume-export $out --image-vault $vault }
+```
+
+`--check-only` 只核对保存的运行配置、原始文件签名、选区、后处理检查点和各段刺激包，不写 NWB。正式命令仅调用 export；完成标志为 `Export complete`。可以重复 `--image-vault` 提供多个包目录，同名文件只接受刺激表和相邻 manifest 的 SHA-256 都与该段 BHV2 一致的副本。旧版 `session.json` 没有保存图片库目录；如果出现输入签名不符且当时配置过图片库，请按原顺序逐项追加 `--recorded-vault '当时填写的路径'`，不要重置检查点。`rerun-derivatives` 不能恢复尚未写出 NWB 的导出。
+
 Check pipeline status:
 
 ```bash

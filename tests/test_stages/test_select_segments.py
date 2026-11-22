@@ -645,6 +645,10 @@ def test_joint_processing_through_real_analyzers_and_nwb(
         merged = si.load(joint_session.output_dir / "03_merged" / "imec0")
         assert metrics.firing_rate.iloc[0] == pytest.approx(len(merged.to_spike_vector()) / 19.4)
     PostprocessStage(joint_session).run()
+    # Production cleanup retires the preprocessed store before segmented export.
+    if not bombcell_and_merge:
+        store = joint_session.output_dir / "01_preprocessed" / "imec0.zarr"
+        store.rename(store.with_suffix(".retired"))
     parser = SimpleNamespace(get_dataset_tsv_path=lambda: None, get_analog_data=lambda channel: {})
     monkeypatch.setattr("pynpxpipe.io.segmented_nwb.BHV2Parser", lambda *a: parser)
     if not bombcell_and_merge:
@@ -681,3 +685,96 @@ def test_joint_processing_through_real_analyzers_and_nwb(
     verification = verify_safe_to_delete(joint_session.output_dir)
     assert not verification.safe
     assert verification.exit_code == EXIT_SELECTED_RAW_ONLY
+
+
+def test_export_only_recovery_checks_identity_without_invalidating(
+    joint_session, monkeypatch, tmp_path
+):
+    import hashlib
+    from types import SimpleNamespace
+
+    from click.testing import CliRunner
+
+    from pynpxpipe.cli.main import cli
+    from pynpxpipe.core.checkpoint import CheckpointManager
+    from pynpxpipe.core.config import save_pipeline_config, save_sorting_config
+
+    s = joint_session
+    root = s.output_dir
+    sorting_cfg = SortingConfig()
+    recorded_root = tmp_path / "old_acquisition_machine_vault"
+    s.subject.image_vault_paths = [recorded_root]
+    sig = input_signature(s, s.config, sorting_cfg)
+    s.input_signature = sig
+    SessionManager.save(s)
+    assert SessionManager.load(root).subject.image_vault_paths == [recorded_root]
+    saved = json.loads((root / "session.json").read_text())
+    del saved["subject"]["image_vault_paths"]  # legacy UI output
+    (root / "session.json").write_text(json.dumps(saved))
+    save_pipeline_config(s.config, root / "used_pipeline.yaml")
+    save_sorting_config(sorting_cfg, root / "used_sorting.yaml")
+    (root / "input_signature.json").write_text(json.dumps({"signature": sig}))
+    SelectSegmentsStage(s).run()
+    cp = CheckpointManager(root)
+    cp.mark_complete("postprocess", {"input_signature": sig})
+    cp.mark_complete("postprocess", {"input_signature": sig, "n_units": 1}, "imec0")
+    (root / "06_postprocessed/imec0/recording_info").mkdir(parents=True)
+
+    vault = tmp_path / "packages"
+    old = vault / "images.tsv"
+    old.parent.mkdir()
+    old.write_text("FileName\nwrong.png\n")
+    pkg = vault / "original"
+    pkg.mkdir()
+    table = pkg / old.name
+    table.write_text("FileName\ncorrect.png\n")
+    manifest = pkg / "manifest.tsv"
+    manifest.write_bytes(b"original")
+    events_path = root / "04_sync/behavior_events.parquet"
+    events = pd.read_parquet(events_path).assign(
+        planned_event_id=1,
+        stim_index=1,
+        stimulus_table_sha256=hashlib.sha256(table.read_bytes()).hexdigest(),
+        stimulus_manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    )
+    events.to_parquet(events_path)
+    monkeypatch.setattr(
+        "pynpxpipe.io.segmented_nwb.BHV2Parser",
+        lambda _: SimpleNamespace(get_dataset_tsv_path=lambda: str(old)),
+    )
+    calls = []
+
+    def export(stage):
+        from pynpxpipe.io.segmented_nwb import resolve_source_stimuli
+
+        names = resolve_source_stimuli(stage.session, events)
+        assert names.stim_name.unique().tolist() == ["correct.png"]
+        assert set(names.stimulus_key) == {"a:1", "b:1"}
+        calls.append(stage.session.input_signature)
+
+    monkeypatch.setattr("pynpxpipe.stages.export.ExportStage.run", export)
+    args = [
+        "resume-export",
+        str(root),
+        "--image-vault",
+        str(vault),
+        "--recorded-vault",
+        str(recorded_root),
+    ]
+    runner = CliRunner()
+    check = runner.invoke(cli, [*args, "--check-only"])
+    assert check.exit_code == 0, check.output
+    assert not calls
+    check = runner.invoke(cli, args)
+    assert check.exit_code == 0, check.output
+    assert calls == [sig]
+    manifest.write_bytes(b"different")
+    check = runner.invoke(cli, [*args, "--check-only"])
+    assert check.exit_code != 0 and "manifest SHA-256 mismatch" in check.output
+    manifest.unlink()
+    check = runner.invoke(cli, [*args, "--check-only"])
+    assert check.exit_code != 0 and "manifest.tsv: missing" in check.output
+    s.recordings[0].bhv_file.write_bytes(b"changed input")
+    check = runner.invoke(cli, args)
+    assert check.exit_code != 0 and "Inputs/config changed" in check.output
+    assert calls == [sig] and not (root / ".invalidated").exists()

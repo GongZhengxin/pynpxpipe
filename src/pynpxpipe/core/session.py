@@ -56,6 +56,9 @@ class SubjectConfig:
     weight: str  # with unit, e.g. "12.8kg"
     image_vault_paths: list[Path] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        self.image_vault_paths = [Path(p) for p in self.image_vault_paths]
+
 
 @dataclass
 class ProbeInfo:
@@ -534,6 +537,7 @@ class SessionManager:
                 "sex": session.subject.sex,
                 "age": session.subject.age,
                 "weight": session.subject.weight,
+                "image_vault_paths": [str(p) for p in session.subject.image_vault_paths],
             },
             "session_id": session.session_id.to_dict(),
             "probe_plan": dict(session.probe_plan),

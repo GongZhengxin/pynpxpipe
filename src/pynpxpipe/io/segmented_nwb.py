@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -21,6 +21,8 @@ from pynwb.epoch import TimeIntervals
 from pynpxpipe.core.segments import Segment, SegmentManifest
 from pynpxpipe.io.bhv import BHV2Parser
 from pynpxpipe.io.segment_recordings import load_source_stream
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pynpxpipe.core.session import ProbeInfo, Session
@@ -140,7 +142,11 @@ def add_segment_metadata(writer: NWBWriter, manifest: SegmentManifest) -> None:
 
 def resolve_source_stimuli(session: Session, events: pd.DataFrame) -> pd.DataFrame:
     """Resolve each BHV2's stimulus table independently, preserving local indices."""
-    from pynpxpipe.io.stim_resolver import load_stim_map, resolve_dataset_tsv
+    from pynpxpipe.io.stim_resolver import (
+        load_stim_map,
+        resolve_dataset_tsv,
+        resolve_target_stimuli,
+    )
 
     result = events.copy()
     result["stim_name"] = ""
@@ -151,25 +157,19 @@ def resolve_source_stimuli(session: Session, events: pd.DataFrame) -> pd.DataFra
         if subset.empty:
             continue
         dataset = BHV2Parser(source.bhv_file).get_dataset_tsv_path()
-        path, tag = resolve_dataset_tsv(dataset, session.subject.image_vault_paths)
-        mapping = load_stim_map(path) if path else {}
         if "planned_event_id" in subset:
-            if not path or not mapping or tag.endswith("(multi)"):
-                raise ValueError(
-                    f"{source.source_id}: target events require an unambiguous stimulus table"
-                )
-            for column, file in (
-                ("stimulus_table_sha256", path),
-                ("stimulus_manifest_sha256", path.parent / "manifest.tsv"),
-            ):
-                expected = subset[column].dropna().unique()
-                if (
-                    len(expected) != 1
-                    or hashlib.sha256(file.read_bytes()).hexdigest() != expected[0]
-                ):
-                    raise ValueError(f"{source.source_id}: {column} mismatch")
-            if not subset.stim_index.isin(mapping).all():
-                raise ValueError(f"{source.source_id}: stimulus index absent from TSV")
+            path, mapping = resolve_target_stimuli(
+                dataset, session.subject.image_vault_paths, subset, source.source_id
+            )
+            logger.info(
+                "Verified stimulus package for %s: %s (%d events)",
+                source.source_id,
+                path,
+                len(subset),
+            )
+        else:
+            path, _ = resolve_dataset_tsv(dataset, session.subject.image_vault_paths)
+            mapping = load_stim_map(path) if path else {}
         if "stim_index" in subset:
             result.loc[mask, "stim_name"] = subset.stim_index.astype(int).map(mapping).fillna("")
             result.loc[mask, "stimulus_key"] = (

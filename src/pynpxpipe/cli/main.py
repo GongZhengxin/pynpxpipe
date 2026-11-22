@@ -273,6 +273,45 @@ def reset_stage(output_dir: Path, stage: str, yes: bool) -> None:
     click.echo("Reset complete.")
 
 
+@cli.command("resume-export")
+@click.argument("output_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--image-vault",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Directory containing the original stimulus TSV and manifest.tsv (repeatable).",
+)
+@click.option(
+    "--check-only",
+    is_flag=True,
+    help="Check saved inputs and stimulus packages without writing outputs.",
+)
+@click.option(
+    "--recorded-vault",
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="Original vault path from an old session; used only to verify its signature.",
+)
+def resume_export_cmd(output_dir, image_vault, check_only, recorded_vault):
+    """Check or resume only NWB export from a completed segmented postprocess."""
+    from pynpxpipe.pipelines.resume_export import resume_export
+
+    progress = _CliProgressBar()
+    try:
+        resume_export(
+            output_dir,
+            image_vault,
+            recorded_vaults=recorded_vault,
+            check_only=check_only,
+            progress_callback=progress,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        progress.close()
+    click.echo("Export preflight passed." if check_only else f"Export complete: {output_dir}")
+
+
 @cli.command("rerun-derivatives")
 @click.argument("output_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
 def rerun_derivatives(output_dir: Path) -> None:
