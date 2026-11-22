@@ -26,6 +26,7 @@ from pynpxpipe.ui.components.pipeline_form import PipelineForm
 from pynpxpipe.ui.components.probe_region_editor import ProbeRegionEditor
 from pynpxpipe.ui.components.progress_view import ProgressView
 from pynpxpipe.ui.components.rerun_derivatives import RerunDerivatives
+from pynpxpipe.ui.components.resume_export import ResumeExportPanel
 from pynpxpipe.ui.components.run_panel import RunPanel
 from pynpxpipe.ui.components.session_form import SessionForm
 from pynpxpipe.ui.components.session_loader import SessionLoader
@@ -292,7 +293,13 @@ def create_app() -> pn.viewable.Viewable:
     )
 
     execute_section = pn.Column(
-        run_panel.panel(preview_loader.panel(show_heading=False)),
+        pn.Column(
+            ResumeExportPanel(state, bridge).panel(),
+            pn.layout.Divider(),
+            pn.pane.Markdown("### 常规运行与任务时段预览"),
+            run_panel.panel(preview_loader.panel(show_heading=False)),
+            sizing_mode="stretch_width",
+        ),
         pn.Row(progress_view.panel(), log_viewer.panel(), sizing_mode="stretch_width"),
         sizing_mode="stretch_width",
         visible=False,

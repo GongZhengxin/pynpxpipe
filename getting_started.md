@@ -510,7 +510,14 @@ building blocks and design references are listed in [the specification](docs/spe
 
 **多段数据已经 Postprocess complete，只有 export 因刺激表失败？** 保留原始 BHV2、SpikeGLX 和整个输出目录。无需在网页重新点 Run，也无需重建已自动清理的 `01_preprocessed`。从采集机取得任务实际使用的刺激 TSV 和同目录的 `manifest.tsv`，原样放在处理机可读的同一目录。表中的行号代表图片身份，重新生成或用 Excel 另存都会改变哈希。
 
-在处理电脑的仓库目录中运行，将两个变量替换为本次实际路径：
+在处理电脑更新并重启 Web UI 后，直接进入 **Execute → 从已保存的结果继续 NWB 导出**，无需重新填写 Configure：
+
+1. **已保存的输出目录**：点 Browse 或粘贴上次运行的输出目录。选打开后能看见 `session.json`、`checkpoints` 和 `06_postprocessed` 的那一层。
+2. **刺激表目录**：选处理电脑能访问的刺激包目录。例如本次任务使用 `stim19k.tsv`，就选打开后能同时看见 `stim19k.tsv` 和 `manifest.tsv` 的文件夹。不要选单个文件或只含图片的文件夹。
+3. 点 **检查导出条件**。这一步只读取原始输入和已保存的结果，不写 NWB。失败原因会出现在按钮下方；改好目录后再次检查。只有旧版任务提示缺少原配置时，才需补填当时配置的图片库路径。
+4. 显示 **检查通过** 后，点同一区域的 **仅继续 NWB 导出**，无需点普通 Run。网页显示导出进度，完成后显示 `.nwb` 的完整路径。修改目录会使上次检查失效。
+
+可选：习惯命令行的用户也可以在处理电脑的仓库目录中运行：
 
 ```powershell
 $out = 'E:\output\joint'

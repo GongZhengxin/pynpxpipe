@@ -193,7 +193,7 @@ class RunPanel:
 
     def _on_run_click(self, event, *, preview: bool = False) -> None:
         """Start pipeline in background thread (ignored if already running)."""
-        if self._state.run_status == "running":
+        if self._state.execution_busy:
             return
 
         self._clear_preview()
@@ -319,13 +319,15 @@ class RunPanel:
     def _on_status_change(self, event) -> None:
         """Update button states and status text when run_status changes."""
         status = event.new
-        self.run_btn.disabled = status == "running"
-        self.preview_btn.disabled = status == "running"
+        self.run_btn.disabled = self._state.execution_busy
+        self.preview_btn.disabled = self._state.execution_busy
         self.stop_btn.disabled = status != "running"
 
         labels = {
             "idle": "Status: idle",
             "running": "Status: running",
+            "checking_export": "正在检查 NWB 导出条件",
+            "exporting": "正在续跑 NWB 导出",
             "completed": "Status: completed",
             "failed": f"Status: failed — {self._state.error_message}",
         }

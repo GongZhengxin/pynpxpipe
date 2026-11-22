@@ -56,7 +56,7 @@ class SessionLoader:
         )
         self.dir_input.value = str(state.output_dir or "")
         self.load_btn = pn.widgets.Button(name=button_label, button_type="success")
-        self.load_btn.disabled = state.run_status == "running"
+        self.load_btn.disabled = state.execution_busy
         self.load_btn.on_click(self._on_load_click)
         state.param.watch(self._on_output_dir, "output_dir")
         state.param.watch(self._on_run_status, "run_status")
@@ -86,11 +86,11 @@ class SessionLoader:
         self.message_pane.object = ""
 
     def _on_run_status(self, event) -> None:
-        self.load_btn.disabled = event.new == "running"
+        self.load_btn.disabled = self._state.execution_busy
 
     def _on_load_click(self, event) -> None:
         """Handle Load Session button click."""
-        if self._state.run_status == "running":
+        if self._state.execution_busy:
             return
         output_dir = self.dir_input.value
         if not output_dir or not output_dir.strip():

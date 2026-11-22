@@ -426,6 +426,7 @@ class ExportStage(BaseStage):
         path = self._get_output_path()
         manifest = load_manifest(self.session)
         try:
+            self._report_progress("检查已保存的 NWB", 0.0)
             if self._nwb_phase1_done(path):
                 verify_manifest(path, manifest)
             else:
@@ -435,7 +436,11 @@ class ExportStage(BaseStage):
                     self.session.output_dir / "04_sync" / "behavior_events.parquet"
                 )
                 events = resolve_source_stimuli(self.session, events)
-                for probe in self.session.probes:
+                for i, probe in enumerate(self.session.probes):
+                    self._report_progress(
+                        f"读取 {probe.probe_id} 后处理结果",
+                        0.05 + 0.35 * i / len(self.session.probes),
+                    )
                     analyzer_dir = self.session.output_dir / "06_postprocessed" / probe.probe_id
                     if (analyzer_dir / "recording_info").exists():
                         analyzer = si.load(analyzer_dir)
@@ -453,12 +458,15 @@ class ExportStage(BaseStage):
                     ensure_raw_electrodes(writer, probe)
                 if len(events):
                     writer.add_trials(events)
+                self._report_progress("写入行为与神经数据", 0.4)
                 writer.add_pipeline_metadata(self.session.config)
                 add_segment_metadata(writer, manifest)
                 add_segmented_eye(writer, manifest)
                 writer.write()
             # Derivatives are independently recoverable after a partial export.
+            self._report_progress("导出衍生数据", 0.6)
             self._export_phase2(path, pd.DataFrame())
+            self._report_progress("写入并校验保留时段的原始数据", 0.65)
             summary = append_segmented_raw(self.session, path, manifest, self.progress_callback)
             n_units, n_trials = self._nwb_counts(path)
             self._write_checkpoint(

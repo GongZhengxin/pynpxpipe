@@ -17,8 +17,8 @@ from pynpxpipe.stages.export import ExportStage
 
 def resume_export(
     output_dir: Path, vaults=(), *, recorded_vaults=(), check_only=False, progress_callback=None
-) -> None:
-    """Use recorded configuration and completed postprocessing; never call PipelineRunner."""
+) -> Path:
+    """Check or export without calling PipelineRunner; return the NWB destination."""
     root = output_dir.resolve(strict=True)
     session = SessionManager.load(root)
     if root != session.output_dir.resolve():
@@ -65,13 +65,17 @@ def resume_export(
         if cp["n_units"] and not analyzer.is_dir():
             raise ValueError(f"Missing postprocessed analyzer: {analyzer.parent}")
     export_cp = checkpoints.read("export") or {}
-    if export_cp.get("status") == "completed" and export_cp.get("input_signature") == signature:
-        path = root / f"{session.session_id.canonical()}.nwb"
-        if not path.is_file():
-            raise ValueError(f"Export marked complete but NWB is absent: {path}")
+    path = root / f"{session.session_id.canonical()}.nwb"
+    if (
+        export_cp.get("status") == "completed"
+        and export_cp.get("input_signature") == signature
+        and not path.is_file()
+    ):
+        raise ValueError(f"Export marked complete but NWB is absent: {path}")
     if check_only:
         events = pd.read_parquet(root / "04_sync" / "behavior_events.parquet")
         resolve_source_stimuli(session, events)
-        return
+        return path
     setup_logging(session.log_path)
     ExportStage(session, progress_callback=progress_callback).run()
+    return path

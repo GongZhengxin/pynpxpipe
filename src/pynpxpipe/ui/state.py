@@ -63,8 +63,13 @@ class AppState(param.Parameterized):
     # ── Runtime status ──
     run_status = param.Selector(
         default="idle",
-        objects=["idle", "running", "completed", "failed"],
+        objects=["idle", "running", "checking_export", "exporting", "completed", "failed"],
     )
+
+    @property
+    def execution_busy(self) -> bool:
+        return self.run_status in ("running", "checking_export", "exporting")
+
     selected_stages = param.List(default=[], doc="Stage names to run")
     error_message = param.String(default="")
     safe_to_exit = param.Boolean(
