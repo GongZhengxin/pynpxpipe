@@ -168,6 +168,17 @@ class TestSectionStructure:
         right_count = len(configure.objects[1].objects)
         assert left_count + right_count >= 5
 
+    def test_configure_right_column_starts_with_preset_bar(self):
+        """P0-2: the preset bar sits above the parameter forms."""
+        from pynpxpipe.ui.app import create_app
+        from pynpxpipe.ui.components.preset_bar import PresetBar
+
+        app = create_app()
+        bar = app._pynpx_preset_bar
+        assert isinstance(bar, PresetBar)
+        right = app._pynpx_sections["configure"].objects[1]
+        assert any(w is bar.preset_select for w in right.objects[0].select(pn.widgets.Select))
+
     def test_execute_has_full_width_preview_above_progress_and_logs(self):
         """The timeline gets the full width, above the progress and log columns."""
         from pynpxpipe.ui.app import create_app

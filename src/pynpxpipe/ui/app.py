@@ -23,6 +23,7 @@ from pynpxpipe.ui.components.chat_help import ChatHelp
 from pynpxpipe.ui.components.figs_viewer import FigsViewer
 from pynpxpipe.ui.components.log_viewer import LogViewer
 from pynpxpipe.ui.components.pipeline_form import PipelineForm
+from pynpxpipe.ui.components.preset_bar import PresetBar
 from pynpxpipe.ui.components.probe_region_editor import ProbeRegionEditor
 from pynpxpipe.ui.components.progress_view import ProgressView
 from pynpxpipe.ui.components.rerun_derivatives import RerunDerivatives
@@ -149,6 +150,7 @@ def create_app() -> pn.viewable.Viewable:
     probe_region_editor = ProbeRegionEditor(state)
     pipeline_form = PipelineForm(state)
     sorting_form = SortingForm(state)
+    preset_bar = PresetBar(state, pipeline_form, sorting_form)
     stage_selector = StageSelector(state)
 
     log_viewer = LogViewer()
@@ -282,6 +284,7 @@ def create_app() -> pn.viewable.Viewable:
         sizing_mode="stretch_width",
     )
     configure_right = pn.Column(
+        preset_bar.panel(),
         pipeline_form.panel(),
         sorting_form.panel(),
         sizing_mode="stretch_width",
@@ -421,6 +424,7 @@ def create_app() -> pn.viewable.Viewable:
     template._pynpx_error_banner = error_banner
     template._pynpx_safe_banner = safe_banner
     template._pynpx_state = state
+    template._pynpx_preset_bar = preset_bar
 
     return template
 

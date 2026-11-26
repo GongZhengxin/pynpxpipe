@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新建 session：检查并运行</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+input{font:inherit}
+</style>
+</helmet>
+<div style="min-height: 900px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #15171C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</a>
+<span style="color: #8A8F99">/</span><span style="font-weight: 500">新建 session</span>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: #5B606B">草稿已自动保存</span>
+</header>
+<div style="background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<ol style="display: flex; flex-wrap: wrap; gap: 8px; max-width: 1240px; margin: 0 auto; padding: 14px 32px; list-style: none">
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #155E35"><span style="width: 24px; height: 24px; border-radius: 50%; background: #E4F2E9; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="3" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span>数据</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #155E35"><span style="width: 24px; height: 24px; border-radius: 50%; background: #E4F2E9; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="3" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span>动物与探针</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #155E35"><span style="width: 24px; height: 24px; border-radius: 50%; background: #E4F2E9; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="3" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span>参数</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; border-radius: 999px; background: #E3F0F5; color: #08516A; font-weight: 500"><span style="width: 24px; height: 24px; border-radius: 50%; background: #0B6E8E; color: #FFFFFF; display: grid; place-items: center; font-size: 12px">4</span>检查并运行</li>
+</ol>
+</div>
+<main style="max-width: 1240px; margin: 0 auto; padding: 28px 32px; display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+<section style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px">
+<h2 style="margin: 0 0 12px; font-size: 15px; font-weight: 600">摘要</h2>
+<div style="display: grid; grid-template-columns: 90px minmax(0, 1fr); row-gap: 8px; column-gap: 12px; font-size: 13px">
+<span style="color: #5B606B">Session</span><span class="mono">MaoDan_251024_nsd1w</span>
+<span style="color: #5B606B">数据</span><span>1 段记录 · 62 min · 2 探针（imec0 V4，imec1 IT）</span>
+<span style="color: #5B606B">参数</span><span>预设 E2，改了 3 项 <a href="WizardParams.dc.html">查看</a></span>
+<span style="color: #5B606B">输出</span><span class="mono" style="word-break: break-all">D:/out/MaoDan_251024_nsd1w/MaoDan_251024_nsd1w.nwb</span>
+</div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px">
+<div style="display: flex; align-items: center; margin-bottom: 8px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; flex: 1">运行前检查</h2><span style="font-size: 12px; color: #5B606B">5 项通过 · 1 项提醒</span></div>
+<sc-for list="{{checks}}" as="c" hint-placeholder-count="6">
+<div style="display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-top: 1px solid #EFEFEA">
+<span style="flex: none; width: 20px; height: 20px; border-radius: 50%; background: {{c.bg}}; color: {{c.fg}}; display: grid; place-items: center; font-size: 12px; font-weight: 600">{{c.icon}}</span>
+<div style="min-width: 0"><div style="font-size: 13px; font-weight: 500">{{c.title}}</div><div style="font-size: 12px; color: #5B606B">{{c.detail}}</div></div>
+</div>
+</sc-for>
+</div>
+</section>
+<section style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px">
+<h2 style="margin: 0 0 4px; font-size: 15px; font-weight: 600">怎么运行</h2>
+<p style="margin: 0 0 12px; font-size: 13px; color: #5B606B">已完成的阶段会根据检查点自动跳过。</p>
+<label style="display: flex; gap: 12px; padding: 14px; border: 2px solid #0B6E8E; border-radius: 10px; margin-bottom: 10px; cursor: pointer">
+<input type="radio" name="mode" checked style="margin-top: 3px">
+<span><span style="display: block; font-weight: 500">先对齐，确认任务时段后再继续 <span style="font-size: 12px; color: #155E35; background: #E4F2E9; padding: 2px 8px; border-radius: 999px; margin-left: 4px">推荐</span></span><span style="display: block; font-size: 13px; color: #5B606B; margin-top: 4px">跑完 discover、synchronize、select_segments 后暂停（约 6 分钟），等你在时间轴上核对保留区间，再继续 preprocess 到 export。</span></span>
+</label>
+<label style="display: flex; gap: 12px; padding: 14px; border: 1px solid #E3E3DE; border-radius: 10px; cursor: pointer">
+<input type="radio" name="mode" style="margin-top: 3px">
+<span><span style="display: block; font-weight: 500">直接全部运行</span><span style="display: block; font-size: 13px; color: #5B606B; margin-top: 4px">参数已在之前的 session 验证过时使用。</span></span>
+</label>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px">
+<div style="display: flex; align-items: center; margin-bottom: 8px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; flex: 1">将执行的阶段</h2><span style="font-size: 12px; color: #5B606B">预计 2 h 40 min</span></div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{stages}}" as="s" hint-placeholder-count="9">
+<span style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid {{s.border}}; background: {{s.bg}}; color: {{s.fg}}; font-size: 13px" class="mono">{{s.name}}<span style="font-family: Inter, 'Noto Sans SC', sans-serif; font-size: 11px; color: #8A8F99">{{s.eta}}</span></span>
+</sc-for>
+</div>
+<p style="margin: 10px 0 0; font-size: 12px; color: #5B606B">merge 已关闭（在参数页开启）。阶段依赖会自动检查，不会出现“跑 curate 却没 sort”的组合。</p>
+</div>
+</section>
+</main>
+<footer style="max-width: 1240px; margin: 0 auto; padding: 0 32px 32px; display: flex; justify-content: space-between; align-items: center; gap: 12px">
+<a href="WizardParams.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; background: #FFFFFF; color: #15171C">上一步</a>
+<span style="flex: 1"></span>
+<span style="font-size: 12px; color: #5B606B">开始后可以关闭浏览器，回到首页查看进度</span>
+<a href="TaskWindow.dc.html" style="display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 24px; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500"><svg width="14" height="14" viewBox="0 0 24 24" fill="#FFFFFF" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg>开始对齐</a>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ok = (title, detail) => ({ title, detail, icon: '✓', bg: '#E4F2E9', fg: '#155E35' });
+    const warn = (title, detail) => ({ title, detail, icon: '!', bg: '#FBF0DA', fg: '#7A4D00' });
+    const st = (name, eta, off) => off
+      ? { name, eta: '跳过', bg: '#F6F6F3', fg: '#8A8F99', border: '#E3E3DE' }
+      : { name, eta, bg: '#FFFFFF', fg: '#15171C', border: '#D6D6D0' };
+    return {
+      checks: [
+        ok('GPU 可用', 'RTX 4090 · 24 GB · CUDA 12.4 · torch 2.5.1'),
+        ok('磁盘空间充足', 'D: 可用 1.2 TB，预计需要 ≈ 180 GB'),
+        ok('Kilosort4 与 SpikeInterface 已安装', 'kilosort 4.0.22 · spikeinterface 0.104.1'),
+        warn('内存偏紧', '64 GB RAM，DREDge 预计峰值 58 GB；bin_s 已按建议调为 2.0 s'),
+        ok('BHV2 与 NIDQ 时长匹配', '612 trials，事件码序列可对齐'),
+        ok('输出目录可写', 'D:/out/MaoDan_251024_nsd1w 不存在，将新建')
+      ],
+      stages: [
+        st('discover', '1 min'), st('synchronize', '3 min'), st('select_segments', '2 min'),
+        st('preprocess', '35 min'), st('sort', '80 min'), st('merge', '', true),
+        st('curate', '12 min'), st('postprocess', '20 min'), st('export', '8 min')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1524,136 +1524,14 @@ def test_session_loader_dir_input_is_browsable_input():
 # H. Coverage harness — config<->form drift detection
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Each leaf field in PipelineConfig must map to a widget attribute on
-# PipelineForm. When a new field is added to core/config.py without exposing
-# it in the UI, the coverage test below FAILS with a clear message.
-PIPELINE_FORM_FIELD_TO_WIDGET = {
-    "resources.n_jobs": "n_jobs_input",
-    "resources.chunk_duration": "chunk_duration_input",
-    "resources.max_memory": "max_memory_input",
-    # Utilization tuning knobs — Resources Card "Advanced" subgroup
-    # (see docs/specs/resources.md §7.0).
-    "resources.reserve_cores": "reserve_cores_input",
-    "resources.n_jobs_cap": "n_jobs_cap_input",
-    "resources.ram_safety_factor": "ram_safety_factor_input",
-    "resources.ram_reserve_gb": "ram_reserve_gb_input",
-    "resources.chunk_ram_fraction": "chunk_ram_fraction_input",
-    "resources.chunk_max_s": "chunk_max_s_input",
-    "resources.max_workers_cap": "max_workers_cap_input",
-    "resources.max_workers_ram_fraction": "max_workers_ram_fraction_input",
-    "resources.vram_safety_factor": "vram_safety_factor_input",
-    "resources.vram_overhead_gb": "vram_overhead_gb_input",
-    "parallel.enabled": "parallel_enabled_checkbox",
-    "parallel.max_workers": "parallel_max_workers_input",
-    # Zarr disk knobs — operational, tuned in pipeline.yaml not the UI.
-    "preprocess.save_dtype": None,
-    "preprocess.delete_zarr_after_postprocess": None,
-    "preprocess.bandpass.freq_min": "freq_min_input",
-    "preprocess.bandpass.freq_max": "freq_max_input",
-    "preprocess.bad_channel_detection.method": "bad_channel_method_input",
-    "preprocess.bad_channel_detection.dead_channel_threshold": "dead_channel_threshold_input",
-    "preprocess.common_reference.reference": "cmr_reference_select",
-    "preprocess.common_reference.operator": "cmr_operator_select",
-    "preprocess.motion_correction.method": "motion_enabled_checkbox",
-    "preprocess.motion_correction.preset": "motion_preset_select",
-    # motion_memory_advisor knobs — Motion Card "Advanced" subgroup
-    # (see docs/specs/motion_memory_advisor.md). bytes_per_entry / n_matrices are
-    # pure internal calibration constants → pipeline.yaml only (not in UI).
-    "preprocess.motion_correction.bin_s": "motion_bin_s_input",
-    "preprocess.motion_correction.auto_strategy": "motion_auto_strategy_checkbox",
-    "preprocess.motion_correction.bin_s_floor": "motion_bin_s_floor_input",
-    "preprocess.motion_correction.bin_s_max": "motion_bin_s_max_input",
-    "preprocess.motion_correction.ram_safety_factor": "motion_ram_safety_factor_input",
-    "preprocess.motion_correction.overhead_reserve_gb": "motion_overhead_reserve_gb_input",
-    "preprocess.motion_correction.bytes_per_entry": None,
-    "preprocess.motion_correction.n_matrices": None,
-    "preprocess.motion_correction.win_step_um": "motion_win_step_um_input",
-    "preprocess.motion_correction.n_windows": "motion_n_windows_input",
-    "preprocess.motion_correction.probe_threshold_s": "motion_probe_threshold_s_input",
-    "preprocess.motion_correction.fallback_nblocks": "motion_fallback_nblocks_input",
-    "curation.isi_violation_ratio_max": "isi_max_input",
-    "curation.amplitude_cutoff_max": "amp_cutoff_input",
-    "curation.presence_ratio_min": "presence_min_input",
-    "curation.snr_min": "snr_min_input",
-    "curation.good_isi_max": "good_isi_max_input",
-    "curation.good_snr_min": "good_snr_min_input",
-    "curation.use_bombcell": "use_bombcell_checkbox",
-    "sync.imec_sync_bit": "sync_bit_input",
-    "sync.nidq_sync_bit": "nidq_sync_bit_input",
-    "sync.event_bits": "event_bits_input",
-    "sync.max_time_error_ms": "max_time_error_input",
-    "sync.trial_count_tolerance": "trial_count_tolerance_input",
-    "sync.photodiode_channel_index": "photodiode_channel_input",
-    "sync.monitor_delay_ms": "monitor_delay_input",
-    "sync.stim_onset_code": "stim_onset_code_input",
-    "sync.generate_plots": "generate_plots_checkbox",
-    "sync.gap_threshold_ms": "gap_threshold_input",
-    "sync.trial_start_bit": "trial_start_bit_input",
-    "sync.stim_onset_bit": "stim_onset_bit_input",
-    "sync.stim_count_tolerance": "stim_count_tolerance_input",
-    # Raw-stream self-heal — operational, tuned in pipeline.yaml not the UI.
-    "export.repair_incomplete_streams": None,
-    "export.repair_verify": None,
-    "task_windows.enabled": "crop_enabled",
-    "task_windows.max_idle_s": "task_max_idle",
-    "task_windows.padding_before_s": "task_pre",
-    "task_windows.padding_after_s": "task_post",
-    "task_windows.join_guard_s": "task_join_guard",
-    "task_windows.filter_margin_s": "task_filter_margin",
-    "task_windows.recording_timezone": "task_timezone",
-    "task_windows.trial_start_code": "task_start_code",
-    "export.derivatives.enabled": "derivatives_enabled_checkbox",
-    "export.derivatives.pre_onset_ms": "derivatives_pre_onset_ms_input",
-    "export.derivatives.post_onset_ms": "derivatives_post_onset_ms_input",
-    "export.derivatives.bin_size_ms": "derivatives_bin_size_ms_input",
-    "export.derivatives.n_jobs": "derivatives_n_jobs_input",
-    "sync.pd_window_pre_ms": "pd_window_pre_input",
-    "sync.pd_window_post_ms": "pd_window_post_input",
-    "sync.pd_hignline_skip_ms": "pd_hignline_skip_input",
-    "sync.pd_hignline_width_ms": "pd_hignline_width_input",
-    "sync.pd_min_signal_variance": "pd_min_variance_input",
-    "postprocess.slay_pre_s": "slay_pre_input",
-    "postprocess.slay_post_s": "slay_post_input",
-    "postprocess.pre_onset_ms": "pre_onset_ms_input",
-    "postprocess.eye_validation.enabled": "eye_enabled_checkbox",
-    "postprocess.eye_validation.eye_threshold": "eye_threshold_input",
-    "merge.enabled": "merge_enabled_checkbox",
-    "curation.bombcell.amplitude_median_min": "bombcell_amplitude_median_min_input",
-    "curation.bombcell.num_spikes_min": "bombcell_num_spikes_min_input",
-    "curation.bombcell.presence_ratio_min": "bombcell_presence_ratio_min_input",
-    "curation.bombcell.snr_min": "bombcell_snr_min_input",
-    "curation.bombcell.amplitude_cutoff_max": "bombcell_amplitude_cutoff_max_input",
-    "curation.bombcell.rp_contamination_max": "bombcell_rp_contamination_max_input",
-    "curation.bombcell.drift_ptp_max": "bombcell_drift_ptp_max_input",
-    "curation.bombcell.label_non_somatic": "bombcell_label_non_somatic_checkbox",
-    "curation.bombcell.split_non_somatic_good_mua": "bombcell_split_non_somatic_good_mua_checkbox",
-    "curation.bombcell.extra_overrides": None,  # advanced; edit YAML directly
-}
-
-
-SORTING_FORM_FIELD_TO_WIDGET = {
-    "mode": "mode_select",
-    "sorter.name": "sorter_select",
-    "sorter.params.nblocks": "nblocks_input",
-    "sorter.params.Th_learned": "th_learned_input",
-    "sorter.params.Th_universal": None,  # pinned; not exposed in UI (§IV.8)
-    "sorter.params.cluster_downsampling": None,  # pinned; not exposed in UI (§IV.8)
-    "sorter.params.max_cluster_subset": None,  # pinned; not exposed in UI (§IV.8)
-    "sorter.params.do_CAR": "do_car_checkbox",
-    "sorter.params.batch_size": "batch_size_input",
-    "sorter.params.n_jobs": "n_jobs_input",
-    "sorter.params.torch_device": "torch_device_select",
-    # import_cfg.format is derived from sorter_select.value (no dedicated widget)
-    "import_cfg.format": "sorter_select",
-    "import_cfg.paths": "import_path_input",
-    "analyzer.random_spikes.max_spikes_per_unit": "analyzer_max_spikes_input",
-    "analyzer.random_spikes.method": "analyzer_random_method_select",
-    "analyzer.waveforms.ms_before": "analyzer_ms_before_input",
-    "analyzer.waveforms.ms_after": "analyzer_ms_after_input",
-    "analyzer.template_operators": "analyzer_template_operators_input",
-    "analyzer.unit_locations_method": "analyzer_unit_locations_select",
-    "analyzer.template_similarity_method": "analyzer_template_similarity_select",
-}
+# Single source of truth lives next to each form (also drives P0-2 changed-field
+# markers); the harness below still checks it against the config dataclasses.
+from pynpxpipe.ui.components.pipeline_form import (  # noqa: E402
+    FIELD_TO_WIDGET as PIPELINE_FORM_FIELD_TO_WIDGET,
+)
+from pynpxpipe.ui.components.sorting_form import (  # noqa: E402
+    FIELD_TO_WIDGET as SORTING_FORM_FIELD_TO_WIDGET,
+)
 
 
 def _enumerate_leaf_fields(dc_cls, prefix=""):

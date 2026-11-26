@@ -4,6 +4,11 @@
 
 ### Added
 
+- Web UI (ui_redesign P0-1): after choosing a data folder, a discovery card lists the gate
+  folder, NIDQ file, probes (model, serial, channels, AP size) and recording date, which is
+  filled in automatically. When several gate folders or BHV2 files are found, pick one from a list.
+- Web UI (ui_redesign P0-2): parameter presets from `config/` paired by suffix, YAML import
+  and export, and a list of fields changed from the selected preset with per-field restore.
 - Compare saved and proposed task windows against full neural recordings and aligned BHV
   trials on an interactive timeline. Tune gap and padding without rereading raw signals or
   changing outputs, including when reopening a completed preview.

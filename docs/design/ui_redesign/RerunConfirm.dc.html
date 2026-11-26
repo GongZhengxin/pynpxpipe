@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>从此阶段重跑：确认</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+input{font:inherit}
+</style>
+</helmet>
+<div style="min-height: 900px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: rgba(21,23,28,0.45); font-size: 14px; display: flex; align-items: center; justify-content: center; padding: 40px 24px; box-sizing: border-box">
+<div role="dialog" aria-labelledby="rt" style="width: 100%; max-width: 600px; background: #FFFFFF; border-radius: 14px; box-shadow: 0 20px 50px rgba(0,0,0,.25); overflow: hidden">
+<div style="padding: 22px 24px 8px">
+<h1 id="rt" style="margin: 0; font-size: 19px; font-weight: 600">从 sort 阶段重跑</h1>
+<p style="margin: 6px 0 0; color: #5B606B">MaoDan_251024_nsd1w · 重跑前会清除下面这些检查点，相关阶段会重新计算。</p>
+</div>
+<div style="padding: 12px 24px; display: flex; flex-direction: column; gap: 16px">
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+<legend style="font-size: 13px; font-weight: 500; margin-bottom: 8px">范围</legend>
+<label style="display: flex; align-items: center; gap: 10px"><input type="radio" name="scope">两根探针</label>
+<label style="display: flex; align-items: center; gap: 10px"><input type="radio" name="scope" checked>只重跑 <span class="mono">imec1</span><span style="color: #5B606B; font-size: 13px">（imec0 结果保留）</span></label>
+</fieldset>
+<div>
+<div style="font-size: 13px; font-weight: 500; margin-bottom: 8px">将清除</div>
+<div style="border: 1px solid #F0CFCB; background: #FDF5F4; border-radius: 10px; padding: 4px 14px">
+<div style="display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-bottom: 1px solid #F3DEDB; font-size: 13px"><span class="mono">sort</span><span style="color: #5B606B"><span class="mono">checkpoints/sort_imec1.json</span> 及该探针的 sorting 输出</span></div>
+<div style="display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-bottom: 1px solid #F3DEDB; font-size: 13px"><span class="mono">curate</span><span style="color: #5B606B">尚未运行，无需清除</span></div>
+<div style="display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-bottom: 1px solid #F3DEDB; font-size: 13px"><span class="mono">postprocess</span><span style="color: #5B606B">尚未运行，无需清除</span></div>
+<div style="display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; padding: 8px 0; font-size: 13px"><span class="mono">export</span><span style="color: #5B606B">需重新导出整份 NWB（含 imec0）</span></div>
+</div>
+</div>
+<div style="display: flex; gap: 10px; font-size: 13px; color: #155E35; background: #F3FAF5; border: 1px solid #CDE6D6; border-radius: 10px; padding: 10px 14px">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="2.4" aria-hidden="true" style="flex: none; margin-top: 2px"><path d="m5 12 5 5 9-10"/></svg>
+<span>保留：原始数据、同步结果、任务时段、preprocess 生成的 Zarr。</span>
+</div>
+<div>
+<div style="font-size: 13px; font-weight: 500; margin-bottom: 8px">本次使用的参数变化</div>
+<div style="display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 10px 14px; background: #F6F6F3; border-radius: 10px"><span class="mono" style="color: #5B606B; flex: 1">sorter.params.batch_size</span><span class="mono" style="text-decoration: line-through; color: #8A8F99">40000</span><span aria-hidden="true">→</span><span class="mono" style="font-weight: 500">30000</span></div>
+</div>
+</div>
+<div style="display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px 22px">
+<a href="Workspace.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; color: #15171C">取消</a>
+<a href="Workspace.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 18px; border-radius: 8px; background: #B42318; color: #FFFFFF; font-weight: 500">清除并重跑 imec1</a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

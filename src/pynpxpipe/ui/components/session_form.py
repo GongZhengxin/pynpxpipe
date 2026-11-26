@@ -14,36 +14,34 @@ from pynpxpipe.ui.components.browsable_input import BrowsableInput
 from pynpxpipe.ui.state import AppState
 
 
-def _discover_paths(data_dir: Path) -> tuple[Path | None, Path | None, str]:
-    """Discover gate directory and BHV2 file in *data_dir*.
+def _discover_paths(data_dir: Path) -> tuple[list[Path], list[Path], list[str]]:
+    """Discover all gate-directory and BHV2 candidates in *data_dir*.
 
     Returns:
-        (gate_dir, bhv_file, status_message)
+        (gate_dirs, bhv_files, errors); candidates are sorted by name and
+        ``errors`` is empty when at least one of each was found.
     """
     if not data_dir.exists():
-        return None, None, f"Path does not exist: {data_dir}"
+        return [], [], [f"目录不存在：{data_dir}"]
 
     gate_dirs = sorted(p for p in data_dir.iterdir() if p.is_dir() and re.search(r"_g\d+$", p.name))
     bhv_files = sorted(data_dir.glob("*.bhv2"))
 
     errors: list[str] = []
     if not gate_dirs:
-        errors.append("No *_g[0-9] gate directory found")
+        errors.append("未找到 *_g[0-9] gate 目录")
     if not bhv_files:
-        errors.append("No *.bhv2 file found")
+        errors.append("未找到 .bhv2 行为文件")
+    return gate_dirs, bhv_files, errors
 
-    if errors:
-        return (
-            gate_dirs[0] if gate_dirs else None,
-            bhv_files[0] if bhv_files else None,
-            " | ".join(errors),
-        )
 
-    return (
-        gate_dirs[0],
-        bhv_files[0],
-        f"Found: {gate_dirs[0].name} | {bhv_files[0].name}",
-    )
+def _format_size(n_bytes: int) -> str:
+    size = float(n_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
 
 
 class SessionForm:
@@ -112,6 +110,26 @@ class SessionForm:
         self.detect_date_alert = pn.pane.Alert(
             "", alert_type="warning", visible=False, sizing_mode="stretch_width"
         )
+
+        # ── Discovery result card (ui_redesign P0-1) ──
+        self.discovery_card = pn.pane.Alert(
+            "", alert_type="success", visible=False, sizing_mode="stretch_width"
+        )
+        self.choice_alert = pn.pane.Alert(
+            "", alert_type="warning", visible=False, sizing_mode="stretch_width"
+        )
+        self.gate_select = pn.widgets.Select(name="Gate 目录", options={}, visible=False)
+        self.bhv_select = pn.widgets.Select(name="BHV2 文件", options={}, visible=False)
+        self.validation_alert = pn.pane.Alert(
+            "", alert_type="danger", visible=False, sizing_mode="stretch_width"
+        )
+        self.discovery_box = pn.Column(
+            self.discovery_card,
+            self.choice_alert,
+            self.gate_select,
+            self.bhv_select,
+            sizing_mode="stretch_width",
+        )
         import pandas as pd
 
         self.pair_session_dir_input = BrowsableInput(
@@ -156,8 +174,10 @@ class SessionForm:
         self.single_paths = pn.Column(
             self.advanced_toggle,
             self.data_dir_input.panel(),
+            self.discovery_box,
             self.session_dir_input.panel(),
             self.bhv_file_input.panel(),
+            self.validation_alert,
         )
         self.joint_paths = pn.Column(
             pn.pane.Markdown(
@@ -189,6 +209,8 @@ class SessionForm:
         self.input_mode.param.watch(lambda event: setattr(state, "input_mode", event.new), "value")
         state.param.watch(self._on_input_mode, "input_mode")
         self.data_dir_input.text_input.param.watch(self._on_data_dir, "value")
+        self.gate_select.param.watch(self._on_candidate_change, "value")
+        self.bhv_select.param.watch(self._on_candidate_change, "value")
         self.session_dir_input.text_input.param.watch(self._on_session_dir, "value")
         self.bhv_file_input.text_input.param.watch(self._on_bhv_file, "value")
         self.output_dir_input.text_input.param.watch(self._on_output_dir, "value")
@@ -327,6 +349,7 @@ class SessionForm:
     def _on_mode_change(self, event) -> None:
         advanced = event.new
         self.data_dir_input.visible = not advanced
+        self.discovery_box.visible = not advanced
         self.session_dir_input.visible = advanced
         self.bhv_file_input.visible = advanced
 
@@ -346,18 +369,104 @@ class SessionForm:
 
     def _on_data_dir(self, event) -> None:
         val: str = event.new or ""
+        gate_dirs, bhv_files, errors = _discover_paths(Path(val)) if val else ([], [], [])
         if not val:
             self.discovery_status = ""
+        elif errors:
+            self.discovery_status = " | ".join(errors)
+        else:
+            self.discovery_status = f"Found: {gate_dirs[0].name} | {bhv_files[0].name}"
+
+        # Updating options re-fires _on_candidate_change; suppress until both are set.
+        self._updating_candidates = True
+        self.gate_select.options = {p.name: str(p) for p in gate_dirs}
+        self.gate_select.value = str(gate_dirs[0]) if gate_dirs else None
+        self.bhv_select.options = {p.name: str(p) for p in bhv_files}
+        self.bhv_select.value = str(bhv_files[0]) if bhv_files else None
+        self._updating_candidates = False
+
+        self.gate_select.visible = len(gate_dirs) > 1
+        self.bhv_select.visible = len(bhv_files) > 1
+        notes = []
+        if len(gate_dirs) > 1:
+            notes.append(f"找到 {len(gate_dirs)} 个 gate 目录，默认使用第一个，请确认。")
+        if len(bhv_files) > 1:
+            notes.append(f"找到 {len(bhv_files)} 个 BHV2 文件，请选择与这段记录对应的一个。")
+        self.choice_alert.object = "\n\n".join(notes)
+        self.choice_alert.visible = bool(notes)
+
+        if not val:
+            self.discovery_card.visible = False
             self._state.session_dir = None
             self._state.bhv_file = None
             return
+        if errors:
+            self._show_discovery_error(errors)
+            self._state.session_dir = gate_dirs[0] if gate_dirs else None
+            self._state.bhv_file = bhv_files[0] if bhv_files else None
+            return
+        self._on_candidate_change()
 
-        data_dir = Path(val)
-        gate_dir, bhv_file, status = _discover_paths(data_dir)
-        self.discovery_status = status
+    def _on_candidate_change(self, event=None) -> None:
+        if getattr(self, "_updating_candidates", False):
+            return
+        if not self.gate_select.value or not self.bhv_select.value:
+            return
+        gate = Path(self.gate_select.value)
+        self._state.session_dir = gate
+        self._state.bhv_file = Path(self.bhv_select.value)
+        self._identify_recording(gate)
 
-        self._state.session_dir = gate_dir
-        self._state.bhv_file = bhv_file
+    def _show_discovery_error(self, errors: list[str]) -> None:
+        self.discovery_card.alert_type = "danger"
+        self.discovery_card.object = "**未能识别这段记录**\n\n" + "\n".join(
+            f"- {e}" for e in errors
+        )
+        self.discovery_card.visible = True
+
+    def _identify_recording(self, gate: Path) -> None:
+        """Read probes, NIDQ and recording date from *gate* via io/spikeglx and render the card."""
+        from pynpxpipe.core.errors import DiscoverError
+        from pynpxpipe.io.spikeglx import SpikeGLXDiscovery, SpikeGLXLoader
+
+        try:
+            discovery = SpikeGLXDiscovery(gate)
+            nidq_bin, _ = discovery.discover_nidq()
+            probes = discovery.discover_probes()
+        except (DiscoverError, OSError) as exc:
+            self._show_discovery_error([str(exc)])
+            return
+
+        warnings = [f"{p.probe_id}: {w}" for p in probes for w in discovery.validate_probe(p)]
+        try:
+            date = SpikeGLXLoader.read_recording_date(probes[0].ap_meta)
+            date_text = f"`{date}` · 从 {probes[0].probe_id} ap.meta 读取"
+            self._state.recording_date = date
+            self.recording_date_input.value = date
+        except (OSError, ValueError) as exc:
+            date_text = f"读取失败（{exc}），可手动填写或点 Detect Date 重试"
+
+        rows = "\n".join(
+            f"| `{p.probe_id}` | {p.probe_type} | `{p.serial_number}` | {p.n_channels} | "
+            f"{_format_size(p.ap_bin.stat().st_size) if p.ap_bin.exists() else '缺失'} |"
+            for p in probes
+        )
+        lines = [
+            "**已识别这段记录**",
+            "",
+            f"- Gate 目录：`{gate.name}`",
+            f"- NIDQ：`{nidq_bin.name}`",
+            f"- 采集日期：{date_text}",
+            "",
+            "| 探针 | 型号 | 序列号 | 通道 | AP 文件 |",
+            "|---|---|---|---|---|",
+            rows,
+        ]
+        if warnings:
+            lines += ["", "**注意**", *(f"- {w}" for w in warnings)]
+        self.discovery_card.alert_type = "warning" if warnings else "success"
+        self.discovery_card.object = "\n".join(lines)
+        self.discovery_card.visible = True
 
     # ── Advanced mode watchers ──
 
@@ -371,6 +480,8 @@ class SessionForm:
         else:
             self.validation_message = ""
             self._state.bhv_file = Path(val) if val else None
+        self.validation_alert.object = self.validation_message
+        self.validation_alert.visible = bool(self.validation_message)
 
     def _on_output_dir(self, event) -> None:
         self._state.output_dir = Path(event.new) if event.new else None

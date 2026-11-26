@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新建 session：数据</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+input{font:inherit;color:#15171C}
+</style>
+</helmet>
+<div style="min-height: 900px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #15171C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</a>
+<span style="color: #8A8F99">/</span><span style="font-weight: 500">新建 session</span>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: #5B606B">草稿已自动保存</span>
+</header>
+<div style="background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<ol style="display: flex; flex-wrap: wrap; gap: 8px; max-width: 1240px; margin: 0 auto; padding: 14px 32px; list-style: none">
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; border-radius: 999px; background: #E3F0F5; color: #08516A; font-weight: 500"><span style="width: 24px; height: 24px; border-radius: 50%; background: #0B6E8E; color: #FFFFFF; display: grid; place-items: center; font-size: 12px">1</span>数据</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #5B606B"><span style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #C9C9C2; display: grid; place-items: center; font-size: 12px">2</span>动物与探针</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #5B606B"><span style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #C9C9C2; display: grid; place-items: center; font-size: 12px">3</span>参数</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #5B606B"><span style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #C9C9C2; display: grid; place-items: center; font-size: 12px">4</span>检查并运行</li>
+</ol>
+</div>
+<main style="max-width: 1240px; margin: 0 auto; padding: 28px 32px; display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+<section style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div>
+<h1 style="margin: 0 0 4px; font-size: 22px; font-weight: 600">选择原始数据</h1>
+<p style="margin: 0; color: #5B606B">选实验日期那一层目录，程序会自动找到 SpikeGLX gate 目录和 BHV2 文件。</p>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 8px"><span style="font-weight: 600">记录 1</span><span class="mono" style="font-size: 12px; color: #8A8F99">source0</span></div>
+<label style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; font-weight: 500">数据目录</span>
+<span style="display: flex; gap: 8px"><input class="mono" value="D:/data/MaoDan/251024" style="flex: 1; height: 40px; padding: 0 12px; border: 1px solid #0B6E8E; border-radius: 8px; font-size: 13px"><button style="height: 40px; padding: 0 14px; border: 1px solid #D6D6D0; border-radius: 8px; background: #FFFFFF; font: inherit">浏览…</button></span>
+</label>
+<div style="border: 1px solid #CDE6D6; background: #F3FAF5; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 8px; color: #155E35; font-weight: 500"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="2.4" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>已识别这段记录</div>
+<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); row-gap: 8px; column-gap: 12px; font-size: 13px">
+<span style="color: #5B606B">Gate 目录</span><span class="mono">MaoDan_251024_g0</span>
+<span style="color: #5B606B">NIDQ</span><span class="mono">MaoDan_251024_g0_t0.nidq.bin · 62 min</span>
+<span style="color: #5B606B">采集日期</span><span><span class="mono">251024</span> <span style="color: #5B606B">· 从 ap.meta 读取</span></span>
+</div>
+<div style="overflow-x: auto"><table style="width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px">
+<thead><tr style="color: #5B606B; text-align: left"><th style="padding: 6px 8px 6px 0; font-weight: 500">探针</th><th style="padding: 6px 8px; font-weight: 500">型号</th><th style="padding: 6px 8px; font-weight: 500">序列号</th><th style="padding: 6px 8px; font-weight: 500">通道</th><th style="padding: 6px 8px; font-weight: 500">AP 文件</th></tr></thead>
+<tbody>
+<tr style="border-top: 1px solid #DCEBE0"><td class="mono" style="padding: 6px 8px 6px 0">imec0</td><td style="padding: 6px 8px">NP 1.0</td><td class="mono" style="padding: 6px 8px">19122414611</td><td style="padding: 6px 8px">384</td><td style="padding: 6px 8px">412 GB</td></tr>
+<tr style="border-top: 1px solid #DCEBE0"><td class="mono" style="padding: 6px 8px 6px 0">imec1</td><td style="padding: 6px 8px">NP 1.0</td><td class="mono" style="padding: 6px 8px">19122415027</td><td style="padding: 6px 8px">384</td><td style="padding: 6px 8px">409 GB</td></tr>
+</tbody></table></div>
+</div>
+<div style="border: 1px solid #F0DDB0; background: #FDF8EC; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="color: #7A4D00; font-weight: 500">找到 2 个 BHV2 文件，请选择与这段记录对应的一个</div>
+<label style="display: flex; align-items: center; gap: 10px; font-size: 13px"><input type="radio" name="bhv" checked><span class="mono">251024_MaoDan_nsd1w.bhv2</span><span style="color: #5B606B">· 612 trials · 开始 09:14:02</span></label>
+<label style="display: flex; align-items: center; gap: 10px; font-size: 13px"><input type="radio" name="bhv"><span class="mono">251024_MaoDan_calib.bhv2</span><span style="color: #5B606B">· 40 trials · 开始 08:51:37</span></label>
+</div>
+<details style="font-size: 13px; color: #5B606B"><summary style="cursor: pointer">分别指定 gate 目录和 BHV2 路径</summary><p style="margin: 8px 0 0">目录结构不标准时使用。</p></details>
+</div>
+<button style="height: 48px; border: 1px dashed #C9C9C2; border-radius: 12px; background: transparent; font: inherit; color: #0B6E8E; font-weight: 500">+ 添加同一天的另一段记录（多段联合 sorting）</button>
+</section>
+<aside style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; font-size: 15px; font-weight: 600">输出</h2>
+<label style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; font-weight: 500">输出目录</span><span style="display: flex; gap: 8px"><input class="mono" value="D:/out" style="flex: 1; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px; font-size: 13px"><button style="height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px; background: #FFFFFF; font: inherit">浏览…</button></span><span style="font-size: 12px; color: #1E7A46">可用 1.2 TB，预计需要 ≈ 180 GB</span></label>
+<label style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; font-weight: 500">实验名</span><input value="nsd1w" style="height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px"></label>
+<div style="background: #F6F6F3; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 12px; color: #5B606B">将生成</span><span class="mono" style="font-size: 13px; word-break: break-all">D:/out/MaoDan_251024_nsd1w/<br>MaoDan_251024_nsd1w.nwb</span></div>
+</div>
+<div style="font-size: 13px; color: #5B606B; padding: 0 4px; line-height: 1.6">多段联合：同一动物、同一天，探针位置和配置不变。按采集顺序添加，可拖动调整；序列号从 meta 读取。</div>
+</aside>
+</main>
+<footer style="max-width: 1240px; margin: 0 auto; padding: 0 32px 32px; display: flex; justify-content: space-between">
+<a href="Main.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; background: #FFFFFF; color: #15171C">取消</a>
+<a href="WizardSubject.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 20px; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500">下一步：动物与探针</a>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
