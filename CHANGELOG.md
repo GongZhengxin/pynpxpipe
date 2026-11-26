@@ -4,6 +4,11 @@
 
 ### Added
 
+- Web UI (ui_redesign P0-4): "rerun from this stage" asks for confirmation, listing the
+  checkpoints of the stage and every downstream stage that will be cleared (optionally for one
+  probe), adding preprocess when its Zarr was deleted, and showing parameter changes since the last run.
+- Web UI (ui_redesign P0-5): coloured run-status badge in the header and Chinese labels across
+  the session, subject, sorting and stage forms.
 - Web UI (ui_redesign P0-1): after choosing a data folder, a discovery card lists the gate
   folder, NIDQ file, probes (model, serial, channels, AP size) and recording date, which is
   filled in automatically. When several gate folders or BHV2 files are found, pick one from a list.
