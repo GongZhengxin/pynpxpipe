@@ -597,3 +597,17 @@ def test_segmented_sync_pairs_bhv_marker_to_its_own_nidq_event(session, raw_code
     assert result.nidq_anchor_code.tolist() == [4, 4, 4]
     checkpoint = json.loads((session.output_dir / "checkpoints" / "synchronize.json").read_text())
     assert checkpoint["status"] == "completed"
+
+
+def test_run_discards_stale_select_segments_input(
+    stage: SynchronizeStage, session: Session
+) -> None:
+    """A new alignment must not leave select_segments reading the previous table."""
+    sync_dir = session.output_dir / "04_sync"
+    sync_dir.mkdir(parents=True, exist_ok=True)
+    stale = sync_dir / "behavior_events_source.parquet"
+    stale.write_bytes(b"stale")
+    with _patch_run(session):
+        stage.run()
+    assert not stale.exists()
+    assert (sync_dir / "behavior_events.parquet").exists()

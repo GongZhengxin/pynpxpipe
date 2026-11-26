@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Rerunning only select_segments (e.g. after applying new task windows) no longer reads its
+  own rewritten `04_sync/behavior_events.parquet` in single-recording sessions; it keeps
+  synchronize's table as `behavior_events_source.parquet`, which synchronize refreshes.
 - Execute always shows the task timeline entry and can reopen a saved preview without
   rerunning alignment. Reviewing status no longer prepares a run or archives existing outputs.
 - Task cropping and the timeline retain whole trials with a recorded image presentation,

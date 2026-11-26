@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -19,6 +21,32 @@ from pynpxpipe.core.segments import (
 from pynpxpipe.io.segment_recordings import acquisition_start, validate_sources
 from pynpxpipe.io.spikeglx import SpikeGLXDiscovery
 from pynpxpipe.stages.base import BaseStage
+
+# Synchronize's untouched event table; select_segments only ever reads this copy because
+# in single-source mode it rewrites behavior_events.parquet in the same directory.
+SOURCE_EVENTS_NAME = "behavior_events_source.parquet"
+
+
+def _source_events(sync_dir: Path, output_sync_dir: Path) -> pd.DataFrame:
+    """Read synchronize's behavioral events for one source, never this stage's own output.
+
+    Only a source whose sync directory is the output's ``04_sync/`` (single-source mode)
+    has its table rewritten by this stage, so only that one reads a preserved copy.
+    """
+    if sync_dir.resolve() != output_sync_dir.resolve():
+        return pd.read_parquet(sync_dir / "behavior_events.parquet")
+    source = sync_dir / SOURCE_EVENTS_NAME
+    if not source.exists():
+        shutil.copyfile(sync_dir / "behavior_events.parquet", source)
+    events = pd.read_parquet(source)
+    if "source_stim_onset_imec_s" in events.columns:
+        source.unlink()
+        raise ValueError(
+            f"{sync_dir / 'behavior_events.parquet'} was already rewritten by select_segments "
+            "(output from an older version); rerun from synchronize to rebuild it"
+        )
+    return events
+
 
 if TYPE_CHECKING:
     from pynpxpipe.core.session import ProbeInfo, RecordingSource
@@ -137,7 +165,8 @@ class SelectSegmentsStage(BaseStage):
                 )
             previous_end = offset + ref_duration
             trials = pd.read_parquet(sync_dir / "trial_intervals.parquet")
-            events = pd.read_parquet(sync_dir / "behavior_events.parquet")
+            events = _source_events(sync_dir, self.session.output_dir / "04_sync")
+
             events = presented_events(events).copy()
             if (
                 not events.trial_id.isin(trials.trial_id).all()

@@ -144,3 +144,32 @@ The pre-upload CPU coverage rerun passed the same 1671 tests with 85.00% coverag
 (80% required). Formatting checks pass for all changed Python files; five
 unchanged files have pre-existing formatting failures in the full-repository check.
 The sorter is deterministic test input; real Kilosort/DREDge acceptance is pending.
+
+### 2026-11-26 rerun-safe behavioral input
+
+**Goal.** Re-running only `select_segments` (UI "apply proposed task windows",
+`docs/specs/ui_redesign.md` §8.1) must give the same result as the first run.
+
+**Problem.** In single-source mode the per-source sync directory is the output's
+`04_sync/`, so the stage read `behavior_events.parquet` and then overwrote it with
+the namespaced table (`stim_onset_imec_s` turned into per-probe JSON,
+`source_stim_onset_imec_s` added, `attempt_id` prefixed). A second run read its own
+output and corrupted the table. Joint mode reads `sources/<id>/04_sync/` and was
+not affected.
+
+**Processing.**
+1. When a source's sync directory is the output's `04_sync/` (single-source mode), the
+   stage reads `04_sync/behavior_events_source.parquet`. If it does not exist, it is
+   created as a byte copy of `behavior_events.parquet` (synchronize's table). The
+   output path `04_sync/behavior_events.parquet` and downstream consumers are unchanged.
+   Joint sources keep reading `sources/<id>/04_sync/behavior_events.parquet` directly,
+   since this stage never writes there.
+
+2. A table that already carries `source_stim_onset_imec_s` is a previous
+   select_segments output, not synchronize's table (outputs from versions before this
+   fix). The stage fails with a message asking to rerun from synchronize.
+3. `synchronize` deletes a stale `behavior_events_source.parquet` whenever it
+   writes a new `behavior_events.parquet`, so the copy always matches the current
+   alignment.
+
+**Relationship to MATLAB.** No MATLAB counterpart; file-handling only.
