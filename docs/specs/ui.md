@@ -16,6 +16,20 @@
 
 ---
 
+## 1a. 2026-11 改版后的布局（ui_redesign P0 + P1）
+
+详细设计、数据契约与有意偏离见 `docs/specs/ui_redesign.md`（§4、§8）。本文件第 3 节的组件规格仍有效，布局按下表重组：
+
+| 视图（`?view=`） | 组件 | 说明 |
+|---|---|---|
+| `sessions`（首页） | `components/session_list.py` + `recent_sessions.py` | 最近 session（`.pynpxpipe/recent_sessions.json`）、9 段阶段色条、4 个计数、打开已有输出目录；取代两个 `SessionLoader` 面板 |
+| `new` | `components/wizard.py` | 4 步向导：数据（`session_form`）→ 动物与探针（`subject_form.wizard_panel` + `probe_region_editor`）→ 参数（`preset_bar` + 两个表单）→ 检查并运行（`ReviewStep`：预检清单、运行方式、阶段预计用时） |
+| `session` | `components/workspace.py` | 阶段轨道、按探针进度、日志筛选、此阶段操作、诊断图、任务时段卡；失败时嵌 `error_view.py`；旧"运行/结果"区作为折叠卡片保留 |
+| `task_window` | `components/task_window_page.py` | 对齐后暂停时确认任务时段：指标、时间轴、滑块试算、对比与覆盖检查、应用或确认 |
+| `help` | `chat_help.py` | 不变 |
+
+外壳：`router.py`（URL 路由）+ `components/top_bar.py`（导航、机器状态、运行徽章）；默认浅色主题，可切换深色。运行由进程级 `run_manager.py` 持有，进度写入 `checkpoints/run_state.json`（`pipelines/run_state.py`），关闭浏览器标签页不影响运行。UI 设置见 `config/ui.yaml`（`ui/settings.py`）。
+
 ## 2. 模块结构
 
 ```

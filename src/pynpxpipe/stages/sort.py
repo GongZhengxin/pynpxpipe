@@ -99,6 +99,7 @@ class SortStage(BaseStage):
         n_probes = len(self.session.probes)
         for i, probe in enumerate(self.session.probes):
             probe_id = probe.probe_id
+            self._report_probe_progress(probe_id, "Starting", i / n_probes)
             if mode == "local":
                 self._sort_probe_local(probe_id)
             else:
@@ -112,7 +113,7 @@ class SortStage(BaseStage):
                     raise err
                 self._import_sorting(probe_id, Path(import_path))
 
-            self._report_progress(f"Sorted {probe_id}", (i + 1) / n_probes)
+            self._report_probe_progress(probe_id, "Sorted", (i + 1) / n_probes)
 
         self._write_checkpoint(
             {

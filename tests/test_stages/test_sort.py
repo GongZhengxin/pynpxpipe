@@ -607,3 +607,23 @@ def test_ks4_critical_params_explicit():
             f"sorting.yaml sorter.params.{key}={params[key]!r} but expected {value!r} "
             f"(pinned to prevent KS4 library-default regression; see docs/todo.md §IV.8)"
         )
+
+
+def test_sort_reports_progress_per_probe(single_session: Session, tmp_path: Path) -> None:
+    """S12: the workspace shows one bar per probe, fed by "sort:[probe] …" messages."""
+    import_dir = tmp_path / "ks4_output"
+    import_dir.mkdir()
+    sorting_cfg = _make_sorting_config(
+        mode="import", import_format="kilosort4", import_paths={"imec0": str(import_dir)}
+    )
+    calls: list[tuple[str, float]] = []
+    with (
+        patch("pynpxpipe.stages.sort.ss.read_sorter_folder", return_value=_make_mock_sorting()),
+        patch("pynpxpipe.stages.sort.gc"),
+    ):
+        SortStage(
+            single_session, sorting_cfg, progress_callback=lambda m, f: calls.append((m, f))
+        ).run()
+    probe_msgs = [m for m, _ in calls if m.startswith("sort:[imec0] ")]
+    assert probe_msgs, calls
+    assert ("sort:[imec0] Sorted", 1.0) in calls

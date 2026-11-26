@@ -218,3 +218,13 @@ class TestStageNameGuard:
     def test_valid_stage_name_does_not_raise(self, tmp_path):
         stage = ConcreteStage(_make_session(tmp_path))
         assert stage.STAGE_NAME == "test_stage"
+
+
+def test_report_probe_progress_prefixes_probe(tmp_path):
+    """ui_redesign §8.5: per-probe progress is "stage:[probe] text"; signature unchanged."""
+    calls: list[tuple[str, float]] = []
+    stage = ConcreteStage(
+        _make_session(tmp_path), progress_callback=lambda m, f: calls.append((m, f))
+    )
+    stage._report_probe_progress("imec1", "batch 3 / 10", 0.3)
+    assert calls == [("test_stage:[imec1] batch 3 / 10", 0.3)]

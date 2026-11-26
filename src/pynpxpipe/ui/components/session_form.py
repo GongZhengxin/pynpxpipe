@@ -6,6 +6,7 @@ Single-recording inputs and ordered joint-recording pairs are separate modes.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import panel as pn
@@ -52,6 +53,9 @@ class SessionForm:
         self.validation_message: str = ""
         self.discovery_status: str = ""
         self._editing_index: int | None = None
+        # Probes found by the discovery card; the wizard's probe step listens here.
+        self.discovered_probe_ids: list[str] = []
+        self.probe_listeners: list[Callable[[list[str]], None]] = []
 
         # ── Mode toggle ──
         self.input_mode = pn.widgets.RadioButtonGroup(
@@ -61,6 +65,13 @@ class SessionForm:
             button_type="primary",
         )
         self.advanced_toggle = pn.widgets.Toggle(name="手动指定单段路径", value=False)
+        # ui_redesign P1-3: joint sorting is "add another recording", not a mode switch.
+        self.add_recording_btn = pn.widgets.Button(
+            name="+ 添加同一天的另一段记录（多段联合 sorting）", button_type="light"
+        )
+        self.single_mode_btn = pn.widgets.Button(name="← 只用一段记录", button_type="light")
+        self.add_recording_btn.on_click(lambda event: setattr(state, "input_mode", "joint"))
+        self.single_mode_btn.on_click(lambda event: setattr(state, "input_mode", "single"))
 
         # ── Simple mode widget ──
         self.data_dir_input = BrowsableInput(
@@ -181,18 +192,9 @@ class SessionForm:
         )
         self.joint_paths = pn.Column(
             pn.pane.Markdown(
-                "**两段记录联合 sorting**\n\n"
-                "1. 每段分别选择神经目录与对应 BHV2，点击 **添加配对**。至少添加两组，"
-                "下方表格按采集先后排列；可选择行后编辑、上移或下移。\n"
-                "2. 神经目录选 `…/run_g0` 这一层：里面直接有 `*.nidq.bin/.meta`，"
-                "以及包含 AP 文件的 `run_g0_imec0/`。BHV2 单独选择，通常在日期目录下。\n"
-                "3. 在右侧 **任务时段截取** 中设置采集时区（中国采集填写 `Asia/Shanghai`），"
-                "按需启用 **只处理任务时段**。\n"
-                "4. 填好下方输出目录、实验名、日期、动物和探针脑区；进入 **Execute**，"
-                "先点击 **对齐并预览任务时段**，核对结果后点击 **Run** 进行联合预处理和 sorting。\n\n"
-                "执行使用下方**已保存配对**；修改输入框后需要点击添加或保存修改。"
-                "同一动物、同一天，探针插入位置及配置应保持不变；"
-                "程序从原始元数据读取序列号，无需手填。"
+                "**多段联合 sorting**：同一动物、同一天，探针位置和配置不变。"
+                "每段选 `…/run_g0` 这一层神经目录和对应 BHV2，点 **添加配对**；"
+                "表格顺序即采集顺序，可上移、下移。序列号从 meta 读取。"
             ),
             self.pair_session_dir_input.panel(),
             self.pair_bhv_file_input.panel(),
@@ -229,6 +231,8 @@ class SessionForm:
         self.input_mode.value = self._state.input_mode
         self.single_paths.visible = not joint
         self.joint_paths.visible = joint
+        self.add_recording_btn.visible = not joint
+        self.single_mode_btn.visible = joint
 
     def _refresh_pairs(self, event=None) -> None:
         import pandas as pd
@@ -437,6 +441,9 @@ class SessionForm:
             self._show_discovery_error([str(exc)])
             return
 
+        self.discovered_probe_ids = [p.probe_id for p in probes]
+        for listener in self.probe_listeners:
+            listener(list(self.discovered_probe_ids))
         warnings = [f"{p.probe_id}: {w}" for p in probes for w in discovery.validate_probe(p)]
         try:
             date = SpikeGLXLoader.read_recording_date(probes[0].ap_meta)
@@ -560,9 +567,10 @@ class SessionForm:
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
             pn.pane.Markdown("### 数据与输出"),
-            self.input_mode,
+            self.single_mode_btn,
             self.single_paths,
             self.joint_paths,
+            self.add_recording_btn,
             self.output_dir_input.panel(),
             self.experiment_input,
             pn.Row(self.recording_date_input, self.detect_date_btn),

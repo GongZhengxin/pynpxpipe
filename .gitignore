@@ -51,3 +51,6 @@ docs/superpowers/
 # Private subject configs — keep only the template
 monkeys/*.yaml
 !monkeys/MonkeyTemplate.yaml
+
+# Web UI recent sessions (ui_redesign §8.3)
+.pynpxpipe/

@@ -37,6 +37,36 @@ class LogViewer:
             },
             sizing_mode="stretch_width",
         )
+        # Filters (ui_redesign P1-5): level, current stage only, text search, autoscroll.
+        self.current_stage = ""
+        self.level = pn.widgets.RadioButtonGroup(
+            options={"全部": "all", "警告 0": "warn", "错误 0": "error"},
+            value="all",
+            button_type="light",
+        )
+        self.stage_only = pn.widgets.Checkbox(name="仅本阶段", value=False)
+        self.search = pn.widgets.TextInput(placeholder="搜索日志", width=180)
+        self.autoscroll = pn.widgets.Checkbox(name="自动滚动", value=True)
+        for widget in (self.level, self.stage_only, self.search, self.autoscroll):
+            widget.param.watch(lambda event: self.refresh(), "value")
+
+    @staticmethod
+    def _is_error(line: str) -> bool:
+        return "ERROR" in line or "CRITICAL" in line
+
+    @staticmethod
+    def _is_warning(line: str) -> bool:
+        return "WARNING" in line or " WARN " in line
+
+    def _visible(self, line: str) -> bool:
+        if self.level.value == "error" and not self._is_error(line):
+            return False
+        if self.level.value == "warn" and not self._is_warning(line):
+            return False
+        if self.stage_only.value and self.current_stage and self.current_stage not in line:
+            return False
+        query = (self.search.value or "").strip().lower()
+        return not query or query in line.lower()
 
     def append(self, line: str) -> None:
         """Add a log line to the buffer.
@@ -58,25 +88,37 @@ class LogViewer:
             self.buffer.append(line)
 
     def refresh(self) -> None:
-        """Update the display pane from the current buffer contents."""
-        if not self.buffer:
+        """Update the display pane from the current buffer contents and filters."""
+        lines = list(self.buffer)
+        n_warn = sum(self._is_warning(line) for line in lines)
+        n_err = sum(self._is_error(line) for line in lines)
+        options = {"全部": "all", f"警告 {n_warn}": "warn", f"错误 {n_err}": "error"}
+        if list(self.level.options) != list(options):
+            self.level.options = options
+        if not lines:
             self.display.object = _PLACEHOLDER
             return
 
         lines_html = []
-        for line in self.buffer:
+        for line in lines:
+            if not self._visible(line):
+                continue
             escaped = html.escape(line)
             # Highlight ERROR/CRITICAL lines
-            if "ERROR" in line or "CRITICAL" in line:
+            if self._is_error(line):
                 lines_html.append(f'<span style="color: #f44;">{escaped}</span>')
-            elif "WARNING" in line:
+            elif self._is_warning(line):
                 lines_html.append(f'<span style="color: #fa0;">{escaped}</span>')
             else:
                 lines_html.append(escaped)
 
-        # Auto-scroll: img onerror executes even via innerHTML updates
-        _scroll_js = "this.parentElement.scrollTop=this.parentElement.scrollHeight;this.remove();"
-        scroll_tag = f'<img src="" onerror="{_scroll_js}" style="display:none">'
+        scroll_tag = ""
+        if self.autoscroll.value:
+            # Auto-scroll: img onerror executes even via innerHTML updates
+            _scroll_js = (
+                "this.parentElement.scrollTop=this.parentElement.scrollHeight;this.remove();"
+            )
+            scroll_tag = f'<img src="" onerror="{_scroll_js}" style="display:none">'
         self.display.object = "<br>".join(lines_html) + scroll_tag
 
     def get_processor(self):
@@ -104,7 +146,15 @@ class LogViewer:
     def panel(self) -> pn.viewable.Viewable:
         """Return the Panel layout for this component."""
         return pn.Column(
-            pn.pane.Markdown("### Log"),
+            pn.Row(
+                pn.pane.Markdown("### 日志"),
+                self.level,
+                self.stage_only,
+                pn.layout.HSpacer(),
+                self.search,
+                self.autoscroll,
+                sizing_mode="stretch_width",
+            ),
             self.display,
             sizing_mode="stretch_width",
         )

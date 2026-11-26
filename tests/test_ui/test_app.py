@@ -146,38 +146,78 @@ class TestSectionStructure:
         sections = app._pynpx_sections
         assert set(sections.keys()) == {"configure", "execute", "review", "help"}
 
-    def test_default_section_is_configure(self):
-        """Configure should be visible, others hidden on startup."""
+    def test_views_are_routed_and_home_is_session_list(self):
+        """P1-1: the router picks one view; the session list is the home page."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
-        sections = app._pynpx_sections
-        assert sections["configure"].visible is True
-        assert sections["execute"].visible is False
-        assert sections["review"].visible is False
-        assert sections["help"].visible is False
+        views = app._pynpx_views
+        assert set(views) == {"sessions", "new", "session", "task_window", "help"}
+        assert app._pynpx_router.view == "sessions"
+        assert [k for k, v in views.items() if v.visible] == ["sessions"]
+        app._pynpx_router.go("new")
+        assert [k for k, v in views.items() if v.visible] == ["new"]
+        assert app._pynpx_sections["configure"].visible is True
 
-    def test_configure_has_five_forms(self):
-        """Configure section should contain 5 form components across both columns."""
+    def test_home_view_is_the_session_list(self):
+        from pynpxpipe.ui.app import create_app
+        from pynpxpipe.ui.components.session_list import SessionList
+
+        app = create_app()
+        session_list = app._pynpx_session_list
+        assert isinstance(session_list, SessionList)
+        home = app._pynpx_views["sessions"]
+        assert any(b is session_list.new_btn for b in home.select(pn.widgets.Button))
+
+    def test_routing_to_a_session_directory_loads_it(self, tmp_path, monkeypatch):
+        from pynpxpipe.ui.app import create_app
+        from pynpxpipe.ui.components.session_loader import SessionLoader
+
+        opened = []
+        monkeypatch.setattr(SessionLoader, "load", lambda self, d: opened.append(d) or True)
+        app = create_app()
+        app._pynpx_router.go("session", output_dir=str(tmp_path))
+        assert opened == [str(tmp_path)]
+
+    def test_light_theme_by_default_with_dark_toggle(self):
+
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
-        configure = app._pynpx_sections["configure"]
-        # Left col: session + subject + stages (3); Right col: pipeline + sorting (2)
-        left_count = len(configure.objects[0].objects)
-        right_count = len(configure.objects[1].objects)
-        assert left_count + right_count >= 5
+        assert "Dark" not in app.theme.__name__
+        assert app.theme_toggle is True
 
-    def test_configure_right_column_starts_with_preset_bar(self):
-        """P0-2: the preset bar sits above the parameter forms."""
+    def test_new_view_is_the_four_step_wizard(self):
+        """P1-3: "新建" is a 4-step wizard reusing the existing forms."""
+        from pynpxpipe.ui.app import create_app
+        from pynpxpipe.ui.components.wizard import Wizard
+
+        app = create_app()
+        wizard = app._pynpx_wizard
+        assert isinstance(wizard, Wizard)
+        assert [s.title for s in wizard.steps] == ["数据", "动物与探针", "参数", "检查并运行"]
+        assert app._pynpx_sections["configure"] is app._pynpx_views["new"]
+
+    def test_parameter_step_starts_with_preset_bar(self):
+        """P0-2 preset bar sits above the parameter forms in step 3."""
         from pynpxpipe.ui.app import create_app
         from pynpxpipe.ui.components.preset_bar import PresetBar
 
         app = create_app()
         bar = app._pynpx_preset_bar
         assert isinstance(bar, PresetBar)
-        right = app._pynpx_sections["configure"].objects[1]
-        assert any(w is bar.preset_select for w in right.objects[0].select(pn.widgets.Select))
+        params = app._pynpx_wizard.steps[2].body
+        assert any(w is bar.preset_select for w in params.objects[0].select(pn.widgets.Select))
+
+    def test_wizard_steps_hold_the_forms(self):
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        steps = app._pynpx_wizard.steps
+        data_text = " ".join(str(p.object) for p in steps[0].body.select(pn.pane.Markdown))
+        assert "数据与输出" in data_text
+        subject_text = " ".join(str(p.object) for p in steps[1].body.select(pn.pane.Markdown))
+        assert "实验动物" in subject_text and "探针脑区" in subject_text
 
     def test_header_status_badge_replaces_sidebar_text(self):
         """P0-5: the run status is a coloured badge in the header, not sidebar text."""
@@ -185,7 +225,7 @@ class TestSectionStructure:
 
         app = create_app()
         badge = app._pynpx_status_badge
-        assert any(obj is badge for obj in app.header.objects)
+        assert any(obj is badge for obj in pn.Column(*app.header.objects).select(pn.pane.HTML))
         assert "空闲" in badge.object
         assert not any("Status:" in str(getattr(o, "object", "")) for o in app.sidebar.objects)
 
@@ -218,12 +258,15 @@ class TestSectionStructure:
         assert "Traceback line" not in badge
         assert "x" * 200 not in badge
 
-    def test_sidebar_navigation_labels_are_chinese(self):
+    def test_navigation_moved_from_sidebar_to_header(self):
+        """P1-1: no sidebar navigation; the header carries Sessions / 新建 / 帮助."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
-        names = [o.name for o in app.sidebar.objects if isinstance(o, pn.widgets.Button)]
-        assert names == ["配置", "运行", "结果", "帮助"]
+        assert not any(isinstance(o, pn.widgets.Button) for o in app.sidebar.objects)
+        header = pn.Column(*app.header.objects)
+        names = [b.name for b in header.select(pn.widgets.Button)]
+        assert names[:3] == ["Sessions", "新建", "帮助"]
 
     def test_rerun_dialog_lives_in_template_modal(self):
         """P0-4: the rerun confirmation uses the template's modal area."""
@@ -233,24 +276,27 @@ class TestSectionStructure:
         view = app._pynpx_status_view
         assert any(obj is view.rerun_dialog for obj in app.modal.objects)
 
-    def test_execute_has_full_width_preview_above_progress_and_logs(self):
-        """The timeline gets the full width, above the progress and log columns."""
+    def test_session_view_is_the_workspace(self):
+        """P1-5: execute and review become collapsed sections of the workspace."""
+        from pynpxpipe.ui.app import create_app
+        from pynpxpipe.ui.components.workspace import Workspace
+
+        app = create_app()
+        workspace = app._pynpx_workspace
+        assert isinstance(workspace, Workspace)
+        view = app._pynpx_views["session"]
+        assert any(b is workspace.rerun_btn for b in view.select(pn.widgets.Button))
+        cards = list(view.select(pn.Card))
+        assert {c.title for c in cards} >= {"运行控制与任务时段时间轴", "全部阶段状态"}
+        assert any(c is app._pynpx_sections["execute"] for card in cards for c in card.objects)
+
+    def test_no_session_loader_panels_remain(self):
+        """P1-2: the session list replaces both "Load Session" panels."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
-        execute = app._pynpx_sections["execute"]
-        assert isinstance(execute, pn.Column)
-        assert execute[0].sizing_mode == "stretch_width"
-        assert isinstance(execute[1], pn.Row) and len(execute[1]) == 2
-
-    def test_review_has_two_components(self):
-        """Review section should contain SessionLoader + StatusView."""
-        from pynpxpipe.ui.app import create_app
-
-        app = create_app()
-        review = app._pynpx_sections["review"]
-        # Should have at least 2 child objects
-        assert len(review.objects) >= 2
+        names = {b.name for v in app._pynpx_views.values() for b in v.select(pn.widgets.Button)}
+        assert "Load Session" not in names and "打开已保存的预览" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -259,27 +305,25 @@ class TestSectionStructure:
 
 
 class TestNavigation:
-    def test_switch_to_execute(self):
-        """After switching to execute, only execute should be visible."""
+    @pytest.mark.parametrize("legacy", ["execute", "review"])
+    def test_legacy_section_names_open_the_session_view(self, legacy):
+        """Execute and review now live together in the session view."""
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
-        app._pynpx_switch("execute")
-        sections = app._pynpx_sections
-        assert sections["configure"].visible is False
-        assert sections["execute"].visible is True
-        assert sections["review"].visible is False
+        app._pynpx_switch(legacy)
+        assert app._pynpx_router.view == "session"
+        views, sections = app._pynpx_views, app._pynpx_sections
+        assert views["session"].visible and not views["new"].visible
+        assert sections["execute"].visible and sections["review"].visible
+        assert not sections["configure"].visible
 
-    def test_switch_to_review(self):
-        """After switching to review, only review should be visible."""
+    def test_switch_accepts_new_view_names(self):
         from pynpxpipe.ui.app import create_app
 
         app = create_app()
-        app._pynpx_switch("review")
-        sections = app._pynpx_sections
-        assert sections["configure"].visible is False
-        assert sections["execute"].visible is False
-        assert sections["review"].visible is True
+        app._pynpx_switch("help")
+        assert app._pynpx_views["help"].visible
 
 
 # ---------------------------------------------------------------------------
@@ -307,74 +351,33 @@ class TestErrorBanner:
         assert "Something went wrong" in app._pynpx_error_banner.object
 
 
-# ---------------------------------------------------------------------------
-# E. Configure two-column layout
-# ---------------------------------------------------------------------------
+def test_task_window_view_hosts_the_confirmation_page():
+    from pynpxpipe.ui.app import create_app
+    from pynpxpipe.ui.components.task_window_page import TaskWindowPage
+
+    app = create_app()
+    page = app._pynpx_task_window_page
+    assert isinstance(page, TaskWindowPage)
+    view = app._pynpx_views["task_window"]
+    assert any(b is page.confirm_btn for b in view.select(pn.widgets.Button))
 
 
-class TestConfigureLayout:
-    def test_configure_section_is_row(self):
-        """Configure section should be a pn.Row (two-column layout)."""
-        from pynpxpipe.ui.app import create_app
+def test_error_suggestion_applies_change_and_opens_rerun(tmp_path):
+    """P1-6: "按建议修改并重跑" edits the sorting form and opens the P0-4 dialog."""
+    import dataclasses
 
-        app = create_app()
-        configure = app._pynpx_sections["configure"]
-        assert isinstance(configure, pn.Row)
+    from pynpxpipe.ui.app import create_app
 
-    def test_configure_has_two_columns(self):
-        """Configure row should contain exactly two Column children."""
-        from pynpxpipe.ui.app import create_app
-
-        app = create_app()
-        configure = app._pynpx_sections["configure"]
-        assert len(configure.objects) == 2
-        assert all(isinstance(c, pn.Column) for c in configure.objects)
-
-    def test_left_column_has_session_subject_stages(self):
-        """Left column should contain at least 3 components (session, subject, stages)."""
-        from pynpxpipe.ui.app import create_app
-
-        app = create_app()
-        left_col = app._pynpx_sections["configure"].objects[0]
-        assert len(left_col.objects) >= 3
-
-    def test_right_column_has_pipeline_sorting(self):
-        """Right column should contain at least 2 components (pipeline, sorting)."""
-        from pynpxpipe.ui.app import create_app
-
-        app = create_app()
-        right_col = app._pynpx_sections["configure"].objects[1]
-        assert len(right_col.objects) >= 2
-
-    def test_configure_sizing_mode_stretch_width(self):
-        """Configure row should have sizing_mode='stretch_width'."""
-        from pynpxpipe.ui.app import create_app
-
-        app = create_app()
-        configure = app._pynpx_sections["configure"]
-        assert configure.sizing_mode == "stretch_width"
-
-
-# ---------------------------------------------------------------------------
-# F. SID S3 — ProbeRegionEditor mounted in the left column
-# ---------------------------------------------------------------------------
-
-
-class TestProbeRegionEditorMount:
-    def test_left_column_includes_probe_region_editor(self):
-        """Left column should contain 'Probe Regions' heading somewhere under configure."""
-        from pynpxpipe.ui.app import create_app
-
-        app = create_app()
-        left_col = app._pynpx_sections["configure"].objects[0]
-        # Flatten the column and look for the Probe Regions markdown heading.
-        haystack: list = []
-
-        def _walk(obj):
-            haystack.append(obj)
-            for child in getattr(obj, "objects", []) or []:
-                _walk(child)
-
-        _walk(left_col)
-        texts = [getattr(o, "object", "") for o in haystack if hasattr(o, "object")]
-        assert any("Probe Regions" in str(t) for t in texts)
+    app = create_app()
+    state = app._pynpx_state
+    state.output_dir = str(tmp_path)
+    cfg = state.sorting_config
+    params = dataclasses.replace(cfg.sorter.params, batch_size=60000)
+    state.sorting_config = dataclasses.replace(
+        cfg, sorter=dataclasses.replace(cfg.sorter, params=params)
+    )
+    view = app._pynpx_status_view
+    view.load_status = lambda: None  # no session.json in tmp_path
+    app._pynpx_error_view._apply_fn((("sorter.params.batch_size", 40000),), "sort", None)
+    assert state.sorting_config.sorter.params.batch_size == 40000
+    assert view.rerun_dialog.visible

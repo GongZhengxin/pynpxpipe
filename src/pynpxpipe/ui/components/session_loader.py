@@ -88,20 +88,32 @@ class SessionLoader:
     def _on_run_status(self, event) -> None:
         self.load_btn.disabled = self._state.execution_busy
 
-    def _on_load_click(self, event) -> None:
-        """Handle Load Session button click."""
+    def load(self, output_dir: str) -> bool:
+        """Load *output_dir* into AppState (used by the session list, ui_redesign P1-2).
+
+        Args:
+            output_dir: Session output root containing session.json.
+
+        Returns:
+            True if the session was restored; the message pane explains a failure.
+        """
+        self.dir_input.value = str(output_dir)
+        return self._on_load_click(None)
+
+    def _on_load_click(self, event) -> bool:
+        """Handle Load Session button click; returns whether the session was restored."""
         if self._state.execution_busy:
-            return
+            return False
         output_dir = self.dir_input.value
         if not output_dir or not output_dir.strip():
             self.message_pane.object = "Please specify an output directory."
-            return
+            return False
 
         try:
             session_data = self._load_session_fn(output_dir)
         except Exception as exc:  # noqa: BLE001
             self.message_pane.object = str(exc)
-            return
+            return False
 
         # Populate AppState from loaded session data
         self._state.output_dir = output_dir
@@ -124,11 +136,11 @@ class SessionLoader:
                     self.message_pane.object = (
                         f"Subject metadata in session.json is incomplete: {exc}"
                     )
-                    return
+                    return False
             else:
                 self._state.subject_config = None
                 self.message_pane.object = "Subject metadata in session.json has unexpected type."
-                return
+                return False
 
         # SID S3: restore NWB filename fields (session_id + probe_plan).
         session_id = session_data.get("session_id")
@@ -160,6 +172,7 @@ class SessionLoader:
 
         if self._on_session_loaded:
             self._on_session_loaded()
+        return True
 
     def _restore_effective_configs(self, output_dir: Path) -> None:
         """Reload used_pipeline.yaml / used_sorting.yaml into AppState if present.

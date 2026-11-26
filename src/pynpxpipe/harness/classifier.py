@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 from pynpxpipe.harness.preflight import ErrorClassification, FixTier
 
+# A memory error raised from motion estimation (DREDge) — fixed by coarser time bins.
+_MEMORY_MARKERS = ("MemoryError", "Unable to allocate", "ArrayMemoryError")
+_MOTION_MARKERS = ("dredge", "motion")
+
 
 @dataclass
 class _Pattern:
@@ -15,6 +19,14 @@ class _Pattern:
     auto_fixable: bool
     suggestion: str
 
+
+_MOTION_OOM = _Pattern(
+    patterns=list(_MEMORY_MARKERS),  # only consulted together with a motion marker
+    error_class="motion_oom",
+    fix_tier="GREEN",
+    auto_fixable=True,
+    suggestion="Double preprocess.motion_correction.bin_s to shrink DREDge's memory peak",
+)
 
 _PATTERNS: list[_Pattern] = [
     _Pattern(
@@ -74,9 +86,13 @@ class Classifier:
     def classify(exc: Exception, traceback_str: str) -> ErrorClassification:
         """Match exception against known patterns; fallback to 'unknown'."""
         exc_str = str(exc)
-        combined = exc_str + traceback_str
+        combined = type(exc).__name__ + ": " + exc_str + traceback_str
 
-        for pattern in _PATTERNS:
+        lowered = combined.lower()
+        motion_oom = any(m in lowered for m in _MOTION_MARKERS)
+        candidates = [_MOTION_OOM, *_PATTERNS] if motion_oom else _PATTERNS
+
+        for pattern in candidates:
             if any(p in combined for p in pattern.patterns):
                 return ErrorClassification(
                     error_class=pattern.error_class,
@@ -95,6 +111,37 @@ class Classifier:
             auto_fixable=False,
             fix_tier="RED",
         )
+
+    @staticmethod
+    def suggest_changes(
+        classification: ErrorClassification,
+        pipeline_config,
+        sorting_config,
+        *,
+        min_batch_size: int,
+    ) -> tuple[tuple[str, object], ...]:
+        """Concrete parameter changes for a known, fixable failure (ui_redesign §8.6).
+
+        Args:
+            classification: Result of :meth:`classify`.
+            pipeline_config: Current PipelineConfig (or None).
+            sorting_config: Current SortingConfig (or None).
+            min_batch_size: Floor for a reduced Kilosort batch_size (ui.min_batch_size).
+
+        Returns:
+            ``(("dotted.key", new_value), ...)``; empty when no concrete change applies.
+        """
+        if classification.error_class == "cuda_oom" and sorting_config is not None:
+            current = sorting_config.sorter.params.batch_size
+            if isinstance(current, bool) or not isinstance(current, int):
+                return ()  # "auto": nothing concrete to lower
+            proposed = max(min_batch_size, (current * 2) // 3)
+            return (("sorter.params.batch_size", proposed),) if proposed < current else ()
+        if classification.error_class == "motion_oom" and pipeline_config is not None:
+            bin_s = pipeline_config.preprocess.motion_correction.bin_s
+            if isinstance(bin_s, int | float) and not isinstance(bin_s, bool):
+                return (("preprocess.motion_correction.bin_s", bin_s * 2),)
+        return ()
 
     @staticmethod
     def classify_zero_units(

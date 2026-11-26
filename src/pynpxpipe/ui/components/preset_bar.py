@@ -141,11 +141,21 @@ def diff_configs(baseline: Any, current: Any) -> list[tuple[str, Any, Any]]:
     return [(key, base[key], cur.get(key)) for key in base if base[key] != cur.get(key)]
 
 
-def _replace_path(obj: Any, parts: list[str], value: Any) -> Any:
+def replace_path(obj: Any, parts: list[str], value: Any) -> Any:
+    """Return a copy of a nested config dataclass with one dotted field replaced.
+
+    Args:
+        obj: Config dataclass (e.g. PipelineConfig).
+        parts: The dotted key split on ".", e.g. ``["sorter", "params", "batch_size"]``.
+        value: New leaf value.
+
+    Returns:
+        A new dataclass; *obj* is not modified.
+    """
     if not parts:
         return value
     head, rest = parts[0], parts[1:]
-    return dataclasses.replace(obj, **{head: _replace_path(getattr(obj, head), rest, value)})
+    return dataclasses.replace(obj, **{head: replace_path(getattr(obj, head), rest, value)})
 
 
 def _fmt(value: Any) -> str:
@@ -351,7 +361,7 @@ class PresetBar:
             base = self._baseline.get(kind)
             if base is None or key not in flatten_config(base):
                 continue
-            new = _replace_path(self._current(kind), key.split("."), flatten_config(base)[key])
+            new = replace_path(self._current(kind), key.split("."), flatten_config(base)[key])
             if kind == "pipeline":
                 self._forms["pipeline"].apply_pipeline(new)
             else:
