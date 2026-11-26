@@ -132,13 +132,48 @@ class TestStatusRendering:
 
 
 # ---------------------------------------------------------------------------
-# Reset functionality
+# Rerun-from-stage (ui_redesign.md §4.2 P0-4)
 # ---------------------------------------------------------------------------
 
 
+def _write_cp(root, name, status="completed"):
+    import json
+
+    cp = root / "checkpoints"
+    cp.mkdir(parents=True, exist_ok=True)
+    (cp / f"{name}.json").write_text(json.dumps({"status": status}), encoding="utf-8")
+
+
+@pytest.fixture()
+def finished_output(tmp_path):
+    """Output dir where every stage completed for imec0 and imec1."""
+    from pynpxpipe.pipelines.constants import PER_PROBE_STAGES, STAGE_ORDER
+
+    for stage in STAGE_ORDER:
+        _write_cp(tmp_path, stage)
+        if stage in PER_PROBE_STAGES:
+            for pid in ("imec0", "imec1"):
+                _write_cp(tmp_path, f"{stage}_{pid}")
+    for pid in ("imec0", "imec1"):
+        (tmp_path / "01_preprocessed" / f"{pid}.zarr").mkdir(parents=True)
+    return tmp_path
+
+
+def _cp_names(root):
+    return sorted(p.stem for p in (root / "checkpoints").glob("*.json"))
+
+
+def _view(state, root):
+    from pynpxpipe.ui.components.status_view import StatusView
+
+    state.output_dir = str(root)
+    view = StatusView(state, get_status_fn=lambda output_dir: {})
+    view.load_status()
+    return view
+
+
 class TestResetStage:
-    def test_reset_button_exists_for_each_stage(self, state, mock_status, tmp_path):
-        """Each stage row should have a Reset button."""
+    def test_each_stage_has_rerun_button(self, state, mock_status, tmp_path):
         from pynpxpipe.ui.components.status_view import StatusView
 
         state.output_dir = str(tmp_path)
@@ -146,76 +181,129 @@ class TestResetStage:
         view.load_status()
 
         for stage_name in mock_status:
-            assert "reset_btn" in view.stage_rows[stage_name]
+            assert view.stage_rows[stage_name]["reset_btn"].name == "从此阶段重跑…"
 
-    def test_reset_calls_clear_fn(self, state, mock_status, tmp_path):
-        """Clicking Reset should call the clear function with the stage name."""
+    def test_click_opens_dialog_without_touching_files(self, state, finished_output):
+        view = _view(state, finished_output)
+        before = _cp_names(finished_output)
+        view.stage_rows["sort"]["reset_btn"].clicks += 1
+
+        assert view.rerun_dialog.visible is True
+        assert _cp_names(finished_output) == before
+
+    def test_cancel_deletes_nothing(self, state, finished_output):
+        view = _view(state, finished_output)
+        before = _cp_names(finished_output)
+        view.open_rerun("sort")
+        view.rerun_cancel_btn.clicks += 1
+
+        assert view.rerun_dialog.visible is False
+        assert _cp_names(finished_output) == before
+
+    def test_plan_lists_stage_and_all_downstream_checkpoints(self, state, finished_output):
+        view = _view(state, finished_output)
+        view.open_rerun("sort")
+
+        cleared = sorted(p.stem for _, _, p in view.rerun_plan.clear)
+        expected = ["export"]
+        for stage in ("sort", "merge", "curate", "postprocess"):
+            expected += [stage, f"{stage}_imec0", f"{stage}_imec1"]
+        assert cleared == sorted(expected)
+        assert view.rerun_plan.keep == ["discover", "synchronize", "select_segments", "preprocess"]
+        text = str(view.rerun_clear_pane.object)
+        assert "sort_imec0.json" in text and "export.json" in text
+
+    def test_confirm_clears_stage_and_downstream_only(self, state, finished_output):
+        view = _view(state, finished_output)
+        view.open_rerun("curate")
+        view.rerun_confirm_btn.clicks += 1
+
+        remaining = _cp_names(finished_output)
+        assert "preprocess_imec0" in remaining and "sort_imec1" in remaining
+        assert not any(n.startswith(("curate", "postprocess", "export")) for n in remaining)
+        assert view.rerun_dialog.visible is False
+
+    def test_single_probe_scope_keeps_other_probe(self, state, finished_output):
+        view = _view(state, finished_output)
+        view.open_rerun("sort")
+        assert view.rerun_scope.visible is True
+        assert view.rerun_scope.value == ""
+        view.rerun_scope.value = "imec0"
+        view.rerun_confirm_btn.clicks += 1
+
+        remaining = _cp_names(finished_output)
+        assert "sort_imec0" not in remaining and "curate_imec0" not in remaining
+        assert "sort_imec1" in remaining and "curate_imec1" in remaining
+        # Aggregate stage-level files would otherwise make the runner skip the probe.
+        assert "sort" not in remaining and "export" not in remaining
+        assert "preprocess_imec0" in remaining
+
+    def test_scope_hidden_for_session_level_stage(self, state, finished_output):
+        view = _view(state, finished_output)
+        view.open_rerun("synchronize")
+        assert view.rerun_scope.visible is False
+
+    def test_missing_zarr_pulls_in_preprocess(self, state, finished_output):
+        import shutil
+
+        shutil.rmtree(finished_output / "01_preprocessed" / "imec0.zarr")
+        view = _view(state, finished_output)
+        view.open_rerun("sort")
+
+        assert view.rerun_plan.needs_preprocess == ["imec0"]
+        cleared = {p.stem for _, _, p in view.rerun_plan.clear}
+        assert {"preprocess", "preprocess_imec0"} <= cleared
+        assert "preprocess_imec1" not in cleared
+        assert "需要连同 preprocess 一起重跑" in str(view.rerun_warning.object)
+        assert view.rerun_warning.visible is True
+
+    def test_missing_zarr_does_not_matter_for_export(self, state, finished_output):
+        import shutil
+
+        shutil.rmtree(finished_output / "01_preprocessed" / "imec0.zarr")
+        view = _view(state, finished_output)
+        view.open_rerun("export")
+
+        assert view.rerun_plan.needs_preprocess == []
+        assert view.rerun_warning.visible is False
+
+    def test_param_diff_against_used_configs(self, state, finished_output):
+        import dataclasses
+
+        from pynpxpipe.core.config import SortingConfig, save_sorting_config
+
+        state.sorting_config = SortingConfig()
+        base = SortingConfig()
+        params = dataclasses.replace(base.sorter.params, Th_learned=7.25)
+        used = dataclasses.replace(base, sorter=dataclasses.replace(base.sorter, params=params))
+        save_sorting_config(used, finished_output / "used_sorting.yaml")
+
+        view = _view(state, finished_output)
+        view.open_rerun("sort")
+
+        text = str(view.rerun_params_pane.object)
+        assert "sorter.params.Th_learned" in text
+        assert "used_pipeline.yaml" in text  # reported as missing
+
+    def test_modal_handlers_are_called(self, state, finished_output):
+        view = _view(state, finished_output)
+        open_fn, close_fn = MagicMock(), MagicMock()
+        view.set_modal_handlers(open_fn, close_fn)
+        view.open_rerun("export")
+        open_fn.assert_called_once()
+        view.rerun_cancel_btn.clicks += 1
+        close_fn.assert_called_once()
+
+    def test_confirm_refreshes_status(self, state, finished_output):
         from pynpxpipe.ui.components.status_view import StatusView
 
-        clear_fn = MagicMock()
-        state.output_dir = str(tmp_path)
-        view = StatusView(
-            state,
-            get_status_fn=lambda output_dir: mock_status,
-            clear_stage_fn=clear_fn,
-        )
+        calls = []
+        state.output_dir = str(finished_output)
+        view = StatusView(state, get_status_fn=lambda d: calls.append(d) or {})
         view.load_status()
-
-        # Simulate clicking the reset button for "discover"
-        view._on_reset_click("discover")
-        clear_fn.assert_called_once_with(str(tmp_path), "discover")
-
-    def test_reset_refreshes_status(self, state, tmp_path):
-        """After reset, the status should be refreshed."""
-        from pynpxpipe.ui.components.status_view import StatusView
-
-        call_count = 0
-
-        def counting_get_status(output_dir):
-            nonlocal call_count
-            call_count += 1
-            return {
-                "discover": "pending" if call_count > 1 else "completed",
-                "preprocess": "pending",
-                "sort": "pending",
-                "synchronize": "pending",
-                "curate": "pending",
-                "postprocess": "pending",
-                "export": "pending",
-            }
-
-        state.output_dir = str(tmp_path)
-        view = StatusView(
-            state,
-            get_status_fn=counting_get_status,
-            clear_stage_fn=lambda output_dir, name: None,
-        )
-        view.load_status()
-
-        # Reset discover
-        view._on_reset_click("discover")
-
-        # Should have called get_status twice (initial + after reset)
-        assert call_count == 2
-        # After reset, discover should show pending
-        assert "pending" in view.stage_rows["discover"]["status_text"].object.lower()
-
-    def test_reset_clears_probe_checkpoints(self, state, mock_status, tmp_path):
-        """Reset for a per-probe stage should clear all probe checkpoints."""
-        from pynpxpipe.ui.components.status_view import StatusView
-
-        clear_fn = MagicMock()
-        state.output_dir = str(tmp_path)
-        view = StatusView(
-            state,
-            get_status_fn=lambda output_dir: mock_status,
-            clear_stage_fn=clear_fn,
-        )
-        view.load_status()
-
-        # Reset preprocess (a per-probe stage)
-        view._on_reset_click("preprocess")
-        clear_fn.assert_called_once_with(str(tmp_path), "preprocess")
+        view.open_rerun("export")
+        view.rerun_confirm_btn.clicks += 1
+        assert len(calls) == 2
 
 
 # ---------------------------------------------------------------------------

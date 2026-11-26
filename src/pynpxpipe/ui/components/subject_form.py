@@ -26,21 +26,21 @@ class SubjectForm:
         self._project_root = project_root or _default_project_root()
         self._pending_overwrite_path: Path | None = None
 
-        self.subject_id_input = pn.widgets.TextInput(name="Subject ID", placeholder="MaoDan")
-        self.description_input = pn.widgets.TextInput(name="Description", placeholder="")
-        self.species_input = pn.widgets.TextInput(name="Species", value="Macaca mulatta")
-        self.sex_select = pn.widgets.Select(name="Sex", options=["M", "F", "U", "O"], value="M")
-        self.age_input = pn.widgets.TextInput(name="Age (ISO 8601)", placeholder="P3Y")
-        self.weight_input = pn.widgets.TextInput(name="Weight", placeholder="10kg")
+        self.subject_id_input = pn.widgets.TextInput(name="动物 ID", placeholder="MaoDan")
+        self.description_input = pn.widgets.TextInput(name="描述", placeholder="")
+        self.species_input = pn.widgets.TextInput(name="物种", value="Macaca mulatta")
+        self.sex_select = pn.widgets.Select(name="性别", options=["M", "F", "U", "O"], value="M")
+        self.age_input = pn.widgets.TextInput(name="年龄（ISO 8601，如 P3Y）", placeholder="P3Y")
+        self.weight_input = pn.widgets.TextInput(name="体重（如 10kg）", placeholder="10kg")
         self.image_vault_paths_input = pn.widgets.TextAreaInput(
-            name="Image Vault Paths (one per line, optional)",
+            name="图像库路径（每行一个，可选）",
             placeholder="/data/stimuli\n/mnt/shared/stim_library",
             height=90,
         )
 
         # ── YAML loader ──
         self.yaml_input = BrowsableInput(
-            name="Subject YAML",
+            name="从动物档案 YAML 读取",
             placeholder="/path/to/monkey.yaml",
             file_pattern="*.yaml",
             only_files=True,
@@ -49,12 +49,12 @@ class SubjectForm:
 
         # ── YAML saver ──
         self.save_path_input = BrowsableInput(
-            name="Save Path (optional)",
+            name="保存路径（可选）",
             placeholder="default: <project_root>/monkeys/<subject_id>.yaml",
             file_pattern="*.yaml",
             only_files=True,
         )
-        self.save_btn = pn.widgets.Button(name="Save to monkeys/", button_type="success")
+        self.save_btn = pn.widgets.Button(name="保存到 monkeys/", button_type="success")
         self.save_btn.on_click(self._on_save_click)
         self.save_message = pn.pane.Alert(
             "", alert_type="light", sizing_mode="stretch_width", visible=False
@@ -107,7 +107,7 @@ class SubjectForm:
     def _on_save_click(self, event) -> None:
         cfg = self._state.subject_config
         if cfg is None:
-            self._show_message("Fill all required fields before saving.", level="warning")
+            self._show_message("请先填写所有必填项再保存。", level="warning")
             self._pending_overwrite_path = None
             return
 
@@ -121,7 +121,7 @@ class SubjectForm:
         if target.exists() and self._pending_overwrite_path != target:
             self._pending_overwrite_path = target
             self._show_message(
-                f"File exists at {target}. Click again to overwrite.",
+                f"文件已存在：{target}。再点一次将覆盖。",
                 level="warning",
             )
             return
@@ -130,11 +130,11 @@ class SubjectForm:
             save_subject_config(cfg, target)
         except OSError as exc:
             self._pending_overwrite_path = None
-            self._show_message(f"Failed to save: {exc}", level="danger")
+            self._show_message(f"保存失败：{exc}", level="danger")
             return
 
         self._pending_overwrite_path = None
-        self._show_message(f"Saved to {target}", level="success")
+        self._show_message(f"已保存到 {target}", level="success")
 
     def _show_message(self, text: str, *, level: str) -> None:
         self.save_message.alert_type = level
@@ -164,17 +164,25 @@ class SubjectForm:
         self.weight_input.value = cfg.weight
         self.image_vault_paths_input.value = "\n".join(str(p) for p in cfg.image_vault_paths)
 
+    @staticmethod
+    def _field(widget: pn.widgets.Widget, key: str) -> pn.Column:
+        """Widget with its SubjectConfig key in small monospace below (ui_redesign §4.1)."""
+        caption = pn.pane.Markdown(
+            f"`{key}`", styles={"font-size": "11px", "color": "#8A8F99"}, margin=(-12, 10, 4, 10)
+        )
+        return pn.Column(widget, caption, margin=0, sizing_mode="stretch_width")
+
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
-            pn.pane.Markdown("### Subject Metadata"),
+            pn.pane.Markdown("### 动物信息"),
             self.yaml_input.panel(),
-            self.subject_id_input,
-            self.description_input,
-            self.species_input,
-            self.sex_select,
-            self.age_input,
-            self.weight_input,
-            self.image_vault_paths_input,
+            self._field(self.subject_id_input, "subject_id"),
+            self._field(self.description_input, "description"),
+            self._field(self.species_input, "species"),
+            self._field(self.sex_select, "sex"),
+            self._field(self.age_input, "age"),
+            self._field(self.weight_input, "weight"),
+            self._field(self.image_vault_paths_input, "image_vault_paths"),
             self.save_path_input.panel(),
             self.save_btn,
             self.save_message,

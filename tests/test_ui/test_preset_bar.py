@@ -133,6 +133,11 @@ class TestPresetSelection:
 
 
 class TestDiffCard:
+    def test_empty_diff_says_no_changes(self, config_dir: Path):
+        _, _, _, bar = _make_bar(config_dir)
+        text = " ".join(str(p.object) for p in bar.diff_list.select(pn.pane.Markdown))
+        assert "没有改动" in text
+
     def test_editing_a_field_shows_badge_and_diff_row(self, config_dir: Path):
         state, _, sorting_form, bar = _make_bar(config_dir)
         bar.preset_select.value = "E1"

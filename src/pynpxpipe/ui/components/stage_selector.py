@@ -10,8 +10,22 @@ from pynpxpipe.ui.state import AppState
 # Stages that depend on sort output being present
 _SORT_DEPENDENTS = {"merge", "curate", "postprocess", "export"}
 
-# Stages that are off by default — opt-in only (irreversible side effects).
-_OPT_IN_STAGES = {"merge"}
+# Chinese display names; the checkbox label keeps the stage key for searchability.
+_STAGE_LABELS: dict[str, str] = {
+    "discover": "数据发现",
+    "synchronize": "时间同步",
+    "select_segments": "任务时段截取",
+    "preprocess": "预处理",
+    "sort": "Spike 排序",
+    "merge": "自动合并",
+    "curate": "质控筛选",
+    "postprocess": "后处理",
+    "export": "导出 NWB",
+}
+
+# Stages driven by a pipeline parameter instead of their checkbox (ui_redesign P0-3):
+# merge runs iff ``merge.enabled`` is on in the Auto-Merge card.
+_CONFIG_DRIVEN_STAGES = {"merge"}
 
 
 class StageSelector:
@@ -22,12 +36,20 @@ class StageSelector:
         self.dependency_warning: str = ""
 
         self.stage_checkboxes: dict[str, pn.widgets.Checkbox] = {
-            name: pn.widgets.Checkbox(name=name, value=(name not in _OPT_IN_STAGES))
+            name: pn.widgets.Checkbox(
+                name=f"{_STAGE_LABELS.get(name, name)}（{name}）",
+                value=(name not in _CONFIG_DRIVEN_STAGES),
+                disabled=name in _CONFIG_DRIVEN_STAGES,
+            )
             for name in STAGE_ORDER
         }
+        self.merge_note = pn.pane.Markdown(
+            "merge 是否运行由参数「Auto-Merge」决定，请在参数中开启。",
+            styles={"font-size": "12px"},
+        )
 
-        self.select_all_btn = pn.widgets.Button(name="Select All", button_type="default")
-        self.deselect_all_btn = pn.widgets.Button(name="Deselect All", button_type="default")
+        self.select_all_btn = pn.widgets.Button(name="全选", button_type="default")
+        self.deselect_all_btn = pn.widgets.Button(name="全不选", button_type="default")
 
         for cb in self.stage_checkboxes.values():
             cb.param.watch(self._on_checkbox_change, "value")
@@ -35,11 +57,11 @@ class StageSelector:
         self.select_all_btn.param.watch(self._on_select_all, "clicks")
         self.deselect_all_btn.param.watch(self._on_deselect_all, "clicks")
 
-        # Re-evaluate warnings when pipeline_config (carrying merge.enabled) changes.
-        state.param.watch(self._on_checkbox_change, "pipeline_config")
+        # Mirror merge.enabled whenever the pipeline config changes.
+        state.param.watch(self._on_config_change, "pipeline_config")
 
         # Initialise state
-        self._sync_state()
+        self._on_config_change()
 
     # ── Internal ──
 
@@ -53,13 +75,8 @@ class StageSelector:
         sort_selected = "sort" in selected
         for stage in _SORT_DEPENDENTS:
             if stage in selected and not sort_selected:
-                warnings.append(f"'{stage}' depends on sort output")
-        if "merge" in selected and not self._merge_enabled_in_config():
-            warnings.append(
-                "'merge' stage selected but Auto-Merge is disabled in Pipeline "
-                "parameters — stage will no-op"
-            )
-        self.dependency_warning = "; ".join(warnings)
+                warnings.append(f"{stage} 依赖 sort 的输出，但 sort 未勾选")
+        self.dependency_warning = "；".join(warnings)
 
     def _merge_enabled_in_config(self) -> bool:
         cfg = getattr(self._state, "pipeline_config", None)
@@ -69,13 +86,23 @@ class StageSelector:
     def _on_checkbox_change(self, event=None) -> None:
         self._sync_state()
 
+    def _on_config_change(self, event=None) -> None:
+        merge_cb = self.stage_checkboxes["merge"]
+        enabled = self._merge_enabled_in_config()
+        if merge_cb.value != enabled:
+            merge_cb.value = enabled  # fires _on_checkbox_change → _sync_state
+        else:
+            self._sync_state()
+
     def _on_select_all(self, event=None) -> None:
-        for cb in self.stage_checkboxes.values():
-            cb.value = True
+        for name, cb in self.stage_checkboxes.items():
+            if name not in _CONFIG_DRIVEN_STAGES:
+                cb.value = True
 
     def _on_deselect_all(self, event=None) -> None:
-        for cb in self.stage_checkboxes.values():
-            cb.value = False
+        for name, cb in self.stage_checkboxes.items():
+            if name not in _CONFIG_DRIVEN_STAGES:
+                cb.value = False
 
     # ── Layout ──
 
@@ -94,8 +121,9 @@ class StageSelector:
         self._state.param.watch(_refresh_from_config, "pipeline_config")
 
         return pn.Column(
-            pn.pane.Markdown("### Stages to Run"),
+            pn.pane.Markdown("### 要运行的阶段"),
             pn.Row(self.select_all_btn, self.deselect_all_btn),
             *self.stage_checkboxes.values(),
+            self.merge_note,
             warning_pane,
         )

@@ -116,7 +116,7 @@ class TestSessionFormNWBFields:
         form._on_detect_date_click(None)
 
         assert form.detect_date_alert.visible is True
-        assert "No *.ap.meta" in str(form.detect_date_alert.object)
+        assert "*.ap.meta" in str(form.detect_date_alert.object)
         assert state.recording_date == ""
 
 
@@ -380,3 +380,33 @@ class TestSessionFormApplyPaths:
 
         assert state.session_dir == Path("C:/data/monkey_g0")
         assert state.output_dir == Path("C:/output/session1")
+
+
+class TestSessionFormCopy:
+    """P0-5: unified Chinese labels (ui_redesign.md §4.1)."""
+
+    def test_labels_are_chinese(self):
+        from pynpxpipe.ui.components.session_form import SessionForm
+
+        form = SessionForm(AppState())
+        assert form.data_dir_input.text_input.name == "数据目录"
+        assert form.session_dir_input.text_input.name.startswith("Gate 目录")
+        assert form.bhv_file_input.text_input.name == "BHV2 文件"
+        assert form.output_dir_input.text_input.name == "输出目录"
+        assert form.experiment_input.name == "实验名"
+        assert form.recording_date_input.name == "采集日期（YYMMDD）"
+        assert form.detect_date_btn.name == "读取采集日期"
+        text = " ".join(str(p.object) for p in form.panel().select(pn.pane.Markdown))
+        assert "数据与输出" in text
+
+    def test_messages_are_chinese(self, tmp_path: Path):
+        from pynpxpipe.ui.components.session_form import SessionForm
+
+        _make_recording(tmp_path)
+        form = SessionForm(AppState())
+        form.data_dir_input.value = str(tmp_path)
+        assert form.discovery_status.startswith("已找到")
+
+        form.advanced_toggle.value = True
+        form.bhv_file_input.value = "C:/data/task.txt"
+        assert "必须以 .bhv2 结尾" in form.validation_message

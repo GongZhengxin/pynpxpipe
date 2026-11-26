@@ -1257,32 +1257,59 @@ def test_stage_selector_default_excludes_opt_in_stages():
     assert "merge" not in state.selected_stages
 
 
-def test_stage_selector_warns_when_merge_selected_but_param_disabled():
-    """Checking the merge stage while MergeConfig.enabled=False triggers a warning."""
-    from types import SimpleNamespace
+def _merge_cfg(enabled: bool):
+    import dataclasses
 
+    from pynpxpipe.core.config import MergeConfig, PipelineConfig
+
+    return dataclasses.replace(PipelineConfig(), merge=MergeConfig(enabled=enabled))
+
+
+def test_stage_selector_merge_checkbox_is_read_only_mirror():
+    """P0-3: merge is switched on in the Auto-Merge card only; the stage list mirrors it."""
     from pynpxpipe.ui.components.stage_selector import StageSelector
 
     state = AppState()
-    state.pipeline_config = SimpleNamespace(merge=SimpleNamespace(enabled=False))
+    state.pipeline_config = _merge_cfg(False)
     sel = StageSelector(state)
-    sel.stage_checkboxes["merge"].value = True
+    merge_cb = sel.stage_checkboxes["merge"]
+    assert merge_cb.disabled is True
+    assert merge_cb.value is False
+    assert "merge" not in state.selected_stages
+    assert "在参数中开启" in str(sel.merge_note.object)
+
+    state.pipeline_config = _merge_cfg(True)
+    assert merge_cb.value is True
     assert "merge" in state.selected_stages
-    assert "Auto-Merge is disabled" in sel.dependency_warning
+
+    state.pipeline_config = _merge_cfg(False)
+    assert merge_cb.value is False
+    assert "merge" not in state.selected_stages
 
 
-def test_stage_selector_no_merge_warning_when_param_enabled():
-    """If MergeConfig.enabled=True, checking merge does NOT trigger the mismatch warning."""
-    from types import SimpleNamespace
-
+def test_stage_selector_select_all_does_not_toggle_merge():
     from pynpxpipe.ui.components.stage_selector import StageSelector
 
     state = AppState()
-    state.pipeline_config = SimpleNamespace(merge=SimpleNamespace(enabled=True))
+    state.pipeline_config = _merge_cfg(False)
     sel = StageSelector(state)
-    sel.stage_checkboxes["merge"].value = True
-    assert "merge" in state.selected_stages
-    assert "Auto-Merge is disabled" not in sel.dependency_warning
+    sel.deselect_all_btn.clicks += 1
+    sel.select_all_btn.clicks += 1
+    assert sel.stage_checkboxes["merge"].value is False
+    assert "merge" not in state.selected_stages
+
+
+def test_pipeline_form_keeps_single_auto_merge_switch():
+    """Only the Auto-Merge card writes merge.enabled."""
+    from pynpxpipe.ui.components.pipeline_form import PipelineForm
+    from pynpxpipe.ui.components.stage_selector import StageSelector
+
+    state = AppState()
+    form = PipelineForm(state)
+    sel = StageSelector(state)
+    form.merge_enabled_checkbox.value = True
+    assert state.pipeline_config.merge.enabled is True
+    assert sel.stage_checkboxes["merge"].value is True
 
 
 def test_stage_selector_deselect_all_clears_selection():
@@ -1296,7 +1323,7 @@ def test_stage_selector_deselect_all_clears_selection():
 
 
 def test_stage_selector_select_all_selects_all():
-    """After deselect-all, clicking select_all_btn restores all stages."""
+    """After deselect-all, select_all restores every stage except config-driven merge."""
     from pynpxpipe.pipelines.runner import STAGE_ORDER
     from pynpxpipe.ui.components.stage_selector import StageSelector
 
@@ -1304,7 +1331,7 @@ def test_stage_selector_select_all_selects_all():
     sel = StageSelector(state)
     sel.deselect_all_btn.clicks += 1
     sel.select_all_btn.clicks += 1
-    assert state.selected_stages == STAGE_ORDER
+    assert state.selected_stages == [s for s in STAGE_ORDER if s != "merge"]
 
 
 def test_stage_selector_unchecking_stage_updates_state():
@@ -1871,3 +1898,65 @@ def test_sorting_form_apply_sorting_handles_auto_batch_size():
 
     assert form.batch_size_input.value == "auto"
     assert state.sorting_config.sorter.params.batch_size == "auto"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P0-5 — unified Chinese copy (ui_redesign.md §4.1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _panel_text(viewable) -> str:
+    return " ".join(str(p.object) for p in viewable.select(pn.pane.Markdown))
+
+
+def test_sorting_form_labels_are_chinese_with_key_caption():
+    from pynpxpipe.ui.components.sorting_form import FIELD_TO_WIDGET, SortingForm
+
+    form = SortingForm(AppState())
+    text = _panel_text(form.panel())
+    assert "Sorting 参数" in text
+    for key, attr in FIELD_TO_WIDGET.items():
+        if attr is None or key == "import_cfg.format":
+            continue
+        assert _has_cjk(getattr(form, attr).name), f"{attr} label not Chinese"
+        assert f"`{key}`" in text, f"missing key caption for {key}"
+
+
+def test_subject_form_labels_are_chinese_with_key_caption():
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    form = SubjectForm(AppState())
+    text = _panel_text(form.panel())
+    assert "动物信息" in text
+    for key in ("subject_id", "description", "species", "sex", "age", "weight"):
+        widget = getattr(form, "sex_select" if key == "sex" else f"{key}_input")
+        assert _has_cjk(widget.name), f"{key} label not Chinese"
+        assert f"`{key}`" in text
+    assert _has_cjk(form.image_vault_paths_input.name)
+    assert form.save_btn.name.startswith("保存")
+
+
+def test_subject_form_messages_are_chinese():
+    from pynpxpipe.ui.components.subject_form import SubjectForm
+
+    form = SubjectForm(AppState())
+    form._on_save_click(None)
+    assert _has_cjk(str(form.save_message.object))
+
+
+def test_stage_selector_copy_is_chinese():
+    from pynpxpipe.ui.components.stage_selector import StageSelector
+
+    state = AppState()
+    sel = StageSelector(state)
+    assert "要运行的阶段" in _panel_text(sel.panel())
+    assert sel.select_all_btn.name == "全选"
+    assert sel.deselect_all_btn.name == "全不选"
+    for key, cb in sel.stage_checkboxes.items():
+        assert key in cb.name and _has_cjk(cb.name)
+    sel.stage_checkboxes["sort"].value = False
+    assert _has_cjk(sel.dependency_warning)
