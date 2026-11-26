@@ -1,5 +1,11 @@
 # pynpxpipe 开发进度
 
+## 2026-11-26 — select_segments 重跑不再读取自己的输出 ✅
+
+- 单段模式下 `04_sync/` 既是 select_segments 的输入也是输出，重跑会把已改写的事件表再改一遍（`attempt_id` 变成 `a:a:1`、`stim_onset_imec_s` 被嵌套）。现在首次运行把 synchronize 的原表另存为 `behavior_events_source.parquet`，之后只读它；synchronize 重写事件表时删除旧副本；旧版本已改写过的表会报错并提示从 synchronize 重跑。联合模式读的是 `sources/<id>/04_sync/`，行为不变。
+- spec：`docs/specs/task_segments.md` § 2026-11-26 rerun-safe behavioral input；对应 `docs/specs/ui_redesign.md` §8.1（P1-4 的前置）。
+- 测试：test_select_segments +2、test_synchronize +1；tests/test_stages + test_pipelines + test_integration（CPU）302 passed。
+
 ## 2026-11-21 — Execute 刷新与空 trial 剔除
 
 - Execute 首次进入即可见「任务时段时间轴」。两处会话加载入口仅读取已有预览和检查点；

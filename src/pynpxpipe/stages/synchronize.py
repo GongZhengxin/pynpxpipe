@@ -253,8 +253,12 @@ class SynchronizeStage(BaseStage):
                     encoding="utf-8",
                 )
 
-            # Step 11: Write behavior_events.parquet
+            # Step 11: Write behavior_events.parquet and drop select_segments' copy of
+            # the previous alignment so it re-reads this table.
+            from pynpxpipe.stages.select_segments import SOURCE_EVENTS_NAME
+
             df.to_parquet(sync_dir / "behavior_events.parquet", engine="pyarrow")
+            (sync_dir / SOURCE_EVENTS_NAME).unlink(missing_ok=True)
 
             # Step 12: Optional diagnostic plots
             if sync.generate_plots:

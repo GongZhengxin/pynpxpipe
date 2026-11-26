@@ -778,3 +778,52 @@ def test_export_only_recovery_checks_identity_without_invalidating(
     check = runner.invoke(cli, args)
     assert check.exit_code != 0 and "Inputs/config changed" in check.output
     assert calls == [sig] and not (root / ".invalidated").exists()
+
+
+@pytest.fixture
+def single_session(joint_session):
+    """Single-source session whose sync tables live in the output's own 04_sync/."""
+    session = joint_session
+    source = session.recording_sources[0]
+    session.recordings = [source]
+    src_dir = session.output_dir / "sources" / source.source_id / "04_sync"
+    sync_dir = session.output_dir / "04_sync"
+    sync_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("sync_tables.json", "trial_intervals.parquet", "behavior_events.parquet"):
+        (sync_dir / name).write_bytes((src_dir / name).read_bytes())
+    events = pd.read_parquet(sync_dir / "behavior_events.parquet")
+    events["attempt_id"] = [1, 2, 3]
+    events.to_parquet(sync_dir / "behavior_events.parquet")
+    return session
+
+
+def _rerun_select(session):
+    from pynpxpipe.core.checkpoint import CheckpointManager
+
+    CheckpointManager(session.output_dir).clear("select_segments")
+    SelectSegmentsStage(session).run()
+
+
+def test_single_source_rerun_does_not_reuse_its_own_output(single_session):
+    out = single_session.output_dir / "04_sync" / "behavior_events.parquet"
+    SelectSegmentsStage(single_session).run()
+    first = pd.read_parquet(out)
+
+    _rerun_select(single_session)
+    second = pd.read_parquet(out)
+
+    pd.testing.assert_frame_equal(first, second)
+    assert second.attempt_id.tolist() == ["a:1", "a:2"]
+    assert second.source_stim_onset_imec_s.tolist() == ['{"imec0": 10.5}', '{"imec0": 60.5}']
+    source_copy = single_session.output_dir / "04_sync" / "behavior_events_source.parquet"
+    assert "source_stim_onset_imec_s" not in pd.read_parquet(source_copy).columns
+
+
+def test_previously_namespaced_table_asks_to_rerun_synchronize(single_session):
+    out = single_session.output_dir / "04_sync" / "behavior_events.parquet"
+    events = pd.read_parquet(out)
+    events["source_stim_onset_imec_s"] = events.stim_onset_imec_s
+    events.to_parquet(out)
+
+    with pytest.raises(ValueError, match="synchronize"):
+        SelectSegmentsStage(single_session).run()
