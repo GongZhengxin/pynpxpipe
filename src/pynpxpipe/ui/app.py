@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import contextlib
+import html
 import io
 import logging
 import sys
@@ -121,6 +122,32 @@ class _TeeStream(io.TextIOBase):
 
 
 pn.extension()
+
+
+# Header badge per run status: (label, text colour, background) — docs/design/ui_redesign/README.md.
+_STATUS_BADGES: dict[str, tuple[str, str, str]] = {
+    "idle": ("空闲", "#5B606B", "#EEEEEA"),
+    "running": ("运行中", "#0B6E8E", "#E3F0F5"),
+    "checking_export": ("检查导出", "#0B6E8E", "#E3F0F5"),
+    "exporting": ("导出中", "#0B6E8E", "#E3F0F5"),
+    "completed": ("已完成", "#2E8B57", "#E4F2E9"),
+    "failed": ("失败", "#C8372D", "#FBE6E4"),
+}
+_BADGE_REASON_CHARS = 80
+
+
+def _status_badge_html(run_status: str, error_message: str = "") -> str:
+    """Render the header status badge; failures carry the first error line, truncated."""
+    label, color, background = _STATUS_BADGES.get(run_status, (run_status, "#5B606B", "#EEEEEA"))
+    if run_status == "failed" and error_message.strip():
+        reason = error_message.strip().splitlines()[0]
+        if len(reason) > _BADGE_REASON_CHARS:
+            reason = reason[: _BADGE_REASON_CHARS - 1] + "…"
+        label = f"{label}：{html.escape(reason)}"
+    return (
+        f'<span style="display:inline-block;padding:4px 12px;border-radius:999px;'
+        f'font-size:13px;font-weight:500;color:{color};background:{background}">{label}</span>'
+    )
 
 
 def create_app() -> pn.viewable.Viewable:
@@ -370,13 +397,18 @@ def create_app() -> pn.viewable.Viewable:
 
     # ── Sidebar navigation ──
     nav_buttons = {}
-    for label in ("Configure", "Execute", "Review", "Help"):
+    for key, label in (
+        ("configure", "配置"),
+        ("execute", "运行"),
+        ("review", "结果"),
+        ("help", "帮助"),
+    ):
         btn = pn.widgets.Button(
             name=label,
-            button_type="primary" if label == "Configure" else "default",
+            button_type="primary" if key == "configure" else "default",
             width=150,
         )
-        nav_buttons[label.lower()] = btn
+        nav_buttons[key] = btn
 
     def _make_nav_handler(name: str):
         def handler(event):
@@ -389,25 +421,20 @@ def create_app() -> pn.viewable.Viewable:
     for name, btn in nav_buttons.items():
         btn.on_click(_make_nav_handler(name))
 
-    status_indicator = pn.pane.Str(
-        "Status: idle",
-        styles={"font-size": "12px", "color": "#8b949e", "margin-top": "16px"},
-    )
+    status_badge = pn.pane.HTML(_status_badge_html(state.run_status), margin=(12, 16))
 
     def _on_run_status_change(event) -> None:
-        status_indicator.object = f"Status: {event.new}"
+        status_badge.object = _status_badge_html(state.run_status, state.error_message)
 
-    state.param.watch(_on_run_status_change, ["run_status"])
+    state.param.watch(_on_run_status_change, ["run_status", "error_message"])
 
     # ── Template ──
     template = pn.template.FastListTemplate(
         title="pynpxpipe",
         theme="dark",
         accent_base_color="#1f6feb",
-        sidebar=[
-            *nav_buttons.values(),
-            status_indicator,
-        ],
+        header=[status_badge],
+        sidebar=[*nav_buttons.values()],
         main=[
             error_banner,
             safe_banner,
@@ -416,7 +443,9 @@ def create_app() -> pn.viewable.Viewable:
             review_section,
             help_section,
         ],
+        modal=[status_view.rerun_dialog],
     )
+    status_view.set_modal_handlers(template.open_modal, template.close_modal)
 
     # ── Expose internals for testing ──
     template._pynpx_sections = sections
@@ -425,6 +454,8 @@ def create_app() -> pn.viewable.Viewable:
     template._pynpx_safe_banner = safe_banner
     template._pynpx_state = state
     template._pynpx_preset_bar = preset_bar
+    template._pynpx_status_view = status_view
+    template._pynpx_status_badge = status_badge
 
     return template
 

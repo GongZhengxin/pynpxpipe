@@ -179,6 +179,60 @@ class TestSectionStructure:
         right = app._pynpx_sections["configure"].objects[1]
         assert any(w is bar.preset_select for w in right.objects[0].select(pn.widgets.Select))
 
+    def test_header_status_badge_replaces_sidebar_text(self):
+        """P0-5: the run status is a coloured badge in the header, not sidebar text."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        badge = app._pynpx_status_badge
+        assert any(obj is badge for obj in app.header.objects)
+        assert "空闲" in badge.object
+        assert not any("Status:" in str(getattr(o, "object", "")) for o in app.sidebar.objects)
+
+    @pytest.mark.parametrize(
+        ("status", "text", "color"),
+        [
+            ("running", "运行中", "#0B6E8E"),
+            ("exporting", "导出中", "#0B6E8E"),
+            ("completed", "已完成", "#2E8B57"),
+        ],
+    )
+    def test_header_status_badge_colours(self, status, text, color):
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        app._pynpx_state.run_status = status
+        badge = app._pynpx_status_badge.object
+        assert text in badge and color in badge
+
+    def test_header_status_badge_shows_short_failure_reason(self):
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        state = app._pynpx_state
+        state.error_message = "ValueError: " + "x" * 300 + "\nTraceback line"
+        state.run_status = "failed"
+        badge = app._pynpx_status_badge.object
+        assert "失败" in badge and "#C8372D" in badge
+        assert "ValueError" in badge
+        assert "Traceback line" not in badge
+        assert "x" * 200 not in badge
+
+    def test_sidebar_navigation_labels_are_chinese(self):
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        names = [o.name for o in app.sidebar.objects if isinstance(o, pn.widgets.Button)]
+        assert names == ["配置", "运行", "结果", "帮助"]
+
+    def test_rerun_dialog_lives_in_template_modal(self):
+        """P0-4: the rerun confirmation uses the template's modal area."""
+        from pynpxpipe.ui.app import create_app
+
+        app = create_app()
+        view = app._pynpx_status_view
+        assert any(obj is view.rerun_dialog for obj in app.modal.objects)
+
     def test_execute_has_full_width_preview_above_progress_and_logs(self):
         """The timeline gets the full width, above the progress and log columns."""
         from pynpxpipe.ui.app import create_app

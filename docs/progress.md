@@ -1,5 +1,18 @@
 # pynpxpipe 开发进度
 
+## 2026-11-26 — UI 改版 S3 + S4：重跑确认、合并开关去重、状态徽章与中文文案（P0-3/4/5）✅
+
+spec：`docs/specs/ui_redesign.md` §4.2 P0-3、P0-4、P0-5；设计参考 `docs/design/ui_redesign/RerunConfirm.dc.html`。P0 全部完成。
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| UI redesign S3 / P0-3 | ✅ | `StageSelector` 的 merge 勾选改为只读，跟随 `merge.enabled`（Auto-Merge 卡片为唯一开关），全选/全不选不改动 merge，附"请在参数中开启"说明；删除已无意义的"勾了 merge 但参数未开"警告 |
+| UI redesign S3 / P0-4 | ✅ | `StatusView` 的 Reset 改为"从此阶段重跑…"，在模板 modal 中弹出确认：列出该阶段及**所有下游阶段**实际存在的检查点、保留的上游阶段、与 `used_pipeline.yaml`/`used_sorting.yaml` 的参数差异；per-probe 阶段可只选一根探针（同时清除阶段级汇总检查点）；探针的 `01_preprocessed/{probe}.zarr` 已删除时提示需要连同 preprocess 重跑并加入清除列表（export 不受影响）。取消不碰任何文件，确认后用 `CheckpointManager.clear` 删除。修复了旧 Reset 只清当前阶段、下游仍为 completed 的正确性问题 |
+| UI redesign S4 / P0-5 | ✅ | 侧边栏 `Status: idle` 改为顶栏彩色徽章（空闲/运行中/检查导出/导出中/已完成/失败，失败时附错误首行、截断 80 字）；导航改为 配置/运行/结果/帮助；`session_form`、`subject_form`、`sorting_form`、`stage_selector` 标签与提示统一为中文，subject/sorting 字段下方用等宽小字显示 dataclass 键名 |
+| 修复（S2） | ✅ | 预设差异卡在没有改动时显示"没有改动。"（原先为空） |
+
+测试：test_status_view +12（重写 Reset 组）、test_components +7、test_app +7、test_session_form +2、test_preset_bar +1；tests/test_ui 368 passed。`pipeline_form.py` 的标签不在 S4 范围（§6），留待 P2 schema 驱动表单。
+
 ## 2026-11-26 — UI 改版 S2：参数预设与差异（P0-2）✅
 
 spec：`docs/specs/ui_redesign.md` §4.2 P0-2；设计参考 `docs/design/ui_redesign/WizardParams.dc.html`。

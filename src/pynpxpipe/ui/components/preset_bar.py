@@ -309,7 +309,7 @@ class PresetBar:
         diff = per_kind["pipeline"] + per_kind["sorting"]
         self.badge.object = f"**已改 {len(diff)} 项**"
         self.diff_title.object = f"**与{self._baseline_label}的差异**"
-        if diff != self.diff or not self.diff_list.objects and diff:
+        if diff != self.diff or not self.diff_list.objects:
             self.diff = diff
             self.diff_list.objects = [self._diff_row(*entry) for entry in diff] or [
                 pn.pane.Markdown("没有改动。")

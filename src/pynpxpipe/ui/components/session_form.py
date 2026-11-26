@@ -64,7 +64,7 @@ class SessionForm:
 
         # ── Simple mode widget ──
         self.data_dir_input = BrowsableInput(
-            name="Data Directory",
+            name="数据目录",
             placeholder="/path/to/experiment_folder",
             file_pattern="*",
             only_files=False,
@@ -72,13 +72,13 @@ class SessionForm:
 
         # ── Advanced mode widgets (hidden by default) ──
         self.session_dir_input = BrowsableInput(
-            name="Session Directory",
+            name="Gate 目录（含 NIDQ 文件和 _imec 子目录）",
             placeholder="/path/to/session_root",
             file_pattern="*",
             only_files=False,
         )
         self.bhv_file_input = BrowsableInput(
-            name="BHV2 File",
+            name="BHV2 文件",
             placeholder="/path/to/recording.bhv2",
             file_pattern="*.bhv2",
             only_files=True,
@@ -86,7 +86,7 @@ class SessionForm:
 
         # ── Shared widget ──
         self.output_dir_input = BrowsableInput(
-            name="Output Directory",
+            name="输出目录",
             placeholder="/path/to/output",
             file_pattern="*",
             only_files=False,
@@ -94,17 +94,17 @@ class SessionForm:
 
         # ── NWB filename fields (SID S3) ──
         self.experiment_input = pn.widgets.TextInput(
-            name="Experiment",
+            name="实验名",
             placeholder="e.g. nsd1w",
             value=state.experiment,
         )
         self.recording_date_input = pn.widgets.TextInput(
-            name="Recording Date (YYMMDD)",
+            name="采集日期（YYMMDD）",
             placeholder="251024",
             value=state.recording_date,
         )
         self.detect_date_btn = pn.widgets.Button(
-            name="Detect Date",
+            name="读取采集日期",
             button_type="default",
         )
         self.detect_date_alert = pn.pane.Alert(
@@ -375,7 +375,7 @@ class SessionForm:
         elif errors:
             self.discovery_status = " | ".join(errors)
         else:
-            self.discovery_status = f"Found: {gate_dirs[0].name} | {bhv_files[0].name}"
+            self.discovery_status = f"已找到：{gate_dirs[0].name} | {bhv_files[0].name}"
 
         # Updating options re-fires _on_candidate_change; suppress until both are set.
         self._updating_candidates = True
@@ -444,7 +444,7 @@ class SessionForm:
             self._state.recording_date = date
             self.recording_date_input.value = date
         except (OSError, ValueError) as exc:
-            date_text = f"读取失败（{exc}），可手动填写或点 Detect Date 重试"
+            date_text = f"读取失败（{exc}），可手动填写或点「读取采集日期」重试"
 
         rows = "\n".join(
             f"| `{p.probe_id}` | {p.probe_type} | `{p.serial_number}` | {p.n_channels} | "
@@ -476,7 +476,7 @@ class SessionForm:
     def _on_bhv_file(self, event) -> None:
         val: str = event.new or ""
         if val and not val.endswith(".bhv2"):
-            self.validation_message = "BHV2 file must end with .bhv2"
+            self.validation_message = "BHV2 文件必须以 .bhv2 结尾"
         else:
             self.validation_message = ""
             self._state.bhv_file = Path(val) if val else None
@@ -537,8 +537,7 @@ class SessionForm:
         meta_path = self._find_ap_meta()
         if meta_path is None:
             self.detect_date_alert.object = (
-                "No *.ap.meta found under the session directory. "
-                "Select a valid data directory first."
+                "在 gate 目录下没有找到 *.ap.meta，请先选择有效的数据目录。"
             )
             self.detect_date_alert.alert_type = "warning"
             self.detect_date_alert.visible = True
@@ -546,13 +545,13 @@ class SessionForm:
         try:
             yymmdd = SpikeGLXLoader.read_recording_date(meta_path)
         except Exception as exc:  # noqa: BLE001
-            self.detect_date_alert.object = f"Failed to read recording date: {exc}"
+            self.detect_date_alert.object = f"读取采集日期失败：{exc}"
             self.detect_date_alert.alert_type = "danger"
             self.detect_date_alert.visible = True
             return
         self._state.recording_date = yymmdd
         self.recording_date_input.value = yymmdd
-        self.detect_date_alert.object = f"Detected recording date: {yymmdd}"
+        self.detect_date_alert.object = f"已读取采集日期：{yymmdd}"
         self.detect_date_alert.alert_type = "success"
         self.detect_date_alert.visible = True
 
@@ -560,7 +559,7 @@ class SessionForm:
 
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
-            pn.pane.Markdown("### Session Paths"),
+            pn.pane.Markdown("### 数据与输出"),
             self.input_mode,
             self.single_paths,
             self.joint_paths,
