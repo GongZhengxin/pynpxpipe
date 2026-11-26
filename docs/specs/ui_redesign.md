@@ -1,6 +1,6 @@
 # UI 改版：以 Session 为中心的工作流
 
-> 状态：**待用户确认** | 日期：2026-11-26
+> 状态：**已确认**（§7，2026-11-26） | 日期：2026-11-26
 > 设计稿：`docs/design/ui_redesign/`（在线画布见该目录 README）
 > 关联：`docs/specs/ui.md`、`docs/specs/a5_app_layout.md`、`docs/specs/ui_improvements_plan.md`、`docs/specs/task_segments.md`
 
@@ -68,7 +68,7 @@
 **P0-3 自动合并只保留一个开关**
 
 - 现状：`StageSelector` 有 merge 勾选，`PipelineForm` 的"Auto-Merge"卡片里还有一个，两者重复。
-- 方案：保留 `PipelineForm` 的开关作为唯一来源（它写入 `merge.enabled`），删除 Auto-Merge 卡片；`StageSelector` 的 merge 勾选改为只读显示，并附说明"在参数中开启"（见 §7 问题 1）。
+- 方案：保留 `PipelineForm` 的 Auto-Merge 卡片及其开关作为唯一来源（它写入 `merge.enabled`），只去掉重复；`StageSelector` 的 merge 勾选改为只读显示，并附说明"在参数中开启"（见 §7 问题 1）。
 
 **P0-4 从此阶段重跑：确认弹窗**（设计稿 `RerunConfirm.dc.html`）
 
@@ -76,7 +76,7 @@
 - 模态框内容：
   1. 范围：全部探针；若该阶段属于 `PER_PROBE_STAGES`，可以只选某一根探针。
   2. 将清除：该阶段**及其下游所有阶段**中实际存在的检查点文件，逐条列出路径。
-  3. 将保留：上游结果。若某探针的 postprocess 已完成，runner 已删除它的 preprocess Zarr，此时必须提示"需要连同 preprocess 一起重跑"，并把 preprocess 也加入清除列表。
+  3. 将保留：上游结果。若某探针的 `01_preprocessed/{probe_id}.zarr` 已不存在（runner 在 `preprocess.delete_zarr_after_postprocess` 开启且 postprocess 完成后会删除它；以文件实际是否存在为准），此时必须提示"需要连同 preprocess 一起重跑"，并把 preprocess 也加入清除列表。
   4. 本次参数变化：当前配置与该 session 的 `used_pipeline.yaml` / `used_sorting.yaml` 的差异，复用 P0-2 的差异函数。
 - 确认后才执行清除。取消时不触碰任何文件。
 - **注意**：现有 Reset 只清除当前阶段，下游检查点仍是 completed，runner 会跳过下游，结果和上游对不上。连带清除下游是正确性修复，不只是交互改进。
@@ -95,7 +95,7 @@
 
 **P1-2 Session 列表首页**（`Main.dc.html`）
 
-- 最近打开的输出目录存到 `~/.pynpxpipe/recent_sessions.json`（见 §7 问题 3），每次加载 session 或运行时更新。
+- 最近打开的输出目录存到项目目录下（具体路径在 P1-2 开工前确认，需加入 `.gitignore`；见 §7 问题 3），每次加载 session 或运行时更新。
 - 每行显示：名称、输出路径、动物、探针、9 段阶段色条（来自 `read_pipeline_status`）、状态徽章、更新时间。
 - 顶部 4 个计数：运行中、待你确认、失败、已导出。
 - 点击行的跳转：待确认 → 任务时段页；失败 → 工作区的报错视图；其他 → 工作区。
@@ -124,7 +124,7 @@
 - 底栏两种状态：
   - 试算与已保存不同：显示"恢复已保存参数"和"应用试算"。应用 = 写入新的 `TaskWindowConfig`，清除 `select_segments` 检查点，只重跑 `select_segments`。
   - 两者一致：显示"稍后再确认"和"确认并继续 preprocess"。确认 = 删除待确认标记，运行剩余阶段。
-- 需要核实：只重跑 `select_segments` 时，是否会触发重新同步（见 §7 问题 5）。
+- 只重跑 `select_segments` 不会触发重新同步，但单段模式下它目前会覆盖自己的输入 `04_sync/behavior_events.parquet`，重复运行会损坏数据。**前置条件**：先单独开 PR 修复 select_segments，使其不再覆盖输入（见 §7 问题 5）。
 
 **P1-5 Session 工作区**（`Workspace.dc.html`）
 
@@ -153,7 +153,7 @@
 
 ## 5. 可配参数
 
-- `~/.pynpxpipe/recent_sessions.json` 的最大条目数（默认 20）。
+- 最近 session 列表（项目目录下）的最大条目数（默认 20）。
 - 任务时段滑块范围：`max_idle_s` 30–600 s，步长 10；`pre_s` / `post_s` 0–120 s，步长 5。超出滑块范围的值可以在旁边的数字框里直接输入。
 - 主题：默认浅色，可切换深色（实现方式见 §7 问题 6）。
 
@@ -169,12 +169,20 @@
 
 每个 session 都遵循：读本 spec → TDD-RED → TDD-GREEN → `uv run ruff check src/ tests/` 加 `ruff format` → 更新 `docs/progress.md`。
 
-## 7. 待用户确认的问题
+## 7. 用户确认的问题（状态：已确认，2026-11-26）
 
 1. 自动合并开关以 `PipelineForm` 为唯一来源、`StageSelector` 只读显示，这样可以吗？
+   - **已确认**：只去重。保留 `PipelineForm` 的 Auto-Merge 卡片及开关，`StageSelector` 的 merge 勾选改为只读。
 2. `pd_hignline_*` 是否是 "highline" 的笔误？若是笔误，要不要另开 PR 修改字段名并兼容旧 YAML？本次只改界面标签。
+   - **已确认**：是笔误，沿用自 MATLAB 变量名 `hignline`（`docs/ground_truth/step4_full_pipeline_analysis.md:617`）。另开 PR 改字段名并兼容旧 YAML；本改版只改界面标签。
 3. 最近 session 列表存在 `~/.pynpxpipe/` 下可以吗？还是存到项目目录？
+   - **已确认**：存到项目目录。具体文件路径在 P1-2 开工前确认，并加入 `.gitignore`。
 4. "待确认任务时段"状态用标记文件持久化，可以吗？
+   - **已确认**：可以，使用 `checkpoints/task_window_pending.json`。
 5. 只重跑 `select_segments` 是否依赖重新执行 `synchronize`？需要核实 `stages/select_segments.py` 的输入。
+   - **核实结果**：不重新执行 synchronize，只读取其产物（`04_sync/sync_tables.json`、`trial_intervals.parquet`、`behavior_events.parquet`，见 `select_segments.py:96-140`）；runner 在 `stages=["select_segments"]` 时也不补跑 synchronize。但单段模式下 `sync_dir` 与输出的 `04_sync` 是同一目录，select_segments 会覆盖自己读取的 `behavior_events.parquet`（`select_segments.py:276`，`stim_onset_imec_s` 变为 JSON 字符串、`attempt_id` 加前缀），重复运行会损坏数据；联合模式不受影响。
+   - **已确认**：修复 select_segments，使其不再覆盖输入。作为 core 层改动单独开 PR，是 P1-4 的前置条件。
 6. 主题：保留深色作为默认，还是按设计稿改为浅色，深色作为选项？
+   - **已确认**：按设计稿默认浅色，深色可选（与 §5 一致）。
 7. P1-5 的按探针进度采用方案 A（不改回调签名），可以吗？
+   - **已确认**：采用方案 A。`BaseStage._report_progress` 已加 `"stage:"` 前缀（`stages/base.py:80`），在 message 中约定 `probe_id` 字段，由 UI 解析。
