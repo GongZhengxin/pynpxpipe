@@ -27,6 +27,33 @@ _DEFAULT_SORTING = SortingConfig(
 )
 
 
+# Each leaf field of the config dataclass maps to the widget attribute that edits
+# it (None = YAML-only). test_components.py checks coverage against core/config.py.
+FIELD_TO_WIDGET: dict[str, str | None] = {
+    "mode": "mode_select",
+    "sorter.name": "sorter_select",
+    "sorter.params.nblocks": "nblocks_input",
+    "sorter.params.Th_learned": "th_learned_input",
+    "sorter.params.Th_universal": None,  # pinned; not exposed in UI (§IV.8)
+    "sorter.params.cluster_downsampling": None,  # pinned; not exposed in UI (§IV.8)
+    "sorter.params.max_cluster_subset": None,  # pinned; not exposed in UI (§IV.8)
+    "sorter.params.do_CAR": "do_car_checkbox",
+    "sorter.params.batch_size": "batch_size_input",
+    "sorter.params.n_jobs": "n_jobs_input",
+    "sorter.params.torch_device": "torch_device_select",
+    # import_cfg.format is derived from sorter_select.value (no dedicated widget)
+    "import_cfg.format": "sorter_select",
+    "import_cfg.paths": "import_path_input",
+    "analyzer.random_spikes.max_spikes_per_unit": "analyzer_max_spikes_input",
+    "analyzer.random_spikes.method": "analyzer_random_method_select",
+    "analyzer.waveforms.ms_before": "analyzer_ms_before_input",
+    "analyzer.waveforms.ms_after": "analyzer_ms_after_input",
+    "analyzer.template_operators": "analyzer_template_operators_input",
+    "analyzer.unit_locations_method": "analyzer_unit_locations_select",
+    "analyzer.template_similarity_method": "analyzer_template_similarity_select",
+}
+
+
 class SortingForm:
     """Widgets for configuring the spike sorter."""
 

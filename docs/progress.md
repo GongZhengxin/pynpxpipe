@@ -1,5 +1,21 @@
 # pynpxpipe 开发进度
 
+## 2026-11-26 — UI 改版 S2：参数预设与差异（P0-2）✅
+
+spec：`docs/specs/ui_redesign.md` §4.2 P0-2；设计参考 `docs/design/ui_redesign/WizardParams.dc.html`。
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| UI redesign S2 / P0-2 | ✅ | 新组件 `ui/components/preset_bar.py`：按后缀配对 `config/pipeline*.yaml` + `sorting*.yaml`，缺一半时回退到无后缀文件并在选项和提示中注明；选中预设经 `load_*_config` → `apply_pipeline`/`apply_sorting`；导入单个 pipeline/sorting YAML（无效配置报错不改表单）；导出为 `pipeline_<名>.yaml` + `sorting_<名>.yaml`（拒绝覆盖，导出到 config/ 时刷新预设列表）。差异按 dataclass 字段展平为点号路径，显示"已改 N 项"、差异列表与逐项"恢复"，改过的控件加 `pynpx-changed` 标记。字段→控件映射从 `test_components.py` 移到 `pipeline_form.FIELD_TO_WIDGET` / `sorting_form.FIELD_TO_WIDGET` 作为唯一来源，覆盖 harness 照旧校验。`pd_hignline_*` 仅界面标签改为 Highline。`app.py` 在 Configure 右列顶部挂载。test_preset_bar 18 + test_app 1（tests/test_ui 345 passed） |
+
+## 2026-11-26 — UI 改版 S1：数据发现结果卡（P0-1）✅
+
+spec：`docs/specs/ui_redesign.md` §4.2 P0-1；设计参考 `docs/design/ui_redesign/WizardData.dc.html`。
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| UI redesign S1 / P0-1 | ✅ | `SessionForm` 渲染发现结果卡：识别成功为绿色卡（gate 目录、NIDQ、采集日期、探针表：id/型号/序列号/通道/AP 大小），meta 解析复用 `SpikeGLXDiscovery`/`SpikeGLXLoader.read_recording_date`；`_discover_paths` 返回全部候选，多个 gate 目录或 BHV2 时显示黄色提示 + `Select`（默认第一个）；识别成功自动填 `recording_date`，保留 Detect Date 手动重试；目录不存在、缺 gate/BHV2/NIDQ/探针时显示红色错误卡；`validation_message` 改为可见 Alert。test_session_form +13（24 tests），tests/test_ui 326 passed |
+
 ## 2026-11-26 — select_segments 重跑不再读取自己的输出 ✅
 
 - 单段模式下 `04_sync/` 既是 select_segments 的输入也是输出，重跑会把已改写的事件表再改一遍（`attempt_id` 变成 `a:a:1`、`stim_onset_imec_s` 被嵌套）。现在首次运行把 synchronize 的原表另存为 `behavior_events_source.parquet`，之后只读它；synchronize 重写事件表时删除旧副本；旧版本已改写过的表会报错并提示从 synchronize 重跑。联合模式读的是 `sources/<id>/04_sync/`，行为不变。
