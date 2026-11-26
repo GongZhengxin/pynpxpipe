@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Session 工作区：阶段失败</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+</style>
+</helmet>
+<div style="min-height: 900px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #15171C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</a>
+<span style="color: #8A8F99">/</span><a href="Main.dc.html" style="color: #5B606B">Sessions</a><span style="color: #8A8F99">/</span><span style="font-weight: 500">XiaoHei_251022_rsvp</span>
+</header>
+<main style="max-width: 1320px; margin: 0 auto; padding: 24px 32px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 600; flex: 1">XiaoHei_251022_rsvp</h1>
+<span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #FBE6E4; color: #8F1C13; font-weight: 500; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #C8372D"></span>已停止 · sort 失败</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{stages}}" as="s" hint-placeholder-count="9">
+<span style="display: flex; align-items: center; gap: 6px; padding: 10px; border-radius: 10px; border: {{s.border}}; background: {{s.bg}}; min-width: 0"><span style="width: 18px; height: 18px; border-radius: 50%; background: {{s.dotBg}}; color: {{s.dotFg}}; display: grid; place-items: center; font-size: 11px; font-weight: 600; flex: none">{{s.icon}}</span><span class="mono" style="font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{s.name}}</span></span>
+</sc-for>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+<section style="flex: 999 1 640px; min-width: 0; background: #FFFFFF; border: 1px solid #F0CFCB; border-radius: 12px; overflow: hidden">
+<div style="padding: 20px 22px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; gap: 12px; align-items: flex-start">
+<span style="flex: none; width: 32px; height: 32px; border-radius: 50%; background: #FBE6E4; display: grid; place-items: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B42318" stroke-width="2.2" aria-hidden="true"><path d="M12 8v5M12 16.5h.01"/><circle cx="12" cy="12" r="9"/></svg></span>
+<div><h2 style="margin: 0; font-size: 17px; font-weight: 600">imec1 的 sort 因 GPU 显存不足停止</h2><p style="margin: 4px 0 0; color: #5B606B">imec0 已在 41 min 前完成，结果保留，不受影响。</p></div>
+</div>
+<div style="background: #F6F6F3; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.6">
+<div><span style="font-weight: 500">可能原因：</span>这根探针记录较长（74 min），以 batch_size 60000 运行时显存峰值超过 24 GB。</div>
+<div><span style="font-weight: 500">建议：</span>把 <span class="mono">batch_size</span> 降到 40000。若仍不足，再在 sorting 参数中改用 <span class="mono">nblocks = 1</span>。</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 10px">
+<a href="RerunConfirm.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 18px; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500">按建议修改并重跑 imec1</a>
+<a href="WizardParams.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; color: #15171C">改其他参数…</a>
+<a href="ErrorState.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; color: #15171C">问 AI 助手</a>
+</div>
+</div>
+<details style="border-top: 1px solid #EFEFEA; padding: 14px 22px">
+<summary style="cursor: pointer; font-size: 13px; color: #5B606B">完整报错（torch.cuda.OutOfMemoryError）</summary>
+<div class="mono" style="margin-top: 10px; background: #15171C; color: #C9CDD4; border-radius: 8px; padding: 12px 14px; font-size: 12px; line-height: 1.7; overflow-x: auto; white-space: pre">torch.cuda.OutOfMemoryError: CUDA out of memory.
+  File "kilosort/run_kilosort.py", in detect_spikes
+  File "pynpxpipe/stages/sort.py", in _run_probe</div>
+</details>
+</section>
+<aside style="flex: 1 1 340px; min-width: 0; background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 18px; font-size: 13px; color: #5B606B; line-height: 1.6">
+<h2 style="margin: 0 0 8px; font-size: 15px; font-weight: 600; color: #15171C">这个提示从哪里来</h2>
+报错会先经过 <span class="mono">harness/classifier.py</span> 匹配已知模式，给出原因和建议的参数修改。匹配不到时只显示原始报错，并提供“问 AI 助手”，助手会带上当前配置和日志作为上下文。
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const d = (name) => ({ name, icon: '✓', dotBg: '#E4F2E9', dotFg: '#155E35', bg: '#FFFFFF', border: '1px solid #E3E3DE' });
+    const t = (name) => ({ name, icon: '', dotBg: '#EFEFEA', dotFg: '#8A8F99', bg: '#FAFAF8', border: '1px solid #E3E3DE' });
+    return {
+      stages: [d('discover'), d('synchronize'), d('select_segments'), d('preprocess'),
+        { name: 'sort', icon: '!', dotBg: '#C8372D', dotFg: '#FFFFFF', bg: '#FDF5F4', border: '2px solid #C8372D' },
+        t('merge'), t('curate'), t('postprocess'), t('export')]
+    };
+  }
+}
+</script>
+</body>
+</html>

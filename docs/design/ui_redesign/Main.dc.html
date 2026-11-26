@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Session 列表</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+</style>
+</helmet>
+<div style="min-height: 900px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<div style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</div>
+<nav style="display: flex; gap: 4px; margin-left: 16px">
+<a href="Main.dc.html" style="padding: 8px 12px; border-radius: 6px; background: #EEF5F8; color: #08516A; font-weight: 500">Sessions</a>
+<a href="WizardData.dc.html" style="padding: 8px 12px; border-radius: 6px; color: #5B606B">新建</a>
+</nav>
+<div style="flex: 1"></div>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><span style="width: 8px; height: 8px; border-radius: 50%; background: #1E7A46"></span>本机空闲 · RTX 4090 24 GB · 1.2 TB 可用</span>
+<button aria-label="帮助" style="height: 36px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 6px; background: #FFFFFF; font: inherit; color: #15171C">帮助</button>
+</header>
+<main style="max-width: 1240px; margin: 0 auto; padding: 32px">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 24px">
+<div style="flex: 1; min-width: 280px">
+<h1 style="margin: 0 0 4px; font-size: 24px; font-weight: 600">你的 session</h1>
+<p style="margin: 0; color: #5B606B">按最近打开排序。点击一行进入工作区，查看进度、诊断图或从某一阶段重跑。</p>
+</div>
+<label style="display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px; background: #FFFFFF; min-width: 260px">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F99" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input placeholder="搜索动物、日期、实验名" style="border: 0; outline: 0; font: inherit; flex: 1; background: transparent">
+</label>
+<a href="WizardData.dc.html" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500">+ 新建 session</a>
+<a href="Main.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 14px; border-radius: 8px; border: 1px solid #D6D6D0; background: #FFFFFF; color: #15171C">打开已有输出目录…</a>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 14px 16px"><div style="font-size: 12px; color: #5B606B">运行中</div><div style="font-size: 22px; font-weight: 600; margin-top: 4px">1</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 14px 16px"><div style="font-size: 12px; color: #5B606B">待你确认</div><div style="font-size: 22px; font-weight: 600; margin-top: 4px; color: #9A6200">1</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 14px 16px"><div style="font-size: 12px; color: #5B606B">失败</div><div style="font-size: 22px; font-weight: 600; margin-top: 4px; color: #B42318">1</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 14px 16px"><div style="font-size: 12px; color: #5B606B">已导出 NWB</div><div style="font-size: 22px; font-weight: 600; margin-top: 4px">14</div></div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; overflow-x: auto">
+<div style="display: grid; grid-template-columns: 2.2fr 1fr 0.9fr 2.4fr 1.3fr 0.9fr; gap: 16px; padding: 10px 20px; font-size: 12px; color: #5B606B; border-bottom: 1px solid #E3E3DE; min-width: 960px">
+<div>Session</div><div>动物</div><div>探针</div><div>阶段（discover → export）</div><div>状态</div><div>更新</div>
+</div>
+<sc-for list="{{sessions}}" as="s" hint-placeholder-count="5">
+<a href="{{s.href}}" style="display: grid; grid-template-columns: 2.2fr 1fr 0.9fr 2.4fr 1.3fr 0.9fr; gap: 16px; align-items: center; padding: 14px 20px; border-bottom: 1px solid #EFEFEA; color: #15171C; min-width: 960px">
+<div style="min-width: 0"><div style="font-weight: 500">{{s.name}}</div><div class="mono" style="font-size: 12px; color: #8A8F99; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{s.path}}</div></div>
+<div>{{s.subject}}</div>
+<div class="mono" style="font-size: 13px">{{s.probes}}</div>
+<div style="display: flex; gap: 3px">
+<sc-for list="{{s.stages}}" as="g" hint-placeholder-count="8"><span title="{{g.name}}" style="flex: 1; height: 8px; border-radius: 2px; background: {{g.color}}"></span></sc-for>
+</div>
+<div><span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: {{s.badgeBg}}; color: {{s.badgeFg}}">{{s.status}}</span></div>
+<div style="font-size: 12px; color: #5B606B">{{s.updated}}</div>
+</a>
+</sc-for>
+</div>
+<p style="font-size: 12px; color: #8A8F99; margin-top: 12px">色块：绿 = 完成，蓝 = 运行中，黄 = 等你确认，红 = 失败，灰 = 未开始，斜线 = 已跳过（merge 默认不跑）。</p>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const C = { d: '#2E8B57', r: '#0B6E8E', w: '#D99A1E', f: '#C8372D', p: '#E3E3DE', s: 'repeating-linear-gradient(45deg,#E3E3DE 0 3px,#F6F6F3 3px 6px)' };
+    const names = ['discover','synchronize','select_segments','preprocess','sort','merge','curate','postprocess','export'];
+    const strip = (code) => code.split('').map((c, i) => ({ name: names[i], color: C[c] }));
+    const B = {
+      run: ['#E3F0F5', '#08516A'], wait: ['#FBF0DA', '#7A4D00'], fail: ['#FBE6E4', '#8F1C13'], done: ['#E4F2E9', '#155E35'], idle: ['#EFEFEA', '#4A4F59']
+    };
+    const H = { wait: 'TaskWindow.dc.html', fail: 'ErrorState.dc.html' };
+    const row = (name, path, subject, probes, code, status, kind, updated) => ({ name, path, subject, probes, stages: strip(code), status, badgeBg: B[kind][0], badgeFg: B[kind][1], updated, href: H[kind] || 'Workspace.dc.html' });
+    return {
+      sessions: [
+        row('MaoDan_251024_nsd1w', 'D:/out/MaoDan_251024_nsd1w', 'MaoDan', 'imec0, imec1', 'ddddrsppp', '运行中 · sort 64%', 'run', '刚刚'),
+        row('MaoDan_251023_nsd1w', 'D:/out/MaoDan_251023_nsd1w', 'MaoDan', 'imec0', 'ddwppsppp', '等你确认任务时段', 'wait', '2 小时前'),
+        row('XiaoHei_251022_rsvp', 'D:/out/XiaoHei_251022_rsvp', 'XiaoHei', 'imec0, imec1', 'ddddfsppp', 'sort 失败 · 显存不足', 'fail', '昨天'),
+        row('XiaoHei_251020_rsvp', 'D:/out/XiaoHei_251020_rsvp', 'XiaoHei', 'imec0', 'dddddsddd', '已导出 NWB', 'done', '3 天前'),
+        row('MaoDan_251018_joint', 'D:/out/MaoDan_251018_joint', 'MaoDan · 2 段联合', 'imec0', 'dddddsddd', '已导出 NWB', 'done', '1 周前')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

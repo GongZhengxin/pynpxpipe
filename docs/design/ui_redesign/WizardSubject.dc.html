@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>新建 session：动物与探针</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+input,select{font:inherit;color:#15171C}
+</style>
+</helmet>
+<div style="min-height: 900px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #15171C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</a>
+<span style="color: #8A8F99">/</span><span style="font-weight: 500">新建 session</span>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: #5B606B">草稿已自动保存</span>
+</header>
+<div style="background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<ol style="display: flex; flex-wrap: wrap; gap: 8px; max-width: 1240px; margin: 0 auto; padding: 14px 32px; list-style: none">
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #155E35"><span style="width: 24px; height: 24px; border-radius: 50%; background: #E4F2E9; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="3" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span>数据</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; border-radius: 999px; background: #E3F0F5; color: #08516A; font-weight: 500"><span style="width: 24px; height: 24px; border-radius: 50%; background: #0B6E8E; color: #FFFFFF; display: grid; place-items: center; font-size: 12px">2</span>动物与探针</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #5B606B"><span style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #C9C9C2; display: grid; place-items: center; font-size: 12px">3</span>参数</li>
+<li style="display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: #5B606B"><span style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #C9C9C2; display: grid; place-items: center; font-size: 12px">4</span>检查并运行</li>
+</ol>
+</div>
+<main style="max-width: 1240px; margin: 0 auto; padding: 28px 32px; display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+<section style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div>
+<h1 style="margin: 0 0 4px; font-size: 22px; font-weight: 600">实验动物</h1>
+<p style="margin: 0; color: #5B606B">从 <span class="mono" style="font-size: 13px">monkeys/</span> 里已保存的档案中选择。信息会写进 NWB 的 Subject。</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px">
+<button style="text-align: left; padding: 14px; border: 2px solid #0B6E8E; border-radius: 10px; background: #FFFFFF; font: inherit"><div style="font-weight: 600">MaoDan</div><div style="font-size: 12px; color: #5B606B; margin-top: 2px">M · P6Y · 9.8 kg</div></button>
+<button style="text-align: left; padding: 14px; border: 1px solid #E3E3DE; border-radius: 10px; background: #FFFFFF; font: inherit"><div style="font-weight: 600">XiaoHei</div><div style="font-size: 12px; color: #5B606B; margin-top: 2px">F · P5Y · 7.2 kg</div></button>
+<button style="text-align: left; padding: 14px; border: 1px dashed #C9C9C2; border-radius: 10px; background: transparent; font: inherit; color: #0B6E8E"><div style="font-weight: 500">+ 新动物</div><div style="font-size: 12px; color: #5B606B; margin-top: 2px">保存到 monkeys/</div></button>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px">
+<div style="display: flex; align-items: center; margin-bottom: 12px"><h2 style="margin: 0; font-size: 15px; font-weight: 600; flex: 1">MaoDan</h2><button style="height: 32px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 13px">编辑档案</button></div>
+<div style="display: grid; grid-template-columns: 110px minmax(0, 1fr); row-gap: 10px; column-gap: 12px; font-size: 13px">
+<span style="color: #5B606B">物种</span><span><i>Macaca mulatta</i></span>
+<span style="color: #5B606B">性别</span><span>雄（M）</span>
+<span style="color: #5B606B">年龄</span><span><span class="mono">P6Y</span> <span style="color: #8A8F99">· ISO 8601</span></span>
+<span style="color: #5B606B">体重</span><span>9.8 kg</span>
+<span style="color: #5B606B">刺激图片库</span><span class="mono" style="word-break: break-all">E:/stimuli/nsd_shared1000</span>
+</div>
+</div>
+</section>
+<section style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div>
+<h1 style="margin: 0 0 4px; font-size: 22px; font-weight: 600">探针脑区</h1>
+<p style="margin: 0; color: #5B606B">探针列表来自第 1 步的识别结果，只需填写脑区。</p>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 8px 20px">
+<div style="display: grid; grid-template-columns: 80px minmax(0, 1fr) 140px; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #EFEFEA">
+<span class="mono" style="font-weight: 500">imec0</span>
+<label style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 12px; color: #5B606B">脑区</span><input value="V4" style="height: 38px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px"></label>
+<span style="font-size: 12px; color: #5B606B">SN 19122414611</span>
+</div>
+<div style="display: grid; grid-template-columns: 80px minmax(0, 1fr) 140px; gap: 12px; align-items: center; padding: 12px 0">
+<span class="mono" style="font-weight: 500">imec1</span>
+<label style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 12px; color: #5B606B">脑区</span><input value="IT" style="height: 38px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px"></label>
+<span style="font-size: 12px; color: #5B606B">SN 19122415027</span>
+</div>
+</div>
+<div style="display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #5B606B; background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 12px 14px; line-height: 1.6">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true" style="flex: none; margin-top: 2px"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+<span>输入时会按这只动物以往用过的脑区提示（V4、IT、PFC…）。上次为 MaoDan 填的是 imec0 = V4、imec1 = IT，已自动带入。</span>
+</div>
+</section>
+</main>
+<footer style="max-width: 1240px; margin: 0 auto; padding: 0 32px 32px; display: flex; justify-content: space-between">
+<a href="WizardData.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; background: #FFFFFF; color: #15171C">上一步</a>
+<a href="WizardParams.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 20px; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500">下一步：参数</a>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

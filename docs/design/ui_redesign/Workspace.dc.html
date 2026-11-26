@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Session 工作区</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+input{font:inherit}
+</style>
+</helmet>
+<div style="min-height: 960px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #15171C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</a>
+<span style="color: #8A8F99">/</span><a href="Main.dc.html" style="color: #5B606B">Sessions</a><span style="color: #8A8F99">/</span><span style="font-weight: 500">MaoDan_251024_nsd1w</span>
+<div style="flex: 1"></div>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B">GPU 18.2 / 24 GB · RAM 71% · CPU 12 核</span>
+<button aria-label="帮助" style="height: 36px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 6px; background: #FFFFFF; font: inherit">帮助</button>
+</header>
+<main style="max-width: 1320px; margin: 0 auto; padding: 24px 32px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+<div style="flex: 1; min-width: 300px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 600">MaoDan_251024_nsd1w</h1>
+<p style="margin: 4px 0 0; color: #5B606B; font-size: 13px">MaoDan · 2025-10-24 · imec0 V4，imec1 IT · 预设 E2（改 3 项）· <span class="mono">D:/out/MaoDan_251024_nsd1w</span></p>
+</div>
+<span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #E3F0F5; color: #08516A; font-weight: 500; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #0B6E8E"></span>运行中 · 已用 1:42:10 · 预计还需 52 min</span>
+<button style="height: 38px; padding: 0 14px; border: 1px solid #E8B4AE; border-radius: 8px; background: #FFFFFF; color: #8F1C13; font: inherit; font-weight: 500">停止</button>
+</div>
+<nav aria-label="阶段" style="display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{stages}}" as="s" hint-placeholder-count="9">
+<a href="Workspace.dc.html" style="display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 10px; border: {{s.border}}; background: {{s.bg}}; color: #15171C; min-width: 0">
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 18px; height: 18px; border-radius: 50%; background: {{s.dotBg}}; color: {{s.dotFg}}; display: grid; place-items: center; font-size: 11px; font-weight: 600; flex: none">{{s.icon}}</span><span class="mono" style="font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{s.name}}</span></span>
+<span style="font-size: 11px; color: #5B606B">{{s.meta}}</span>
+</a>
+</sc-for>
+</nav>
+<div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+<section style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: baseline; gap: 8px"><h2 style="margin: 0; font-size: 16px; font-weight: 600">sort</h2><span style="font-size: 13px; color: #5B606B">Kilosort4 · cuda:0 · 每根探针一次</span></div>
+<div>
+<div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px"><span class="mono">imec0</span><span style="color: #155E35">完成 · 412 个 cluster · 38 min</span></div>
+<div style="height: 8px; border-radius: 4px; background: #EFEFEA; overflow: hidden"><div style="width: 100%; height: 100%; background: #2E8B57"></div></div>
+</div>
+<div>
+<div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px"><span class="mono">imec1</span><span style="color: #5B606B">64% · batch 412 / 640 · 预计还需 21 min</span></div>
+<div style="height: 8px; border-radius: 4px; background: #EFEFEA; overflow: hidden"><div style="width: 64%; height: 100%; background: #0B6E8E"></div></div>
+</div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+<h2 style="margin: 0 8px 0 0; font-size: 15px; font-weight: 600">日志</h2>
+<span style="padding: 3px 10px; border-radius: 999px; background: #15171C; color: #FFFFFF; font-size: 12px">全部</span>
+<span style="padding: 3px 10px; border-radius: 999px; background: #FBF0DA; color: #7A4D00; font-size: 12px">警告 2</span>
+<span style="padding: 3px 10px; border-radius: 999px; background: #F0F0EC; color: #4A4F59; font-size: 12px">错误 0</span>
+<span style="padding: 3px 10px; border-radius: 999px; background: #F0F0EC; color: #4A4F59; font-size: 12px">仅本阶段</span>
+<span style="flex: 1"></span>
+<label style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #D6D6D0; border-radius: 6px; font-size: 13px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A8F99" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input placeholder="搜索日志" style="border: 0; outline: 0; width: 120px; background: transparent"></label>
+<label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><input type="checkbox" checked>自动滚动</label>
+</div>
+<div class="mono" style="background: #15171C; color: #C9CDD4; border-radius: 8px; padding: 12px 14px; font-size: 12px; line-height: 1.7; overflow-x: auto">
+<sc-for list="{{logs}}" as="l" hint-placeholder-count="7"><div style="color: {{l.color}}; white-space: pre">{{l.text}}</div></sc-for>
+</div>
+</div>
+</section>
+<aside style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0 0 4px; font-size: 15px; font-weight: 600">此阶段</h2>
+<a href="WizardParams.dc.html" style="display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px; color: #15171C">查看本阶段所用参数</a>
+<a href="RerunConfirm.dc.html" style="display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px; color: #15171C">改参数并从此阶段重跑…</a>
+<a href="Workspace.dc.html" style="display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid #D6D6D0; border-radius: 8px; color: #15171C">改用外部 sorting 结果…</a>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline"><h2 style="margin: 0; font-size: 15px; font-weight: 600; flex: 1">诊断图</h2><a href="Workspace.dc.html" style="font-size: 12px">全部 14 张</a></div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{figs}}" as="f" hint-placeholder-count="4">
+<a href="Workspace.dc.html" style="display: flex; flex-direction: column; gap: 4px; color: #15171C">
+<span style="aspect-ratio: 4 / 3; border-radius: 8px; background: #F0F0EC; border: 1px solid #E3E3DE; display: grid; place-items: center"><svg width="48" height="28" viewBox="0 0 48 28" fill="none" stroke="#9AA0A8" stroke-width="1.5" aria-hidden="true"><path d="{{f.path}}"/></svg></span>
+<span style="font-size: 12px">{{f.title}}</span><span class="mono" style="font-size: 11px; color: #8A8F99">{{f.stage}}</span>
+</a>
+</sc-for>
+</div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 18px; font-size: 13px; color: #5B606B; line-height: 1.6">
+<h2 style="margin: 0 0 6px; font-size: 15px; font-weight: 600; color: #15171C">任务时段</h2>
+已确认保留 3 段，共 48.2 min，丢弃 13.8 min 空闲。<a href="TaskWindow.dc.html">查看时间轴</a>
+</div>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const done = (name, meta) => ({ name, meta, icon: '✓', dotBg: '#E4F2E9', dotFg: '#155E35', bg: '#FFFFFF', border: '1px solid #E3E3DE' });
+    const todo = (name, meta) => ({ name, meta, icon: '', dotBg: '#EFEFEA', dotFg: '#8A8F99', bg: '#FAFAF8', border: '1px solid #E3E3DE' });
+    return {
+      stages: [
+        done('discover', '1 min'), done('synchronize', '3 min'), done('select_segments', '已确认'),
+        done('preprocess', '34 min'),
+        { name: 'sort', meta: '64% · 1 / 2 探针', icon: '▶', dotBg: '#0B6E8E', dotFg: '#FFFFFF', bg: '#EEF5F8', border: '2px solid #0B6E8E' },
+        todo('merge', '已跳过'), todo('curate', '等待'), todo('postprocess', '等待'), todo('export', '等待')
+      ],
+      logs: [
+        { text: '04:09:47 WARN  preprocess  imec1  3 channels flagged dead: 191, 192, 383', color: '#F2C46D' },
+        { text: '04:10:02 INFO  sort        imec0  done · 412 clusters · 38m12s', color: '#C9CDD4' },
+        { text: '04:10:05 INFO  sort        imec1  start · batch_size=40000 · nblocks=0', color: '#C9CDD4' },
+        { text: '04:11:40 INFO  sort        imec1  drift estimate 18.4 µm ptp', color: '#C9CDD4' },
+        { text: '04:12:02 WARN  sort        imec1  GPU memory 18.2 / 24 GB (76%)', color: '#F2C46D' },
+        { text: '04:12:31 INFO  sort        imec1  batch 412 / 640', color: '#C9CDD4' },
+        { text: '04:12:31 INFO  sort        imec1  ████████████░░░░░░  64%', color: '#7FC4D9' }
+      ],
+      figs: [
+        { title: 'Photodiode 校正后', stage: 'synchronize', path: 'M2 22h14l4-16 4 16h22' },
+        { title: '任务时段时间轴', stage: 'select_segments', path: 'M2 14h8M14 14h14M32 14h14M2 8v12M46 8v12' },
+        { title: '漂移估计 · imec0', stage: 'preprocess', path: 'M2 18c6-8 10 4 16-4s10 6 14-2 8 4 14 0' },
+        { title: '坏道 · imec1', stage: 'preprocess', path: 'M4 24V10M10 24V14M16 24V4M22 24V12M28 24V16M34 24V8M40 24V13' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

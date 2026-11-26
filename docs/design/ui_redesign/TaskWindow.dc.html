@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>任务时段：预览、调参与确认</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F6F3}
+a{color:#0B6E8E;text-decoration:none}a:hover{color:#08516A}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+input[type=range]{width:100%;accent-color:#0B6E8E}
+button{font:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="min-height: 1180px; font-family: Inter, 'Noto Sans SC', system-ui, sans-serif; color: #15171C; background: #F6F6F3; font-size: 14px">
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 32px; min-height: 56px; background: #FFFFFF; border-bottom: 1px solid #E3E3DE">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #15171C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B6E8E" stroke-width="2" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>pynpxpipe</a>
+<span style="color: #8A8F99">/</span><a href="Main.dc.html" style="color: #5B606B">Sessions</a><span style="color: #8A8F99">/</span><span style="font-weight: 500">MaoDan_251024_nsd1w</span>
+</header>
+<main style="max-width: 1320px; margin: 0 auto; padding: 24px 32px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+<div style="flex: 1; min-width: 300px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 600">确认任务时段</h1>
+<p style="margin: 4px 0 0; color: #5B606B; font-size: 13px">对齐已完成，流程暂停在 select_segments。只有保留区内的数据会进入 preprocess 和 sort。</p>
+</div>
+<span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #FBF0DA; color: #7A4D00; font-weight: 500; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #D99A1E"></span>等你确认 · 已暂停 12 min</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px">
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 12px 14px"><div style="font-size: 12px; color: #5B606B">trial 对齐</div><div style="font-size: 18px; font-weight: 600; margin-top: 2px">177 / 177</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 12px 14px"><div style="font-size: 12px; color: #5B606B">最大同步残差</div><div style="font-size: 18px; font-weight: 600; margin-top: 2px">0.010 ms</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 12px 14px"><div style="font-size: 12px; color: #5B606B">有刺激 trial</div><div style="font-size: 18px; font-weight: 600; margin-top: 2px">{{nStim}}</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 12px 14px"><div style="font-size: 12px; color: #5B606B">空 trial（不计入任务）</div><div style="font-size: 18px; font-weight: 600; margin-top: 2px">{{nEmpty}}</div></div>
+<div style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 10px; padding: 12px 14px"><div style="font-size: 12px; color: #5B606B">探针元数据</div><div style="font-size: 18px; font-weight: 600; margin-top: 2px; color: #155E35">兼容</div></div>
+</div>
+<section style="background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+<h2 style="margin: 0; font-size: 15px; font-weight: 600">时间轴</h2>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><span style="width: 12px; height: 8px; border-radius: 2px; background: #CBD1D6"></span>原始记录</span>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><span style="width: 12px; height: 8px; border-radius: 2px; background: #2777AB"></span>已保存选区</span>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><span style="width: 12px; height: 8px; border-radius: 2px; background: #DB852C"></span>当前试算（未写入）</span>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><span style="width: 3px; height: 10px; background: #26967C"></span>有刺激 trial</span>
+<span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B606B"><span style="width: 3px; height: 10px; background: #9AA0A8"></span>空 trial</span>
+<span style="flex: 1"></span>
+<span style="display: flex; gap: 4px"><button aria-label="适应全部" style="height: 30px; padding: 0 10px; border: 1px solid #D6D6D0; border-radius: 6px; background: #FFFFFF; font-size: 12px">适应全部</button><button aria-label="放大" style="width: 30px; height: 30px; border: 1px solid #D6D6D0; border-radius: 6px; background: #FFFFFF">+</button><button aria-label="缩小" style="width: 30px; height: 30px; border: 1px solid #D6D6D0; border-radius: 6px; background: #FFFFFF">−</button></span>
+</div>
+<div style="display: grid; grid-template-columns: 72px minmax(0, 1fr); row-gap: 8px; column-gap: 12px; align-items: center">
+<span style="font-size: 12px; color: #5B606B; text-align: right">神经 AP</span>
+<div style="position: relative; height: 72px">
+<sc-for list="{{gapsCut}}" as="g" hint-placeholder-count="1"><div style="position: absolute; top: 0; bottom: 0; left: {{g.left}}; width: {{g.width}}; background: repeating-linear-gradient(135deg, #F6EBDD 0 4px, #FFFFFF 4px 8px); border-left: 1px dashed #DB852C; border-right: 1px dashed #DB852C"></div></sc-for>
+<div style="position: absolute; top: 18px; height: 36px; left: 0; right: 0; background: #CBD1D6; border-radius: 3px; opacity: 0.85"></div>
+<sc-for list="{{savedBars}}" as="b" hint-placeholder-count="2"><div title="{{b.tip}}" style="position: absolute; top: 4px; height: 12px; left: {{b.left}}; width: {{b.width}}; background: #2777AB; border-radius: 2px"></div></sc-for>
+<sc-for list="{{candBars}}" as="b" hint-placeholder-count="2"><div title="{{b.tip}}" style="position: absolute; top: 56px; height: 12px; left: {{b.left}}; width: {{b.width}}; background: #DB852C; border-radius: 2px"></div></sc-for>
+<sc-for list="{{gapsCut}}" as="g" hint-placeholder-count="1"><span style="position: absolute; top: 26px; left: {{g.left}}; width: {{g.width}}; text-align: center; font-size: 11px; color: #7A4D00; font-weight: 500">{{g.label}}</span></sc-for>
+</div>
+<span style="font-size: 12px; color: #5B606B; text-align: right">行为 trial</span>
+<div style="position: relative; height: 28px; background: #FAFAF8; border-radius: 3px">
+<sc-for list="{{ticks}}" as="t" hint-placeholder-count="40"><span style="position: absolute; top: 4px; height: 20px; width: 2px; left: {{t.left}}; background: {{t.color}}"></span></sc-for>
+</div>
+<span></span>
+<div style="position: relative; height: 18px; font-size: 11px; color: #8A8F99">
+<sc-for list="{{axis}}" as="a" hint-placeholder-count="7"><span style="position: absolute; left: {{a.left}}; transform: translateX(-50%)">{{a.label}}</span></sc-for>
+</div>
+</div>
+<p style="margin: 0; font-size: 12px; color: #8A8F99">实验时间（分钟，自第一段神经记录开始）· 滚轮缩放，拖动平移，悬停查看区间起止。多段联合时每段一行，共用同一时间轴。</p>
+</section>
+<div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+<section style="flex: 1 1 400px; min-width: 0; background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: baseline"><h2 style="margin: 0; font-size: 15px; font-weight: 600; flex: 1">调整参数</h2><span style="font-size: 12px; color: #5B606B">拖动即时试算，不读原始数据</span></div>
+<label style="display: flex; flex-direction: column; gap: 6px">
+<span style="display: flex; justify-content: space-between; font-size: 13px"><span><span style="font-weight: 500">最大连续空闲</span> <span class="mono" style="font-size: 11px; color: #8A8F99">max_idle_s</span></span><span class="mono" style="font-weight: 500">{{idle}} s</span></span>
+<input type="range" min="30" max="600" step="10" value="{{idle}}" onChange="{{onIdle}}">
+<span style="font-size: 12px; color: #5B606B">trial 之间空闲超过这个时长就切开，空闲部分不处理。</span>
+</label>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{gapList}}" as="g" hint-placeholder-count="2"><span style="padding: 4px 10px; border-radius: 999px; font-size: 12px; background: {{g.bg}}; color: {{g.fg}}">{{g.text}}</span></sc-for>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+<label style="display: flex; flex-direction: column; gap: 6px"><span style="display: flex; justify-content: space-between; font-size: 13px"><span style="font-weight: 500">任务前保留</span><span class="mono" style="font-weight: 500">{{pre}} s</span></span><input type="range" min="0" max="120" step="5" value="{{pre}}" onChange="{{onPre}}"></label>
+<label style="display: flex; flex-direction: column; gap: 6px"><span style="display: flex; justify-content: space-between; font-size: 13px"><span style="font-weight: 500">任务后保留</span><span class="mono" style="font-weight: 500">{{post}} s</span></span><input type="range" min="0" max="120" step="5" value="{{post}}" onChange="{{onPost}}"></label>
+</div>
+<details style="font-size: 13px"><summary style="cursor: pointer; color: #5B606B">更多：拼接保护区 0.1 s · 滤波上下文 0.1 s · 时区 Asia/Shanghai</summary><p style="margin: 8px 0 0; color: #5B606B">一般不需要改。拼接保护区内的 spike 不参与质控指标计算。</p></details>
+</section>
+<section style="flex: 1 1 400px; min-width: 0; background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 15px; font-weight: 600">试算结果</h2>
+<div style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; font-size: 13px; border: 1px solid #EFEFEA; border-radius: 8px; overflow: hidden">
+<span style="padding: 8px 10px; background: #FAFAF8; color: #5B606B"></span><span style="padding: 8px 10px; background: #FAFAF8; color: #2777AB; font-weight: 500">已保存</span><span style="padding: 8px 10px; background: #FAFAF8; color: #B8661A; font-weight: 500">当前试算</span>
+<span style="padding: 8px 10px; border-top: 1px solid #EFEFEA; color: #5B606B">任务块</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{s.n}}</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{c.n}}</span>
+<span style="padding: 8px 10px; border-top: 1px solid #EFEFEA; color: #5B606B">保留时长</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{s.kept}}</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{c.kept}}</span>
+<span style="padding: 8px 10px; border-top: 1px solid #EFEFEA; color: #5B606B">比原始减少</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{s.cut}}</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{c.cut}}</span>
+<span style="padding: 8px 10px; border-top: 1px solid #EFEFEA; color: #5B606B">预计 sort 用时</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{s.eta}}</span><span class="mono" style="padding: 8px 10px; border-top: 1px solid #EFEFEA">{{c.eta}}</span>
+</div>
+<div style="display: flex; gap: 8px; font-size: 13px; color: #155E35; background: #F3FAF5; border: 1px solid #CDE6D6; border-radius: 8px; padding: 10px 12px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E7A46" stroke-width="2.4" aria-hidden="true" style="flex: none; margin-top: 2px"><path d="m5 12 5 5 9-10"/></svg><span>全部 {{nStim}} 个有刺激 trial 都在保留区内。</span></div>
+<div style="font-size: 12px; color: #5B606B">
+<div style="display: grid; grid-template-columns: 28px 1fr 1fr 70px 60px; gap: 6px; padding: 4px 0; color: #8A8F99"><span>#</span><span>开始</span><span>结束</span><span>时长</span><span>trial</span></div>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="2"><div class="mono" style="display: grid; grid-template-columns: 28px 1fr 1fr 70px 60px; gap: 6px; padding: 5px 0; border-top: 1px solid #EFEFEA; color: #15171C"><span>{{r.i}}</span><span>{{r.a}}</span><span>{{r.b}}</span><span>{{r.d}}</span><span>{{r.n}}</span></div></sc-for>
+</div>
+</section>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 12px; padding: 14px 20px">
+<sc-if value="{{dirty}}" hint-placeholder-val="{{ false }}">
+<span style="font-size: 13px; color: #7A4D00; flex: 1; min-width: 260px">试算与已保存选区不同。应用后会重写选区和时间映射（约 20 秒，不重新对齐）。</span>
+<button onClick="{{revert}}" style="height: 40px; padding: 0 16px; border: 1px solid #D6D6D0; border-radius: 8px; background: #FFFFFF">恢复已保存参数</button>
+<button onClick="{{apply}}" style="height: 40px; padding: 0 18px; border: 0; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500">应用试算</button>
+</sc-if>
+<sc-if value="{{clean}}" hint-placeholder-val="{{ true }}">
+<span style="font-size: 13px; color: #5B606B; flex: 1; min-width: 260px">{{cleanMsg}}</span>
+<a href="Workspace.dc.html" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D6D6D0; color: #15171C">稍后再确认</a>
+<a href="Workspace.dc.html" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: 8px; background: #0B6E8E; color: #FFFFFF; font-weight: 500"><svg width="12" height="12" viewBox="0 0 24 24" fill="#FFFFFF" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg>确认并继续 preprocess</a>
+</sc-if>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { idle: 180, pre: 30, post: 30, saved: { idle: 180, pre: 30, post: 30 }, applied: false };
+  }
+  renderVals() {
+    const DUR = 3720;
+    const stim = [];
+    [[300, 1500], [1800, 2600], [2720, 3300]].forEach(([a, b]) => { for (let t = a; t < b; t += 15) stim.push([t, t + 4]); });
+    const empty = [1560, 1620, 1680, 3500];
+    const pct = (t) => (t / DUR * 100).toFixed(3) + '%';
+    const mmss = (t) => { const m = Math.floor(t / 60), s = Math.round(t % 60); return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0'); };
+    const select = (p) => {
+      const blocks = [];
+      stim.forEach(([a, b]) => {
+        const last = blocks[blocks.length - 1];
+        if (last && a - last.e <= p.idle) { last.e = b; last.n += 1; } else blocks.push({ s: a, e: b, n: 1 });
+      });
+      const out = [];
+      blocks.forEach((k) => {
+        const s = Math.max(0, k.s - p.pre), e = Math.min(DUR, k.e + p.post);
+        const last = out[out.length - 1];
+        if (last && s <= last.e) { last.e = Math.max(last.e, e); last.n += k.n; } else out.push({ s, e, n: k.n });
+      });
+      return out;
+    };
+    const summary = (w) => {
+      const kept = w.reduce((x, k) => x + k.e - k.s, 0);
+      return { n: String(w.length), kept: (kept / 60).toFixed(1) + ' min', cut: Math.round((1 - kept / DUR) * 100) + '%', eta: Math.round(kept / DUR * 80) + ' min' };
+    };
+    const bars = (w) => w.map((k) => ({ left: pct(k.s), width: pct(k.e - k.s), tip: mmss(k.s) + ' – ' + mmss(k.e) }));
+    const cur = { idle: this.state.idle, pre: this.state.pre, post: this.state.post };
+    const sv = this.state.saved;
+    const cw = select(cur), sw = select(sv);
+    const dirty = cur.idle !== sv.idle || cur.pre !== sv.pre || cur.post !== sv.post;
+    const gaps = [];
+    for (let i = 1; i < stim.length; i++) { const g = stim[i][0] - stim[i - 1][1]; if (g > 30) gaps.push({ a: stim[i - 1][1], b: stim[i][0], g }); }
+    const gapsCut = gaps.filter((g) => g.g > cur.idle).map((g) => ({ left: pct(g.a + cur.post), width: pct(Math.max(0, g.g - cur.pre - cur.post)), label: '空闲 ' + (g.g / 60).toFixed(1) + ' min' }));
+    const axis = [0, 10, 20, 30, 40, 50, 60].map((m) => ({ left: pct(m * 60), label: m + '' }));
+    const ticks = stim.filter((_, i) => i % 2 === 0).map(([a]) => ({ left: pct(a), color: '#26967C' })).concat(empty.map((t) => ({ left: pct(t), color: '#9AA0A8' })));
+    return {
+      idle: cur.idle, pre: cur.pre, post: cur.post,
+      nStim: String(stim.length), nEmpty: String(empty.length),
+      savedBars: bars(sw), candBars: bars(cw), gapsCut, axis, ticks,
+      gapList: gaps.map((g) => g.g > cur.idle
+        ? { text: (g.g / 60).toFixed(1) + ' min 间隙 → 切开', bg: '#FBF0DA', fg: '#7A4D00' }
+        : { text: (g.g / 60).toFixed(1) + ' min 间隙 → 保留', bg: '#EFEFEA', fg: '#4A4F59' }),
+      s: summary(sw), c: summary(cw),
+      rows: cw.map((k, i) => ({ i: String(i + 1), a: mmss(k.s), b: mmss(k.e), d: ((k.e - k.s) / 60).toFixed(1) + ' min', n: String(k.n) })),
+      dirty, clean: !dirty,
+      cleanMsg: this.state.applied ? '新选区已写入。核对无误后继续，preprocess 只处理蓝色区间。' : '当前就是已保存的选区。拖动左侧参数可以试算其他方案。',
+      onIdle: (e) => this.setState({ idle: Number(e.target.value) }),
+      onPre: (e) => this.setState({ pre: Number(e.target.value) }),
+      onPost: (e) => this.setState({ post: Number(e.target.value) }),
+      apply: () => this.setState({ saved: cur, applied: true }),
+      revert: () => this.setState({ idle: sv.idle, pre: sv.pre, post: sv.post })
+    };
+  }
+}
+</script>
+</body>
+</html>
