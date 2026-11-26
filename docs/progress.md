@@ -1,5 +1,23 @@
 # pynpxpipe 开发进度
 
+## 2026-11-26 — UI 改版 P1：以 Session 为中心的信息架构（S6–S13）✅
+
+spec：`docs/specs/ui_redesign.md` §4.3、§8（已确认）；布局总览同步到 `docs/specs/ui.md` §1a。前置 S5（select_segments 不覆盖输入）在独立分支 `fix/select-segments-input`。
+
+| Session | 模块 | 状态 | 说明 |
+|---|---|---|---|
+| S6 | 运行登记 + 运行管理器 | ✅ | 新 `pipelines/run_state.py`（`checkpoints/run_state.json` 原子写、心跳、超时/进程死亡判定为中断、任务时段待确认标记）、`ui/run_manager.py`（进程级单例，按输出目录去重，心跳线程，停止在下一阶段开始时生效）、`ui/settings.py` + `config/ui.yaml`；`RunPanel` 经运行管理器启动，`ProgressBridge.set_listener` 同步写登记文件 |
+| S7 | P1-1 路由与顶栏 | ✅ | 新 `ui/router.py`（`?view=&dir=&stage=`，浏览器前进后退同步）、`components/top_bar.py`（Sessions/新建/帮助、机器状态、运行徽章）；去掉侧边栏；默认浅色、可切换深色 |
+| S8 | P1-2 Session 列表 | ✅ | 新 `ui/recent_sessions.py`（项目 `.pynpxpipe/recent_sessions.json`，已 gitignore；测试用 `PYNPXPIPE_RECENT_SESSIONS` 隔离）、`components/session_list.py`（9 段色条、4 计数、搜索、按状态跳转、移除丢失目录、打开已有目录）；`SessionLoader.load()` 公开方法；加载/开始运行时更新列表 |
+| S9 | P1-3 向导外壳 + 第 1、2 步 | ✅ | 新 `components/wizard.py`；`session_form` 用"+ 添加同一天的另一段记录"替代模式切换并通知识别到的探针；`subject_form` 档案卡片、只读摘要、编辑档案；`probe_region_editor.set_probes` 与按动物最近 session 预填脑区 |
+| S10 | P1-3 第 3、4 步 + 预计用时 | ✅ | 新 `pipelines/estimates.py`（日志 `stage_complete.elapsed_s` ÷ 记录时长的中位数，样本不足不显示）；`ReviewStep`：摘要、`PreflightChecker` 清单（fail 禁止开始）、两种运行方式、阶段预计用时；`RunPanel.start()` |
+| S11 | P1-4 任务时段确认页 | ✅ | 新 `components/task_window_page.py`：5 指标、时间轴、松手即试算的滑块、长间隙切开/保留、已保存 vs 试算对比、有刺激 trial 覆盖检查；应用（写配置 + 清 select_segments 检查点 + 只重跑对齐阶段）/ 确认（清待确认标记 + 继续）；对齐结束自动跳转 |
+| S12 | P1-5 工作区 + 按探针进度 | ✅ | `BaseStage._report_probe_progress`（`stage:[probe] …`，sort 已使用）；新 `components/workspace.py`（阶段轨道、按探针进度条、日志级别/本阶段/搜索/自动滚动、此阶段操作、诊断图、任务时段卡、继续运行）；续跑导出与重算衍生数据移到 export 阶段操作区；两个 `SessionLoader` 面板移除 |
+| S13 | P1-6 失败视图 + Classifier 扩展 | ✅ | `ErrorClassification.suggested_changes/probe_id`；`Classifier.suggest_changes`（显存不足 batch_size×2/3 不低于下限；运动校正内存不足 bin_s×2）；新 `components/error_view.py`（原因、建议、按建议修改并重跑→P0-4 弹窗预选探针、问 AI 助手、折叠 traceback） |
+
+测试：tests/test_ui 485 passed；非 GPU 全量 1926 passed、1 failed（`test_load_jianjian_yaml_field_values`，main 上既有，与本改动无关）。浏览器实测首页、向导、工作区（含失败视图）、URL 直达。
+已知未做：preprocess/merge/curate/postprocess 仍按阶段级上报进度（只有 sort 按探针）；时间轴未画被切开空闲段的斜线；多段记录拖动排序沿用上移/下移按钮。
+
 ## 2026-11-26 — UI 改版 S3 + S4：重跑确认、合并开关去重、状态徽章与中文文案（P0-3/4/5）✅
 
 spec：`docs/specs/ui_redesign.md` §4.2 P0-3、P0-4、P0-5；设计参考 `docs/design/ui_redesign/RerunConfirm.dc.html`。P0 全部完成。

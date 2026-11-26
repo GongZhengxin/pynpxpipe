@@ -7,13 +7,33 @@ allowed during editing but block the session_id derivation on AppState.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import panel as pn
 
+from pynpxpipe.ui.recent_sessions import default_recent_path, load_recent
 from pynpxpipe.ui.state import AppState
 
 _PROBE_RE = re.compile(r"^imec(\d+)$")
+
+
+def _subject_history(subject_id: str) -> list[dict[str, str]]:
+    """probe_plan of each recent session of *subject_id*, newest first (ui_redesign §8.7)."""
+    plans = []
+    for entry in load_recent(default_recent_path()):
+        if entry.subject_id != subject_id:
+            continue
+        try:
+            data = json.loads((Path(entry.output_dir) / "session.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        plan = data.get("probe_plan")
+        if isinstance(plan, dict):
+            plans.append({str(k): str(v) for k, v in plan.items()})
+    return plans
+
 
 _AREA_INPUT_WIDTH = 140
 
@@ -39,8 +59,9 @@ class ProbeRegionEditor:
     def __init__(self, state: AppState) -> None:
         self._state = state
         self._rows_col = pn.Column(sizing_mode="stretch_width")
-        self.add_btn = pn.widgets.Button(name="+ Add probe", button_type="default")
+        self.add_btn = pn.widgets.Button(name="+ 添加探针", button_type="default")
         self.add_btn.on_click(self._on_add_click)
+        self.history_hint = pn.pane.Markdown("", visible=False, styles={"font-size": "13px"})
         self._suppress_state_watch = False
         self._rebuild_rows()
         state.param.watch(self._on_state_probe_plan, "probe_plan")
@@ -169,13 +190,45 @@ class ProbeRegionEditor:
                     self._suppress_state_watch = False
 
     # ------------------------------------------------------------------
+    # Wizard step 2 (ui_redesign P1-3, §8.7)
+    # ------------------------------------------------------------------
+
+    def set_probes(self, probe_ids: list[str]) -> None:
+        """Make the rows match the probes found in step 1, keeping typed areas."""
+        if not probe_ids:
+            return
+        current = dict(self._state.probe_plan or {})
+        self._state.probe_plan = {pid: current.get(pid, "") for pid in probe_ids}
+
+    def prefill_from_history(self, subject_id: str) -> None:
+        """Fill empty areas from this animal's latest recent session and list past areas."""
+        history = _subject_history(subject_id) if subject_id else []
+        if not history:
+            self.history_hint.visible = False
+            return
+        latest = history[0]
+        plan = dict(self._state.probe_plan or {})
+        filled = {pid: latest[pid] for pid, area in plan.items() if not area and latest.get(pid)}
+        if filled:
+            self._state.probe_plan = {**plan, **filled}
+        used = list(dict.fromkeys(a for p in history for a in p.values() if a))
+        last = "、".join(f"{pid} = {area}" for pid, area in sorted(latest.items()))
+        self.history_hint.object = (
+            f"上次为 {subject_id} 填的是 {last}"
+            + ("，已自动带入。" if filled else "。")
+            + f" 以往用过：{'、'.join(used)}。"
+        )
+        self.history_hint.visible = True
+
+    # ------------------------------------------------------------------
     # Panel
     # ------------------------------------------------------------------
 
     def panel(self) -> pn.viewable.Viewable:
         return pn.Column(
-            pn.pane.Markdown("### Probe Regions"),
+            pn.pane.Markdown("### 探针脑区\n探针列表来自第 1 步的识别结果，只需填写脑区。"),
             self._rows_col,
             self.add_btn,
+            self.history_hint,
             sizing_mode="stretch_width",
         )

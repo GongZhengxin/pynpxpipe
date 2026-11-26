@@ -71,6 +71,32 @@ class SubjectForm:
         ):
             widget.param.watch(self._rebuild_config, "value")
 
+        # ── Wizard step 2: profile cards (ui_redesign P1-3) ──
+        self.profile_buttons: dict[str, pn.widgets.Button] = {}
+        monkeys = self._project_root / "monkeys"
+        for path in sorted(monkeys.glob("*.yaml")) if monkeys.is_dir() else []:
+            btn = pn.widgets.Button(name=path.stem, button_type="light", width=140)
+            btn.on_click(lambda event, p=path: self.select_profile(p))
+            self.profile_buttons[path.stem] = btn
+        self.new_subject_btn = pn.widgets.Button(name="+ 新动物", button_type="light", width=140)
+        self.new_subject_btn.on_click(lambda event: self.start_new_subject())
+        self.profile_summary = pn.pane.Markdown("", visible=False)
+        self.edit_btn = pn.widgets.Button(name="编辑档案", visible=False, width=100)
+        self.edit_btn.on_click(lambda event: setattr(self.fields_box, "visible", True))
+        self.fields_box = pn.Column(
+            self._field(self.subject_id_input, "subject_id"),
+            self._field(self.description_input, "description"),
+            self._field(self.species_input, "species"),
+            self._field(self.sex_select, "sex"),
+            self._field(self.age_input, "age"),
+            self._field(self.weight_input, "weight"),
+            self._field(self.image_vault_paths_input, "image_vault_paths"),
+            self.save_path_input.panel(),
+            self.save_btn,
+            self.save_message,
+            sizing_mode="stretch_width",
+        )
+
     # ── Internal ──
 
     def _on_yaml_input(self, event) -> None:
@@ -140,6 +166,57 @@ class SubjectForm:
         self.save_message.alert_type = level
         self.save_message.object = text
         self.save_message.visible = True
+
+    # ── Wizard step 2 ──
+
+    def select_profile(self, yaml_path: Path) -> None:
+        """Load a monkeys/*.yaml profile and show it read-only until "编辑档案"."""
+        self.load_from_yaml(Path(yaml_path))
+        self._highlight(Path(yaml_path).stem)
+        cfg = self._state.subject_config
+        if cfg is not None:
+            vault = "、".join(f"`{p}`" for p in cfg.image_vault_paths) or "—"
+            self.profile_summary.object = (
+                f"#### {cfg.subject_id}\n\n"
+                f"物种 *{cfg.species}* · 性别 {cfg.sex} · 年龄 `{cfg.age}` · "
+                f"体重 {cfg.weight or '—'} · 刺激图片库 {vault}"
+            )
+        self.profile_summary.visible = True
+        self.edit_btn.visible = True
+        self.fields_box.visible = False
+
+    def start_new_subject(self) -> None:
+        """Open an empty form for an animal without a saved profile."""
+        for widget in (
+            self.subject_id_input,
+            self.description_input,
+            self.age_input,
+            self.weight_input,
+            self.image_vault_paths_input,
+        ):
+            widget.value = ""
+        self._highlight(None)
+        self.profile_summary.visible = False
+        self.edit_btn.visible = False
+        self.fields_box.visible = True
+
+    def _highlight(self, stem: str | None) -> None:
+        for name, btn in self.profile_buttons.items():
+            btn.button_type = "primary" if name == stem else "light"
+        self.new_subject_btn.button_type = "primary" if stem is None else "light"
+
+    def wizard_panel(self) -> pn.viewable.Viewable:
+        """Step-2 layout: profile cards, read-only summary, editable fields on demand."""
+        return pn.Column(
+            pn.pane.Markdown(
+                "### 实验动物\n从 `monkeys/` 里已保存的档案中选择。信息会写进 NWB 的 Subject。"
+            ),
+            pn.Row(*self.profile_buttons.values(), self.new_subject_btn),
+            self.profile_summary,
+            self.edit_btn,
+            self.fields_box,
+            sizing_mode="stretch_width",
+        )
 
     # ── Public API ──
 

@@ -121,6 +121,14 @@ class ProgressBridge:
         self._state = state
         self._document: Document | None = None
         self._session: ServerSession | None = None
+        self._listener: Callable[[str, float], None] | None = None
+
+    def set_listener(self, listener: Callable[[str, float], None] | None) -> None:
+        """Also forward progress, synchronously on the worker thread (e.g. the run registry).
+
+        The listener may raise to abort the run (RunManager's stop request).
+        """
+        self._listener = listener
 
     def bind_document(self, document: Document | None) -> None:
         """Keep the initiating document alive until the final update, even across a reload."""
@@ -151,6 +159,8 @@ class ProgressBridge:
 
         Called from a background thread. Param watches run on the UI document.
         """
+        if self._listener is not None:
+            self._listener(message, fraction)
         self.dispatch(lambda: self._update(message, fraction))
 
     def _update(self, message: str, fraction: float) -> None:

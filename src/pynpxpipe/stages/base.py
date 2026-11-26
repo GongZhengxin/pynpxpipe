@@ -80,6 +80,19 @@ class BaseStage(ABC):
             self.progress_callback(f"{self.STAGE_NAME}:{message}", fraction)
         self.logger.info(message, progress=fraction)
 
+    def _report_probe_progress(self, probe_id: str, message: str, fraction: float) -> None:
+        """Report progress of one probe as ``"{stage}:[{probe_id}] {message}"``.
+
+        Keeps the ``(message, fraction)`` callback signature (ui_redesign.md §8.5,
+        option A); the web UI parses the bracketed probe to draw per-probe bars.
+
+        Args:
+            probe_id: Probe the message is about.
+            message: Human-readable progress message.
+            fraction: Stage completion fraction in [0.0, 1.0].
+        """
+        self._report_progress(f"[{probe_id}] {message}", fraction)
+
     def _is_complete(self, probe_id: str | None = None) -> bool:
         """Check whether this stage (or a per-probe sub-stage) has a completed checkpoint.
 

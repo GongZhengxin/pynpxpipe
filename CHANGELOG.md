@@ -4,6 +4,15 @@
 
 ### Added
 
+- Web UI (ui_redesign P1): session-centred layout. A home page lists recent sessions with a
+  stage strip and status; "new" is a 4-step wizard (data, animal and probes, parameters,
+  preflight and run mode with estimated stage durations); each session opens a workspace
+  with per-probe progress, filtered logs, stage actions and figures; an align-first run
+  pauses on a task-window confirmation page with live what-if; failures show the cause and,
+  for GPU or DREDge memory errors, a one-click parameter change before a confirmed rerun.
+- Runs belong to the UI server process and record progress in `checkpoints/run_state.json`,
+  so closing the browser tab does not stop them and any tab can follow them. URL routing,
+  light theme with a dark toggle, and `config/ui.yaml` for UI timing settings.
 - Web UI (ui_redesign P0-4): "rerun from this stage" asks for confirmation, listing the
   checkpoints of the stage and every downstream stage that will be cleared (optionally for one
   probe), adding preprocess when its Zarr was deleted, and showing parameter changes since the last run.

@@ -191,7 +191,7 @@ def test_empty_trials_split_padded_windows_and_empty_sources_contribute_no_frame
         SelectSegmentsStage(joint_session)._select()
 
 
-@pytest.mark.parametrize("entry", ["execute", "review"])
+@pytest.mark.parametrize("entry", ["list", "url"])
 def test_open_preview_from_fresh_ui_is_read_only(joint_session, monkeypatch, entry):
     from dataclasses import replace
     from unittest.mock import Mock
@@ -228,14 +228,18 @@ def test_open_preview_from_fresh_ui_is_read_only(joint_session, monkeypatch, ent
     (heading,) = [p for p in execute.select(pn.pane.Markdown) if p.object == "### 任务时段时间轴"]
     (plot,) = execute.select(pn.pane.Bokeh)
     assert heading.visible and plot.object is None
-    section = app._pynpx_sections[entry]
-    app._pynpx_switch(entry)
-    (field,) = [w for w in section.select(pn.widgets.TextInput) if w.name == "Output Directory"]
-    field.value = str(out)
-    button_label = "打开已保存的预览" if entry == "execute" else "Load Session"
-    (load,) = [w for w in section.select(pn.widgets.Button) if w.name == button_label]
-    load.clicks += 1
-    app._pynpx_switch("execute")
+    session_list = app._pynpx_session_list
+
+    def reopen_from_list():
+        # P1-2: the session list's "open existing directory" replaces both SessionLoaders.
+        session_list.open_input.value = str(out)
+        session_list.open_btn.clicks += 1
+
+    if entry == "list":
+        reopen_from_list()
+    else:  # a refreshed page or shared link: ?view=session&dir=…
+        app._pynpx_router.go("session", output_dir=str(out))
+    assert app._pynpx_router.view == "session"
     assert plot.object.select_one({"name": "有刺激的 trial"}).data_source.data["trial"] == [
         "a:1",
         "a:2",
@@ -252,7 +256,7 @@ def test_open_preview_from_fresh_ui_is_read_only(joint_session, monkeypatch, ent
     assert before == snapshot()
     runner.assert_not_called()
     (out / "03_segments" / "summary.json").unlink()
-    load.clicks += 1
+    reopen_from_list()
     assert plot.object is None and heading.visible
     assert any(
         "缺少 `03_segments/summary.json`" in p.object for p in execute.select(pn.pane.Markdown)
@@ -778,6 +782,22 @@ def test_export_only_recovery_checks_identity_without_invalidating(
     check = runner.invoke(cli, args)
     assert check.exit_code != 0 and "Inputs/config changed" in check.output
     assert calls == [sig] and not (root / ".invalidated").exists()
+
+
+def test_task_window_page_loads_a_saved_preview(joint_session):
+    """S11: the confirmation page reads what select_segments saved (no raw access)."""
+    from pynpxpipe.ui.components.task_window_page import TaskWindowPage
+    from pynpxpipe.ui.state import AppState
+
+    SelectSegmentsStage(joint_session).run()
+    state = AppState()
+    state.pipeline_config = joint_session.config
+    page = TaskWindowPage(state, apply_fn=print, confirm_fn=print, later_fn=print)
+    page.load(joint_session.output_dir)
+    assert not page.message.visible
+    assert page.timeline.data is not None
+    # Two joint sources × two presented trials each.
+    assert "全部 4 个有刺激 trial 都在保留区内" in page.coverage.object
 
 
 @pytest.fixture

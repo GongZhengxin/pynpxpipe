@@ -1,0 +1,8 @@
+# Web UI settings (docs/specs/ui_redesign.md §8.9). Not part of the pipeline config.
+ui:
+  heartbeat_s: 5            # a running job refreshes checkpoints/run_state.json this often
+  heartbeat_timeout_s: 60   # older heartbeat (or dead process) → shown as "interrupted"
+  poll_s: 2                 # browser sessions re-read run state / machine status this often
+  recent_sessions_max: 20   # entries kept in <project>/.pynpxpipe/recent_sessions.json
+  eta_min_samples: 3        # past sessions needed before a stage-duration estimate is shown
+  min_batch_size: 10000     # floor when suggesting a smaller Kilosort batch_size after GPU OOM

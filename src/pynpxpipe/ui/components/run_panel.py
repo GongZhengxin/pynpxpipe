@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from pynpxpipe.ui.components.task_timeline import TaskTimeline, TimelineData
+from pynpxpipe.ui.run_manager import RunManager, get_run_manager
 from pynpxpipe.ui.state import AppState, ProgressBridge
 
 if TYPE_CHECKING:
@@ -51,8 +52,10 @@ class RunPanel:
         preview_fn: Callable[[AppState, ProgressBridge], None] | None = None,
         bridge: ProgressBridge | None = None,
         tuning_controls: list[pn.widgets.Widget] | None = None,
+        run_manager: RunManager | None = None,
     ) -> None:
         self._state = state
+        self._run_manager = run_manager or get_run_manager()
         self._pipeline_fn = pipeline_fn or (lambda st, br: None)
         self._preview_fn = preview_fn
         self._bridge = bridge or ProgressBridge(state)
@@ -198,6 +201,8 @@ class RunPanel:
 
         self._clear_preview()
         error = self._validate_before_run()
+        if error is None and self._run_manager.is_running(self._state.output_dir):
+            error = "该输出目录正在运行（可能来自另一个浏览器窗口），请到首页查看进度。"
         if error:
             self.validation_alert.object = error
             self.validation_alert.alert_type = "danger"
@@ -213,16 +218,34 @@ class RunPanel:
         self._state.error_message = ""
         self._state.stage_statuses = {}
         self._state.safe_to_exit = False
-        self._interrupt.clear()
 
         self._bridge.bind_document(pn.state.curdoc)
-        self._thread = threading.Thread(target=self._run_wrapper, args=(preview,), daemon=True)
+        stages = (
+            ["discover", "synchronize", "select_segments"]
+            if preview
+            else list(self._state.selected_stages)
+        )
         try:
-            self._thread.start()
-        except RuntimeError as exc:
+            handle = self._run_manager.start(
+                Path(self._state.output_dir),
+                lambda callback, interrupt: self._run_wrapper(preview, callback),
+                stages,
+                final_status="awaiting_confirmation" if preview else "completed",
+            )
+        except (OSError, RuntimeError) as exc:
             self._finish_run(preview, None, str(exc))
+            return
+        if handle is None:
+            self._finish_run(preview, None, "该输出目录已有运行中的任务。")
+            return
+        self._thread, self._interrupt = handle.thread, handle.interrupt
+
+    def start(self, *, preview: bool) -> None:
+        """Start a run: alignment preview (pauses for task-window confirmation) or full."""
+        self._on_run_click(None, preview=preview)
 
     def _on_preview_click(self, event) -> None:
+
         if self._preview_fn is not None:
             self._on_run_click(event, preview=True)
 
@@ -231,13 +254,19 @@ class RunPanel:
             self.timeline.update(self._state.pipeline_config.task_windows)
 
     def _on_stop_click(self, event) -> None:
-        """Set interrupt flag to signal the pipeline to stop."""
+        """Ask the run to stop when its next stage starts (ui_redesign §8.2)."""
         self._interrupt.set()
 
-    def _run_wrapper(self, preview: bool) -> None:
-        """Perform work and read preview artifacts off the UI thread."""
+    def _run_wrapper(self, preview: bool, callback=None) -> None:
+        """Perform work and read preview artifacts off the UI thread.
+
+        ``callback`` (from RunManager) records progress in run_state.json; errors are
+        re-raised after the UI update so the registry records the failure too.
+        """
         result = None
         error = None
+        raised: BaseException | None = None
+        self._bridge.set_listener(callback)
         try:
             if preview and self._preview_fn:
                 output_dir = Path(self._state.output_dir)
@@ -249,7 +278,12 @@ class RunPanel:
                 error = "Interrupted by user"
         except Exception as exc:  # noqa: BLE001
             error = str(exc) or type(exc).__name__
+            raised = exc
+        finally:
+            self._bridge.set_listener(None)
         self._bridge.dispatch(partial(self._finish_run, preview, result, error))
+        if raised is not None:
+            raise raised
 
     def _finish_run(self, preview: bool, result: PreviewReport | None, error: str | None) -> None:
         self._bridge.release_document()

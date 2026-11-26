@@ -54,3 +54,13 @@ def matlab_engine():
         eng.quit()
     except Exception as e:
         pytest.skip(f"Could not start MATLAB engine: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Web UI: keep the developer's recent-sessions list out of tests
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _isolated_recent_sessions(tmp_path_factory, monkeypatch):
+    """Point the UI's recent-sessions store (ui_redesign §8.3) at a temp file."""
+    store = tmp_path_factory.mktemp("recent") / "recent_sessions.json"
+    monkeypatch.setenv("PYNPXPIPE_RECENT_SESSIONS", str(store))

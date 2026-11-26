@@ -49,6 +49,10 @@ class ErrorClassification:
     fix_tier: FixTier
     fix_applied: bool = False
     fix_detail: str = ""
+    # ui_redesign §8.6: concrete parameter changes ("dotted.key", new value) the UI can
+    # apply before a confirmed rerun, and the probe the failure belongs to.
+    suggested_changes: tuple[tuple[str, object], ...] = ()
+    probe_id: str | None = None
 
 
 @dataclass

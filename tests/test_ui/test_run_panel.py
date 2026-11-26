@@ -553,3 +553,84 @@ class TestLogViewer:
         lv.refresh()
         # Should contain some placeholder text
         assert lv.display.object != ""
+
+
+class TestRunPanelRunRegistry:
+    """S6 (ui_redesign §8.2): runs go through the process-wide RunManager."""
+
+    def _run(self, tmp_path, *, preview=False, fail=False):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+
+        def work(st, bridge):
+            bridge.callback("discover:Scanning", 0.5)
+            if fail:
+                raise ValueError("boom")
+
+        rp = RunPanel(state, pipeline_fn=work, preview_fn=work)
+        if preview:
+            rp._on_preview_click(None)
+        else:
+            rp._on_run_click(None)
+        rp._thread.join(timeout=5)
+        return state, rp
+
+    def test_run_writes_registry_file(self, tmp_path):
+        from pynpxpipe.pipelines.run_state import read_run_state
+
+        state, _ = self._run(tmp_path)
+        rs = read_run_state(state.output_dir)
+        assert rs.status == "completed"
+        assert rs.current_stage == "discover"
+
+    def test_failed_run_is_recorded(self, tmp_path):
+        from pynpxpipe.pipelines.run_state import read_run_state
+
+        state, _ = self._run(tmp_path, fail=True)
+        rs = read_run_state(state.output_dir)
+        assert rs.status == "failed" and rs.error == "boom"
+
+    def test_preview_run_awaits_task_window_confirmation(self, tmp_path):
+        from pynpxpipe.pipelines.run_state import is_task_window_pending, read_run_state
+
+        state, _ = self._run(tmp_path, preview=True)
+        assert read_run_state(state.output_dir).status == "awaiting_confirmation"
+        assert is_task_window_pending(state.output_dir)
+
+    def test_second_run_on_same_output_is_refused_while_first_runs(self, tmp_path):
+        from pynpxpipe.ui.components.run_panel import RunPanel
+
+        state = _fully_populated_state(tmp_path)
+        release = threading.Event()
+        first = RunPanel(state, pipeline_fn=lambda st, br: release.wait(5))
+        first._on_run_click(None)
+        # Another browser session (its own AppState) targets the same output directory.
+        other = AppState()
+        for name in (
+            "session_dir",
+            "output_dir",
+            "subject_config",
+            "experiment",
+            "recording_date",
+            "probe_plan",
+        ):
+            setattr(other, name, getattr(state, name))
+        second = RunPanel(other, pipeline_fn=lambda st, br: None)
+        second._on_run_click(None)
+        assert second.validation_alert.visible is True
+        assert "正在运行" in second.validation_alert.object
+        release.set()
+        first._thread.join(timeout=5)
+
+
+def test_progress_bridge_listener_is_called_synchronously():
+    state = AppState()
+    bridge = ProgressBridge(state)
+    seen = []
+    bridge.set_listener(lambda m, f: seen.append((m, f)))
+    bridge.callback("sort:[imec0] batch", 0.25)
+    assert seen == [("sort:[imec0] batch", 0.25)]
+    bridge.set_listener(None)
+    bridge.callback("sort:x", 0.3)
+    assert len(seen) == 1

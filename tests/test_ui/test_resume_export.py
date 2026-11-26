@@ -108,8 +108,10 @@ def test_fresh_execute_exposes_recovery():
     from pynpxpipe.ui.app import create_app
 
     app = create_app()
-    app._pynpx_switch("execute")
-    execute = app._pynpx_sections["execute"]
+    # P1-5: export recovery lives in the workspace's export-stage actions.
+    workspace = app._pynpx_workspace
+    workspace.select("export")
+    execute = workspace.export_box
     assert execute.visible
     assert {"已保存的输出目录", "刺激表目录"} <= {
         w.name for w in execute.select(pn.widgets.TextInput)

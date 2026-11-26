@@ -1,6 +1,6 @@
 # UI 改版：以 Session 为中心的工作流
 
-> 状态：**已确认**（§7，2026-11-26） | 日期：2026-11-26
+> 状态：**已确认**（§7、§8，2026-11-26） | 日期：2026-11-26
 > 设计稿：`docs/design/ui_redesign/`（在线画布见该目录 README）
 > 关联：`docs/specs/ui.md`、`docs/specs/a5_app_layout.md`、`docs/specs/ui_improvements_plan.md`、`docs/specs/task_segments.md`
 
@@ -186,3 +186,86 @@
    - **已确认**：按设计稿默认浅色，深色可选（与 §5 一致）。
 7. P1-5 的按探针进度采用方案 A（不改回调签名），可以吗？
    - **已确认**：采用方案 A。`BaseStage._report_progress` 已加 `"stage:"` 前缀（`stages/base.py:80`），在 message 中约定 `probe_id` 字段，由 UI 解析。
+
+## 8. P1 细化（状态：已确认，2026-11-26）
+
+本节把 §4.3 落到数据契约与改动范围，依据是设计稿（9 张画板与 `docs/design/ui_redesign/` 一致）加源码核对。设计稿只规定"长什么样"，下面补的是"数据从哪来、谁负责写、失败怎么办"。确认后 P1 按 §8.10 的 session 顺序连续实施，整期完成后集中验收。
+
+### 8.0 已定决策（2026-11-26，用户逐条确认）
+
+| # | 设计稿要求 | 源码现状 | 决定 |
+|---|---|---|---|
+| 1 | 开始后可关闭浏览器，回首页看进度 | 运行线程属于单个浏览器会话（`run_panel.py` 的 `threading.Thread`），其他会话看不到 | **做**：运行登记文件 + 进程级运行管理器（§8.2） |
+| 2 | 各阶段预计用时、预计 sort 用时 | 无估算器；日志里有 `stage_complete.elapsed_s` | **按历史日志估算**（§8.4） |
+| 3 | BHV2 选择项显示 trial 数、开始时间 | 只能完整解析 BHV2 | **只显示文件名、大小、修改时间** |
+| 4 | 参数页分组卡（中文标签、说明、互斥提示）与全部参数搜索 | 需要字段元数据（P2 schema） | **推迟到 P2**；P1 第 3 步沿用现有表单 + 预设条 |
+| 5 | 失败页"按建议修改并重跑" | `Classifier` 只给文字 `suggestion` | **扩展 Classifier** 给出结构化参数修改（§8.6） |
+| 6 | 预填该动物上次填写的脑区 | 无历史存储 | **从最近 session 的 `session.json` 读 `probe_plan`**（§8.7） |
+
+### 8.1 前置独立 PR（不属于 UI，先于对应 P1 子项合入）
+
+- **select_segments 不覆盖输入**（P1-4 的前置）：单段模式下 `04_sync/behavior_events.parquet` 既是输入又被改写（`select_segments.py:276`）。方案：首次运行时把 synchronize 的原表保存为 `04_sync/behavior_events_source.parquet`（已存在则不覆盖），之后一律从它读取；输出路径不变，下游无感。单独写 spec（`docs/specs/task_segments.md` 增补）并 TDD。
+- **`pd_hignline_*` → `pd_highline_*`**：加载旧键时映射并记 warning，保存只写新键。
+
+### 8.2 运行登记与运行管理器（P1-2/P1-4/P1-5 共用）
+
+- **登记文件** `{output_dir}/checkpoints/run_state.json`，原子写入，字段：`run_id`、`pid`、`started_at`、`heartbeat_at`、`stages`（本次计划）、`current_stage`、`current_probe`、`fraction`、`status`（`running` / `awaiting_confirmation` / `completed` / `failed` / `stopped`）、`error`（首行）、`log_path`。
+- 由新模块 `pipelines/run_state.py` 读写（零 UI 依赖）；`PipelineRunner` 不改签名，用包装后的 `progress_callback` 更新进度，心跳间隔 `ui.heartbeat_s`（默认 5 s）。
+- **判定"运行中"**：`status == running` 且心跳距今 < `ui.heartbeat_timeout_s`（默认 60 s）且 pid 存活；否则显示"已中断"，可续跑。
+- **进程级运行管理器** `ui/run_manager.py`：模块级单例，持有运行线程和中断事件，按 `output_dir` 去重（同一目录不允许并行两次运行）。浏览器会话只订阅：`pn.state.add_periodic_callback` 每 `ui.poll_s`（默认 2 s）读登记文件刷新界面。关闭浏览器不影响运行；关闭 `pynpxpipe-ui` 进程会终止运行，界面文案改为"可以关闭浏览器标签页，但不要关闭运行 pynpxpipe-ui 的终端"。
+- "停止"按钮设置中断事件，在当前阶段结束后停止（与现有 `run_panel` 行为一致）。
+
+### 8.3 最近 session 列表（P1-2）
+
+- 存储：`<项目根>/.pynpxpipe/recent_sessions.json`，加入 `.gitignore`。条目：`output_dir`、`name`、`subject_id`、`probe_ids`、`last_opened`。上限 `ui.recent_sessions_max`（默认 20）。
+- 更新时机：加载已有输出目录、开始运行。路径不存在的条目显示为灰色并可移除，不自动删除。
+- 每行状态由 `read_pipeline_status` + `run_state.json` + `task_window_pending.json` 合成；9 段色条：完成 / 运行中 / 待确认 / 失败 / 未开始 / 跳过（merge 未开启）。
+- 顶部 4 个计数与行点击跳转按 §4.3 P1-2。
+
+### 8.4 预计用时（P1-3 第 4 步、P1-4、P1-5）
+
+- 新模块 `pipelines/estimates.py`：扫描最近 session 的 `logs/*.log`，取 `stage_complete` 事件的 `elapsed_s`，除以该 session 保留的记录时长（`03_segments/summary.json`，无则用 AP 时长），得到每阶段（per-probe 阶段按探针）秒/记录秒的中位数。
+- 只有样本数 ≥ `ui.eta_min_samples`（默认 3）的阶段才显示估算，其余显示"—"；旁注"基于 N 个历史 session"。不区分 GPU 型号，若当前 GPU 与样本不同则加注"不同硬件，仅供参考"。
+- 任务时段试算中的"预计 sort 用时"用同一比率乘以试算保留时长。
+
+### 8.5 按探针进度（P1-5，方案 A）
+
+- `BaseStage` 新增 `_report_probe_progress(probe_id, message, fraction)`，发出 `"{stage}:[{probe_id}] {message}"`；per-probe 阶段改用它。回调签名不变，CLI 显示不受影响。
+- UI 用 `^\[(?P<probe>[^\]]+)\] ` 解析；不带前缀的消息归为阶段级。
+
+### 8.6 Classifier 结构化建议（P1-6）
+
+- `ErrorClassification` 增加 `suggested_changes: tuple[tuple[str, object], ...]`（点号键、建议值）与 `probe_id: str | None`。只对能确定修改方向的已知模式填写，初始两条：CUDA OOM → `sorter.params.batch_size` 取当前值的 2/3（下限 `ui.min_batch_size`，默认 10000）；DREDge 内存不足 → `preprocess.motion_correction.bin_s` 加倍。
+- 失败页"按建议修改并重跑"：把修改应用到当前表单（复用 `preset_bar._replace_path`），然后打开 P0-4 重跑弹窗，范围预选失败探针。无结构化建议时只显示文字与"问 AI 助手"（`ChatHelp`，附当前配置与日志尾部）。
+
+### 8.7 动物与探针（P1-3 第 2 步）
+
+- 档案卡来自 `monkeys/*.yaml`（`load_subject_config`）；"+ 新动物"展开现有 `SubjectForm`。
+- 探针行由第 1 步识别结果决定；脑区预填：在最近 session 中找同一 `subject_id` 最新的 `session.json`，按相同 `probe_id` 取 `probe_plan`。输入提示列出该动物在最近 session 中用过的全部脑区。
+
+### 8.8 与设计稿的有意差异
+
+- BHV2 选择项不显示 trial 数与开始时间（决定 3）。
+- 第 3 步不做分组卡与全部参数搜索（决定 4）。
+- 重跑弹窗只清除检查点，不删除 sorting 输出目录（P0-4 已实现；重跑的阶段会覆盖输出）。
+- 机器状态（GPU / RAM / 磁盘）每 `ui.poll_s` 刷新，来自 `ResourceDetector`，探测失败时隐藏对应项。
+
+### 8.9 新增可配参数
+
+`ui.heartbeat_s`（5）、`ui.heartbeat_timeout_s`（60）、`ui.poll_s`（2）、`ui.recent_sessions_max`（20）、`ui.eta_min_samples`（3）、`ui.min_batch_size`（10000）。存放在 `config/ui.yaml`（新文件，缺省时用默认值），不进入 `PipelineConfig`。
+
+### 8.10 P1 session 拆分（每个 ≤ 5 个源文件）
+
+| Session | 内容 | 主要文件 |
+|---|---|---|
+| S5 | 前置 PR：select_segments 不覆盖输入 | `stages/select_segments.py`，`docs/specs/task_segments.md` |
+| S6 | 运行登记 + 运行管理器（§8.2） | 新 `pipelines/run_state.py`、`ui/run_manager.py`，`ui/components/run_panel.py`，`ui/state.py` |
+| S7 | P1-1 路由与顶栏 | `ui/app.py`，新 `ui/router.py`、`ui/components/top_bar.py` |
+| S8 | P1-2 Session 列表 | 新 `ui/components/session_list.py`、`ui/recent_sessions.py`，`ui/app.py` |
+| S9 | P1-3 向导外壳 + 第 1、2 步 | 新 `ui/components/wizard.py`，`session_form.py`，`subject_form.py`，`probe_region_editor.py` |
+| S10 | P1-3 第 3、4 步 + 预计用时 | `wizard.py`，新 `pipelines/estimates.py`，`harness/preflight.py`（只读调用） |
+| S11 | P1-4 任务时段确认页 | 新 `ui/components/task_window_page.py`，`task_timeline.py`，`pipelines/run_state.py` |
+| S12 | P1-5 工作区 + 按探针进度 | 新 `ui/components/workspace.py`，`stages/base.py`，per-probe stages 的进度调用，`log_viewer.py` |
+| S13 | P1-6 失败视图 + Classifier 扩展 | `harness/classifier.py`，新 `ui/components/error_view.py`，`workspace.py` |
+
+S6 之后 S7–S13 依赖其登记文件；S11 依赖 S5 合入。每个 session 仍按 TDD 流程，`progress.md` 逐个更新。

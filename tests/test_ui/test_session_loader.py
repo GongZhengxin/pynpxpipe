@@ -410,3 +410,23 @@ class TestSessionLoaderNWBFieldRestore:
         loader._on_load_click(None)
 
         assert "NWB filename metadata" in loader.message_pane.object
+
+
+def test_public_load_reports_success_and_failure(state, output_dir_with_session, session_json_data):
+    """S8: the session list opens a directory without going through the widgets."""
+    from pynpxpipe.ui.components.session_loader import SessionLoader
+
+    loaded = []
+    loader = SessionLoader(
+        state,
+        load_session_fn=lambda d: session_json_data,
+        on_session_loaded=lambda: loaded.append(1),
+    )
+    assert loader.load(str(output_dir_with_session)) is True
+    assert state.output_dir == str(output_dir_with_session)
+    assert loaded == [1]
+
+    def broken(d):
+        raise FileNotFoundError("session.json not found")
+
+    assert SessionLoader(state, load_session_fn=broken).load("x") is False
